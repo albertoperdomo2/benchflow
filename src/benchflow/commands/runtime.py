@@ -56,6 +56,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             install_grafana=not args.skip_grafana_install,
             tekton_channel=args.tekton_channel or "latest",
             grafana_channel=args.grafana_channel or "v5",
+            grafana_starting_csv="grafana-operator.v5.21.2",
             models_storage_class=args.models_storage_class,
             models_storage_size=args.models_size or "250Gi",
             models_storage_access_mode=args.models_access_mode or "ReadWriteOnce",

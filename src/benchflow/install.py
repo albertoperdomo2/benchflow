@@ -37,6 +37,7 @@ class InstallOptions:
     install_grafana: bool = True
     tekton_channel: str = "latest"
     grafana_channel: str = "v5"
+    grafana_starting_csv: str = "grafana-operator.v5.21.2"
     models_storage_access_mode: str = "ReadWriteOnce"
     models_storage_size: str = "250Gi"
     models_storage_class: str | None = None
@@ -93,6 +94,7 @@ class Installer:
                 ("Install Grafana if missing", str(options.install_grafana).lower()),
                 ("OpenShift Pipelines channel", options.tekton_channel),
                 ("Grafana operator channel", options.grafana_channel),
+                ("Grafana operator CSV", options.grafana_starting_csv),
                 (
                     "models-storage",
                     f"{options.models_storage_access_mode} {options.models_storage_size}"
@@ -134,6 +136,7 @@ class Installer:
                 ("Grafana install attempted", str(options.install_grafana).lower()),
                 ("OpenShift Pipelines channel", options.tekton_channel),
                 ("Grafana operator channel", options.grafana_channel),
+                ("Grafana operator CSV", options.grafana_starting_csv),
                 (
                     "models-storage",
                     f"{options.models_storage_access_mode} {options.models_storage_size}"
@@ -470,6 +473,20 @@ class Installer:
             f"timed out waiting for subscription/{subscription_name} to resolve a CSV"
         )
 
+    def _get_subscription(
+        self, *, subscription_name: str, namespace: str, description: str | None = None
+    ) -> dict[str, Any]:
+        return self._oc_json(
+            "get",
+            "subscription",
+            subscription_name,
+            "-n",
+            namespace,
+            retry=True,
+            description=description
+            or f"reading subscription/{subscription_name}",
+        )
+
     def _approve_pending_installplan(
         self,
         *,
@@ -477,6 +494,7 @@ class Installer:
         namespace: str,
         csv_prefix: str,
         catalog_source: str,
+        expected_csv_name: str | None = None,
     ) -> None:
         subscription = self._oc_json(
             "get",
@@ -520,6 +538,17 @@ class Installer:
         )
         csv_names = installplan.get("spec", {}).get("clusterServiceVersionNames", [])
         for csv_name in csv_names:
+            if expected_csv_name is not None:
+                if str(csv_name) != expected_csv_name:
+                    self._print_olm_diagnostics(
+                        subscription_name=subscription_name,
+                        namespace=namespace,
+                        catalog_source=catalog_source,
+                    )
+                    raise CommandError(
+                        f"refusing to auto-approve InstallPlan {installplan_name}: expected {expected_csv_name}, got {csv_name}"
+                    )
+                continue
             if not str(csv_name).startswith(csv_prefix):
                 self._print_olm_diagnostics(
                     subscription_name=subscription_name,
@@ -555,6 +584,7 @@ class Installer:
         timeout_seconds: int,
         csv_prefix: str,
         catalog_source: str,
+        expected_csv_name: str | None = None,
     ) -> None:
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
@@ -563,6 +593,7 @@ class Installer:
                 namespace=namespace,
                 csv_prefix=csv_prefix,
                 catalog_source=catalog_source,
+                expected_csv_name=expected_csv_name,
             )
             try:
                 csv = self._oc_json(
@@ -730,15 +761,16 @@ class Installer:
                 success(f"Granted privileged SCC to {service_account}")
 
     def install_grafana_if_needed(self) -> None:
-        if self._resource_exists(
+        subscription_already_present = self._resource_exists(
             "get",
             "subscription",
             self.grafana_operator_name,
             "-n",
             self.options.namespace,
-        ):
+        )
+        if subscription_already_present:
             success(
-                f"Grafana operator subscription already present in {self.options.namespace}"
+                f"Grafana operator subscription already present in {self.options.namespace}; reconciling desired version"
             )
         else:
             if not self.options.install_grafana:
@@ -746,37 +778,38 @@ class Installer:
                     "Grafana operator is not installed in the target namespace and "
                     "--skip-grafana-install was requested"
                 )
-
             step(f"Installing Grafana operator in {self.options.namespace}")
-            operator_group = {
-                "apiVersion": "operators.coreos.com/v1",
-                "kind": "OperatorGroup",
-                "metadata": {
-                    "name": "benchflow-grafana",
-                    "namespace": self.options.namespace,
-                },
-                "spec": {"targetNamespaces": [self.options.namespace]},
-            }
-            subscription = {
-                "apiVersion": "operators.coreos.com/v1alpha1",
-                "kind": "Subscription",
-                "metadata": {
-                    "name": self.grafana_operator_name,
-                    "namespace": self.options.namespace,
-                },
-                "spec": {
-                    "channel": self.options.grafana_channel,
-                    "installPlanApproval": "Automatic",
-                    "name": self.grafana_operator_name,
-                    "source": "community-operators",
-                    "sourceNamespace": "openshift-marketplace",
-                },
-            }
-            self._apply_documents(
-                [operator_group, subscription],
-                namespace=self.options.namespace,
-                description="applying Grafana operator resources",
-            )
+
+        operator_group = {
+            "apiVersion": "operators.coreos.com/v1",
+            "kind": "OperatorGroup",
+            "metadata": {
+                "name": "benchflow-grafana",
+                "namespace": self.options.namespace,
+            },
+            "spec": {"targetNamespaces": [self.options.namespace]},
+        }
+        subscription = {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "name": self.grafana_operator_name,
+                "namespace": self.options.namespace,
+            },
+            "spec": {
+                "channel": self.options.grafana_channel,
+                "installPlanApproval": "Manual",
+                "name": self.grafana_operator_name,
+                "source": "community-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": self.options.grafana_starting_csv,
+            },
+        }
+        self._apply_documents(
+            [operator_group, subscription],
+            namespace=self.options.namespace,
+            description="applying Grafana operator resources",
+        )
 
         step("Waiting for the Grafana subscription to resolve")
         grafana_csv = self._wait_for_subscription_current_csv(
@@ -784,15 +817,66 @@ class Installer:
             namespace=self.options.namespace,
             timeout_seconds=600,
         )
-        step(f"Waiting for CSV {grafana_csv} to succeed")
-        self._wait_for_csv_succeeded(
+        subscription = self._get_subscription(
             subscription_name=self.grafana_operator_name,
             namespace=self.options.namespace,
-            csv_name=grafana_csv,
-            timeout_seconds=600,
-            csv_prefix="grafana-operator.",
-            catalog_source="community-operators",
+            description=f"reading subscription/{self.grafana_operator_name} after resolution",
         )
+        installed_grafana_csv = str(
+            subscription.get("status", {}).get("installedCSV", "") or ""
+        )
+        subscription_state = str(subscription.get("status", {}).get("state", "") or "")
+        expected_csv_name = self.options.grafana_starting_csv
+        if grafana_csv != self.options.grafana_starting_csv:
+            if subscription_already_present:
+                if (
+                    installed_grafana_csv == self.options.grafana_starting_csv
+                    and subscription_state == "UpgradePending"
+                ):
+                    warning(
+                        "Grafana operator is already installed as "
+                        f"{installed_grafana_csv}; a newer unapproved upgrade "
+                        f"({grafana_csv}) is pending, but BenchFlow will continue "
+                        f"with the pinned installed version"
+                    )
+                    grafana_csv = installed_grafana_csv
+                else:
+                    warning(
+                        "Grafana operator is already installed as "
+                        f"{grafana_csv}; BenchFlow will keep the existing version "
+                        f"instead of forcing a downgrade to {self.options.grafana_starting_csv}"
+                    )
+                expected_csv_name = grafana_csv
+            else:
+                self._print_olm_diagnostics(
+                    subscription_name=self.grafana_operator_name,
+                    namespace=self.options.namespace,
+                    catalog_source="community-operators",
+                )
+                raise CommandError(
+                    "Grafana subscription resolved to an unexpected CSV: "
+                    f"wanted {self.options.grafana_starting_csv}, got {grafana_csv}"
+                )
+        if (
+            subscription_already_present
+            and grafana_csv == self.options.grafana_starting_csv
+            and installed_grafana_csv == self.options.grafana_starting_csv
+            and subscription_state == "UpgradePending"
+        ):
+            success(
+                f"Grafana operator {installed_grafana_csv} is already installed; skipping CSV phase wait despite pending upgrade"
+            )
+        else:
+            step(f"Waiting for CSV {grafana_csv} to succeed")
+            self._wait_for_csv_succeeded(
+                subscription_name=self.grafana_operator_name,
+                namespace=self.options.namespace,
+                csv_name=grafana_csv,
+                timeout_seconds=600,
+                csv_prefix="grafana-operator.",
+                catalog_source="community-operators",
+                expected_csv_name=expected_csv_name,
+            )
 
         step("Waiting for Grafana CRDs")
         for crd in (

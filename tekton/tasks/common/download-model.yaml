@@ -29,6 +29,18 @@ spec:
               name: huggingface-token
               key: HF_TOKEN
               optional: true
+        - name: HOME
+          value: /tmp/benchflow-home
+        - name: HF_HOME
+          value: /tmp/benchflow-hf/huggingface
+        - name: XDG_CACHE_HOME
+          value: /tmp/benchflow-hf/xdg-cache
+        - name: HF_HUB_CACHE
+          value: /tmp/benchflow-hf/huggingface/hub
+        - name: HF_XET_CACHE
+          value: /tmp/benchflow-hf/huggingface/xet
+        - name: TRANSFORMERS_CACHE
+          value: /tmp/benchflow-hf/huggingface/transformers
       command:
         - bflow
       args:
