@@ -12,9 +12,9 @@ USER root
 
 RUN mkdir -p /tmp/.huggingface && chmod -R 777 /tmp/.huggingface
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git tar gzip \
-    && rm -rf /var/lib/apt/lists/*
+RUN dnf install -y ca-certificates curl git tar gzip \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 
 RUN curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz \
     && tar -xzf /tmp/helm.tgz -C /tmp \
