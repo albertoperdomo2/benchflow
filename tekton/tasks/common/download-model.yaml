@@ -1,0 +1,40 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: download-model
+  labels:
+    app.kubernetes.io/version: "0.2"
+  annotations:
+    tekton.dev/displayName: "Download Model from HuggingFace"
+spec:
+  description: >-
+    Download a model from HuggingFace Hub to a PVC. This task is idempotent -
+    it will skip downloading if the model directory already exists on the PVC.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+    - name: RUN_PLAN
+      type: string
+  workspaces:
+    - name: models-storage
+      description: PVC for storing downloaded models
+  steps:
+    - name: download-model
+      image: $(params.IMAGE)
+      env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: huggingface-token
+              key: HF_TOKEN
+              optional: true
+      command:
+        - bflow
+      args:
+        - model
+        - download
+        - --run-plan-json
+        - $(params.RUN_PLAN)
+        - --models-storage-path
+        - $(workspaces.models-storage.path)

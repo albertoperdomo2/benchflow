@@ -1,0 +1,31 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-precise-prefix-cache
+spec:
+  platform: llm-d
+  mode: precise-prefix-cache
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v0.4.0
+  gateway: istio
+  endpoint_path: /v1/models
+  scheduler_profile: precise-prefix-cache
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /model-cache
+  runtime:
+    image: ghcr.io/llm-d/llm-d-cuda-dev:sha-3222272
+    replicas: 1
+    tensor_parallelism: 1
+    vllm_args:
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.92
+      - --trust-remote-code
+      - --disable-log-requests
+      - --enable-prefix-caching
+  options:
+    block_size: 64
+    hash_seed: 42
+    zmq_port: 5557
+    create_httproute: true

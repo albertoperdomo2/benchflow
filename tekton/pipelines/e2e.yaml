@@ -1,0 +1,223 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: benchflow-e2e
+  labels:
+    app.kubernetes.io/name: benchflow
+spec:
+  description: >
+    Generic run-plan pipeline for the real llm-d end-to-end path. The pipeline
+    consumes one immutable RUN_PLAN and delegates all lifecycle steps to the
+    BenchFlow control image.
+  params:
+    - name: RUN_PLAN
+      type: string
+      description: Resolved immutable run plan in JSON format.
+    - name: BENCHFLOW_IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+  workspaces:
+    - name: results
+    - name: models-storage
+    - name: source
+  tasks:
+    - name: resolve-run-plan
+      taskRef:
+        name: resolve-run-plan
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+
+    - name: download-model
+      runAfter: [resolve-run-plan]
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-download)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: download-model
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+      workspaces:
+        - name: models-storage
+          workspace: models-storage
+
+    - name: deploy
+      runAfter: [download-model]
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-deploy)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: deploy-llm-d-inference-scheduling
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+        - name: PIPELINE_RUN_NAME
+          value: "$(context.pipelineRun.name)"
+      workspaces:
+        - name: source
+          workspace: source
+        - name: manifests-storage
+          workspace: results
+          subPath: rendered-manifests
+
+    - name: wait-for-endpoint
+      runAfter: [deploy]
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: wait-for-endpoint
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+
+    - name: benchmark
+      runAfter: [wait-for-endpoint]
+      onError: continue
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: run-guidellm-benchmark
+      timeout: "2h"
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+        - name: PIPELINE_RUN_NAME
+          value: "$(context.pipelineRun.name)"
+      workspaces:
+        - name: results
+          workspace: results
+          subPath: benchmark
+
+    - name: collect-artifacts
+      runAfter: [benchmark]
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-collect)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: collect-artifacts
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+        - name: PIPELINE_RUN_NAME
+          value: "$(context.pipelineRun.name)"
+      workspaces:
+        - name: artifacts
+          workspace: results
+          subPath: artifacts
+
+    - name: collect-metrics
+      runAfter: [collect-artifacts]
+      onError: continue
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-collect)"
+          operator: in
+          values: ["true"]
+        - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: collect-metrics
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+        - name: BENCHMARK_START_TIME
+          value: "$(tasks.benchmark.results.benchmark-start-time)"
+        - name: BENCHMARK_END_TIME
+          value: "$(tasks.benchmark.results.benchmark-end-time)"
+      workspaces:
+        - name: artifacts
+          workspace: results
+          subPath: artifacts
+
+    - name: upload-to-mlflow
+      runAfter: [collect-metrics]
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-collect)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: upload-to-mlflow
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+        - name: MLFLOW_RUN_ID
+          value: "$(tasks.benchmark.results.mlflow-run-id)"
+        - name: BENCHMARK_START_TIME
+          value: "$(tasks.benchmark.results.benchmark-start-time)"
+        - name: BENCHMARK_END_TIME
+          value: "$(tasks.benchmark.results.benchmark-end-time)"
+        - name: GRAFANA_URL
+          value: ""
+      workspaces:
+        - name: artifacts
+          workspace: results
+          subPath: artifacts
+
+  finally:
+    - name: cleanup
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-cleanup)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: cleanup-llm-d-deployment
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+    - name: assert-benchmark-status
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: assert-task-status
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: TASK_NAME
+          value: benchmark
+        - name: TASK_STATUS
+          value: "$(tasks.benchmark.status)"
+    - name: assert-metrics-status
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-collect)"
+          operator: in
+          values: ["true"]
+        - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: assert-task-status
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: TASK_NAME
+          value: collect-metrics
+        - name: TASK_STATUS
+          value: "$(tasks.collect-metrics.status)"

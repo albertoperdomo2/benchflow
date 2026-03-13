@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import os
+import shutil
+from datetime import datetime
+from pathlib import Path
+
+from .cluster import require_any_command, run_command
+from .models import ResolvedRunPlan
+
+
+def _discover_grafana_base_url(namespace: str) -> str:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    for candidate_namespace in (
+        namespace,
+        "benchflow",
+        "grafana",
+        "openshift-monitoring",
+    ):
+        if not candidate_namespace:
+            continue
+        result = run_command(
+            [
+                kubectl_cmd,
+                "get",
+                "route",
+                "-n",
+                candidate_namespace,
+                "-o",
+                'jsonpath={range .items[*]}{.metadata.name}{"\\t"}{.spec.host}{"\\n"}{end}',
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            continue
+        for line in result.stdout.splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) != 2:
+                continue
+            name, host = parts
+            if "grafana" in name and host:
+                return f"https://{host}"
+    return ""
+
+
+def _build_grafana_url(
+    plan: ResolvedRunPlan,
+    run_id: str,
+    benchmark_start_time: str,
+    benchmark_end_time: str,
+    grafana_base_url: str,
+) -> str:
+    if not grafana_base_url or not benchmark_start_time or not benchmark_end_time:
+        return ""
+    start_dt = datetime.fromisoformat(benchmark_start_time.replace("Z", "+00:00"))
+    end_dt = datetime.fromisoformat(benchmark_end_time.replace("Z", "+00:00"))
+    start_ms = int(start_dt.timestamp() * 1000)
+    end_ms = int(end_dt.timestamp() * 1000)
+    return (
+        f"{grafana_base_url}/d/benchflow"
+        f"?var-namespace={plan.deployment.namespace}"
+        f"&var-release={plan.deployment.release_name}"
+        f"&from={start_ms}"
+        f"&to={end_ms}"
+        f"&var-run_id={run_id}"
+    )
+
+
+def upload_to_mlflow(
+    plan: ResolvedRunPlan,
+    *,
+    mlflow_run_id: str,
+    benchmark_start_time: str,
+    benchmark_end_time: str,
+    artifacts_dir: Path,
+    grafana_url: str = "",
+) -> Path:
+    import mlflow
+
+    explicit_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
+    if explicit_tracking_uri:
+        mlflow.set_tracking_uri(explicit_tracking_uri)
+    if not mlflow_run_id or not explicit_tracking_uri:
+        return artifacts_dir
+
+    client = mlflow.tracking.MlflowClient()
+    grafana_base_url = grafana_url or _discover_grafana_base_url(
+        plan.deployment.namespace
+    )
+    full_grafana_url = _build_grafana_url(
+        plan, mlflow_run_id, benchmark_start_time, benchmark_end_time, grafana_base_url
+    )
+    if full_grafana_url:
+        client.set_tag(mlflow_run_id, "grafana_url", full_grafana_url)
+
+    if artifacts_dir.exists():
+        for file_path in sorted(
+            path for path in artifacts_dir.rglob("*") if path.is_file()
+        ):
+            relative_path = file_path.relative_to(artifacts_dir)
+            artifact_path = (
+                str(relative_path.parent) if str(relative_path.parent) != "." else None
+            )
+            client.log_artifact(
+                mlflow_run_id, str(file_path), artifact_path=artifact_path
+            )
+
+    if artifacts_dir.exists():
+        for item in artifacts_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+    return artifacts_dir

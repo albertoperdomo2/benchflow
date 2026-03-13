@@ -1,0 +1,12 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: guidellm-concurrent-8k-1k
+spec:
+  backend_type: openai_http
+  rate_type: concurrent
+  rates: [64, 32, 16, 8, 4, 2, 1]
+  data: prompt_tokens=8000,output_tokens=1000
+  max_seconds: 600
+  env:
+    GUIDELLM__REQUEST_TIMEOUT: "6000"

@@ -1,0 +1,75 @@
+name: Build and Push Container Images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-images.yaml"
+      - "build/**"
+      - "src/**"
+      - "pyproject.toml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-images.yaml"
+      - "build/**"
+      - "src/**"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install podman
+
+      - name: Set image tags
+        id: tags
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_TAG="pr-${{ github.event.pull_request.number }}"
+          else
+            BASE_TAG="latest"
+          fi
+
+          BENCHFLOW_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/benchflow:${BASE_TAG}"
+
+          echo "base_tag=${BASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "benchflow_image=${BENCHFLOW_IMAGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+      - name: Build BenchFlow image
+        run: |
+          podman build \
+            -f build/Containerfile \
+            -t ${{ steps.tags.outputs.benchflow_image }} \
+            .
+
+      - name: Push BenchFlow image
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          podman push ${{ steps.tags.outputs.benchflow_image }}
+
+      - name: Image summary
+        run: |
+          echo "## Built Images" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ steps.tags.outputs.benchflow_image }}\`" >> "$GITHUB_STEP_SUMMARY"

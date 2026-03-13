@@ -1,0 +1,13 @@
+# The current llm-d path still uses the upstream charts through helmfile, and
+# those charts create a wide set of namespaced resources. Keep the binding
+# broad and explicit for now, then tighten it after the concrete permission set
+# is captured from a real run.
+#
+# Cluster monitoring access is intentionally not encoded here because the
+# ClusterRoleBinding subject namespace is dynamic. The Python installer renders
+# that binding for the target namespace and attaches `cluster-monitoring-view`
+# to this service account so the metrics task can query Thanos or Prometheus.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: benchflow-runner

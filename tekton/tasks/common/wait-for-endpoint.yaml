@@ -1,0 +1,27 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: wait-for-endpoint
+  labels:
+    app.kubernetes.io/version: "0.2"
+  annotations:
+    tekton.dev/displayName: "Wait for HTTP Endpoint"
+spec:
+  description: >-
+    Wait for the llm-d endpoint resolved from the run plan to become available.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+    - name: RUN_PLAN
+      type: string
+  steps:
+    - name: wait-for-ready
+      image: $(params.IMAGE)
+      command:
+        - bflow
+      args:
+        - wait
+        - endpoint
+        - --run-plan-json
+        - $(params.RUN_PLAN)

@@ -1,0 +1,145 @@
+# Generic Benchmark Report Configuration Template
+# This file defines which models to plot, what metrics to display, and how to style the report
+# This file is for custom, advanced reports.
+
+# Model configurations to compare
+# Each model will be displayed in a separate column in the report
+# You can add or remove models as needed
+models:
+  - model: openai/gpt-oss-120b
+    prompt_toks: 1000
+    output_toks: 1000
+
+  - model: RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic
+    prompt_toks: 1000
+    output_toks: 1000
+
+  - model: RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8
+    prompt_toks: 1000
+    output_toks: 1000
+
+  - model: RedHatAI/Qwen3-235B-A22B-FP8-dynamic
+    prompt_toks: 1000
+    output_toks: 1000
+
+# Plot configurations
+# Each plot type will be a separate row in the report
+# Available metrics from benchmark data:
+#   X-axis: intended concurrency, measured concurrency, measured rps
+#   Y-axis: output_tok/sec, total_tok/sec, ttft_median, ttft_mean, ttft_p95, ttft_p99,
+#           tpot_median, tpot_p95, tpot_p99, itl_median, itl_mean, itl_p95, itl_p99,
+#           request_latency_median, request_latency_min, request_latency_max
+plots:
+  # Throughput plot - higher is better
+  - x_metric: intended concurrency
+    y_metric: output_tok/sec
+    x_label: Concurrency
+    y_label: Throughput (Output tokens/sec)
+    title: Throughput vs Concurrency
+    higher_is_better: true
+    log_x: false
+    log_y: false
+
+  # Time to First Token (TTFT) - lower is better
+  - x_metric: intended concurrency
+    y_metric: ttft_median
+    x_label: Concurrency
+    y_label: TTFT median (ms)
+    title: TTFT median vs Concurrency
+    higher_is_better: false
+    log_x: false
+    log_y: false
+
+  # TTFT P95 - lower is better
+  - x_metric: intended concurrency
+    y_metric: ttft_p95
+    x_label: Concurrency
+    y_label: TTFT P95 (ms)
+    title: TTFT P95 vs Concurrency
+    higher_is_better: false
+    log_x: false
+    log_y: false
+
+  # Inter-Token Latency (ITL) median - lower is better
+  - x_metric: intended concurrency
+    y_metric: itl_median
+    x_label: Concurrency
+    y_label: ITL median (ms)
+    title: ITL median vs Concurrency
+    higher_is_better: false
+    log_x: false
+    log_y: false
+
+  # Inter-Token Latency (ITL) P95 - lower is better
+  - x_metric: intended concurrency
+    y_metric: itl_p95
+    x_label: Concurrency
+    y_label: ITL P95 (ms)
+    title: ITL P95 vs Concurrency
+    higher_is_better: false
+    log_x: false
+    log_y: false
+
+  # Time Per Output Token (TPOT) median - lower is better
+  - x_metric: intended concurrency
+    y_metric: tpot_median
+    x_label: Concurrency
+    y_label: TPOT median (ms)
+    title: TPOT median vs Concurrency
+    higher_is_better: false
+    log_x: false
+    log_y: false
+
+  # Request Latency median - lower is better
+  - x_metric: intended concurrency
+    y_metric: request_latency_median
+    x_label: Concurrency
+    y_label: Request Latency median (s)
+    title: Request Latency vs Concurrency
+    higher_is_better: false
+    log_x: false
+    log_y: false
+
+# Global filters applied to all models
+# Only data matching these filters will be included in the report
+# Set to empty list [] to include all values
+filters:
+  # Filter by accelerator types (e.g., H200, H100, A100, MI300X)
+  accelerators:
+    - H200
+
+  # Filter by version/framework (e.g., llm-d-0.3, RHOAI-3.0, vLLM-0.6.1)
+  versions:
+    - llm-d-0.3
+    - RHOAI-3.0
+    - RHAIIS-3.2.3
+
+# Styling configuration for plots
+styling:
+  # Colors for different configurations (cycles through if more configs than colors)
+  colors:
+    - '#3274A1'  # blue
+    - '#E1812C'  # orange
+    - '#7CB57C'  # green
+    - '#D95F5F'  # red
+    - '#9E67AB'  # purple
+    - '#B8704F'  # brown
+    - '#E89CAE'  # pink
+    - '#7C7C7C'  # gray
+    - '#1F77B4'  # matplotlib blue
+    - '#FF7F0E'  # matplotlib orange
+    - '#2CA02C'  # matplotlib green
+    - '#D62728'  # matplotlib red
+
+  # Marker symbols for different configurations (cycles through if more configs than markers)
+  markers:
+    - circle
+    - square
+    - diamond
+    - triangle-up
+    - triangle-down
+    - cross
+    - x
+    - star
+    - pentagon
+    - hexagon

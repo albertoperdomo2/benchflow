@@ -1,0 +1,38 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: collect-artifacts
+  labels:
+    app.kubernetes.io/version: "0.7"
+  annotations:
+    tekton.dev/displayName: "Collect Artifacts"
+spec:
+  description: >-
+    Collect pipeline logs, workload logs, and manifests into the artifacts workspace
+    using the BenchFlow control image.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+    - name: RUN_PLAN
+      type: string
+    - name: PIPELINE_RUN_NAME
+      type: string
+      default: ""
+  workspaces:
+    - name: artifacts
+      description: Workspace to save collected artifacts
+  steps:
+    - name: collect
+      image: $(params.IMAGE)
+      command:
+        - bflow
+      args:
+        - artifacts
+        - collect
+        - --run-plan-json
+        - $(params.RUN_PLAN)
+        - --artifacts-dir
+        - $(workspaces.artifacts.path)
+        - --pipeline-run-name
+        - $(params.PIPELINE_RUN_NAME)

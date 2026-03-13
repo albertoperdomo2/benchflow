@@ -1,0 +1,24 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen3-06b
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+    revision: main
+  deployment_profile: llm-d-inference-scheduling
+  benchmark_profile: guidellm-concurrent-1k-1k
+  metrics_profile: default
+  namespace: benchflow
+  mlflow:
+    experiment: benchflow-qwen
+    tags:
+      deployment: llm-d
+      mode: inference-scheduling
+      model: qwen3-06b
+  stages:
+    download: true
+    deploy: true
+    benchmark: true
+    collect: true
+    cleanup: true

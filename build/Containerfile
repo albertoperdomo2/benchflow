@@ -1,0 +1,45 @@
+ARG GUIDELLM_VERSION=v0.5.2
+FROM ghcr.io/vllm-project/guidellm:${GUIDELLM_VERSION}
+
+ARG HELM_VERSION=v3.17.1
+ARG HELMFILE_VERSION=v0.171.0
+ARG OPENSHIFT_CLIENT_VERSION=4.18.17
+
+ENV PYTHONUNBUFFERED=1
+ENV GUIDELLM_VERSION=${GUIDELLM_VERSION}
+
+USER root
+
+RUN mkdir -p /tmp/.huggingface && chmod -R 777 /tmp/.huggingface
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl git tar gzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz \
+    && tar -xzf /tmp/helm.tgz -C /tmp \
+    && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
+    && rm -rf /tmp/helm.tgz /tmp/linux-amd64
+
+RUN curl -fsSL "https://github.com/helmfile/helmfile/releases/download/${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION#v}_linux_amd64.tar.gz" -o /tmp/helmfile.tgz \
+    && tar -xzf /tmp/helmfile.tgz -C /tmp \
+    && mv /tmp/helmfile /usr/local/bin/helmfile \
+    && chmod +x /usr/local/bin/helmfile \
+    && rm -f /tmp/helmfile.tgz
+
+RUN curl -fsSL "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OPENSHIFT_CLIENT_VERSION}/openshift-client-linux.tar.gz" -o /tmp/openshift-client.tgz \
+    && tar -xzf /tmp/openshift-client.tgz -C /tmp \
+    && mv /tmp/oc /usr/local/bin/oc \
+    && mv /tmp/kubectl /usr/local/bin/kubectl \
+    && chmod +x /usr/local/bin/oc /usr/local/bin/kubectl \
+    && rm -f /tmp/openshift-client.tgz /tmp/README.md
+
+WORKDIR /opt/benchflow
+
+COPY pyproject.toml .
+COPY src/ src/
+
+RUN pip install --no-cache-dir .
+
+ENTRYPOINT ["bflow"]
+CMD ["--help"]

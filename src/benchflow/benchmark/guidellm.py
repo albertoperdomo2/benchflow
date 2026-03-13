@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import os
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+from ..cluster import CommandError
+from ..models import ResolvedRunPlan
+from . import runtime as runtime_module
+
+
+def _load_guidellm_module():
+    try:
+        return runtime_module
+    except Exception as exc:  # noqa: BLE001
+        raise CommandError(f"failed to load GuideLLM benchmark module: {exc}") from exc
+
+
+def _iso8601_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _version_from_plan(plan: ResolvedRunPlan) -> str:
+    return f"{plan.deployment.platform}-{plan.deployment.mode}"
+
+
+def _runtime_args(plan: ResolvedRunPlan) -> str:
+    return " ".join(plan.deployment.runtime.vllm_args)
+
+
+@contextmanager
+def _patched_environment(extra_env: dict[str, str]):
+    original = {key: os.environ.get(key) for key in extra_env}
+    os.environ.update(extra_env)
+    try:
+        yield
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def run_benchmark(
+    *,
+    plan: ResolvedRunPlan,
+    target: str | None = None,
+    output_dir: Path | None = None,
+    mlflow_tracking_uri: str | None = None,
+    enable_mlflow: bool = True,
+    extra_tags: dict[str, str] | None = None,
+) -> tuple[str, str, str]:
+    module = _load_guidellm_module()
+    benchmark_target = target or plan.deployment.target.base_url
+    tags = dict(plan.mlflow.tags)
+    if extra_tags:
+        tags.update(extra_tags)
+
+    start_time = _iso8601_now()
+    run_id = ""
+    benchmark_env = dict(plan.benchmark.env)
+
+    with _patched_environment(benchmark_env):
+        if enable_mlflow:
+            run_id = module.run_benchmark_with_mlflow(
+                target=benchmark_target,
+                model=plan.model.name,
+                rate=",".join(str(rate) for rate in plan.benchmark.rates),
+                backend_type=plan.benchmark.backend_type,
+                rate_type=plan.benchmark.rate_type,
+                data=plan.benchmark.data,
+                max_seconds=plan.benchmark.max_seconds,
+                max_requests=plan.benchmark.max_requests,
+                accelerator=plan.deployment.options.get("accelerator"),
+                experiment_name=plan.mlflow.experiment,
+                mlflow_tracking_uri=mlflow_tracking_uri
+                or os.environ.get("MLFLOW_TRACKING_URI"),
+                tags=tags,
+                version=_version_from_plan(plan),
+                tp_size=plan.deployment.runtime.tensor_parallelism,
+                runtime_args=_runtime_args(plan),
+                replicas=str(plan.deployment.runtime.replicas),
+            )
+        else:
+            if output_dir is None:
+                raise CommandError("--output-dir is required when MLflow is disabled")
+            module.run_benchmark_without_mlflow(
+                target=benchmark_target,
+                model=plan.model.name,
+                rate=",".join(str(rate) for rate in plan.benchmark.rates),
+                backend_type=plan.benchmark.backend_type,
+                rate_type=plan.benchmark.rate_type,
+                data=plan.benchmark.data,
+                max_seconds=plan.benchmark.max_seconds,
+                max_requests=plan.benchmark.max_requests,
+                output_dir=str(output_dir),
+                accelerator=plan.deployment.options.get("accelerator"),
+                version=_version_from_plan(plan),
+                tp_size=plan.deployment.runtime.tensor_parallelism,
+                runtime_args=_runtime_args(plan),
+                replicas=plan.deployment.runtime.replicas,
+            )
+
+    end_time = _iso8601_now()
+    return run_id, start_time, end_time
+
+
+def generate_report(
+    *,
+    json_path: Path | None = None,
+    model: str | None = None,
+    accelerator: str | None = None,
+    version: str | None = None,
+    tp_size: int = 1,
+    runtime_args: str = "",
+    output_dir: Path | None = None,
+    replicas: int = 1,
+    mlflow_run_ids: list[str] | None = None,
+    mlflow_tracking_uri: str | None = None,
+    versions: list[str] | None = None,
+    version_overrides: dict[str, str] | None = None,
+    additional_csv_files: list[str] | None = None,
+) -> Path:
+    module = _load_guidellm_module()
+
+    if mlflow_run_ids:
+        runs_data = module.fetch_mlflow_runs(mlflow_run_ids, mlflow_tracking_uri)
+        html_path = module.generate_plot_only_report(
+            runs_data=runs_data,
+            versions=versions,
+            mlflow_tracking_uri=mlflow_tracking_uri,
+            additional_csv_files=additional_csv_files,
+            versions_override=version_overrides or {},
+        )
+        if not html_path:
+            raise CommandError("GuideLLM report generation returned no output path")
+        return Path(html_path)
+
+    if json_path is None or model is None or version is None:
+        raise CommandError(
+            "single-run report generation requires --json-path, --model, and --version"
+        )
+
+    html_path = module.generate_visualization_report(
+        json_path=str(json_path),
+        model=model,
+        accelerator=accelerator,
+        version=version,
+        tp_size=tp_size,
+        runtime_args=runtime_args,
+        output_dir=str(output_dir) if output_dir else None,
+        replicas=replicas,
+    )
+    if not html_path:
+        raise CommandError("GuideLLM report generation returned no output path")
+    return Path(html_path)

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "benchflow"
+version = "0.1.0"
+description = "BenchFlow control plane for llm inference benchmarking"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0",
+  "requests>=2.31.0",
+  "boto3>=1.26.0",
+  "pandas>=1.5.0",
+  "plotly>=5.11.0",
+  "mlflow==3.7.0",
+  "certifi==2025.7.9",
+  "mistral-common",
+  "transformers>=5.0.0",
+  "huggingface_hub[cli]>=0.30,<1.0",
+]
+
+[project.scripts]
+bflow = "benchflow.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"benchflow.benchmark.processor" = ["config/*.yaml"]

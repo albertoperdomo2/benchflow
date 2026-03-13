@@ -1,0 +1,14 @@
+apiVersion: benchflow.io/v1alpha1
+kind: MetricsProfile
+metadata:
+  name: default
+spec:
+  prometheus_url: https://thanos-querier.openshift-monitoring.svc:9091
+  query_step: 15s
+  query_timeout: 30s
+  verify_tls: false
+  queries:
+    gpu_utilization: avg(DCGM_FI_DEV_GPU_UTIL{exported_namespace="$namespace", exported_pod=~".*$release.*"})
+    gpu_memory_used: avg(DCGM_FI_DEV_FB_USED{exported_namespace="$namespace", exported_pod=~".*$release.*"})
+    cpu_usage: avg(rate(container_cpu_usage_seconds_total{namespace="$namespace", pod=~".*$release.*"}[5m]))
+    memory_working_set: avg(container_memory_working_set_bytes{namespace="$namespace", pod=~".*$release.*"})

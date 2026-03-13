@@ -1,0 +1,21 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhaiis-vllm-runtime
+spec:
+  platform: rhaiis
+  mode: serving-runtime
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.2.3
+    replicas: 1
+    tensor_parallelism: 1
+    vllm_args:
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.92
+      - --trust-remote-code
+      - --disable-log-requests
+

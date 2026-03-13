@@ -1,0 +1,52 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-clone
+  labels:
+    app.kubernetes.io/version: "0.3"
+  annotations:
+    tekton.dev/displayName: "Git Clone"
+spec:
+  description: >-
+    Clone a git repository to a workspace using the BenchFlow control image.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+    - name: URL
+      type: string
+    - name: REVISION
+      type: string
+      default: "main"
+    - name: SUBDIRECTORY
+      type: string
+      default: ""
+    - name: DELETE_EXISTING
+      type: string
+      default: "true"
+  workspaces:
+    - name: output
+      description: The git repo will be cloned onto this workspace
+  results:
+    - name: COMMIT
+      description: The precise commit SHA that was fetched by this Task
+    - name: URL
+      description: The precise URL that was fetched by this Task
+  steps:
+    - name: clone
+      image: $(params.IMAGE)
+      command:
+        - bflow
+      args:
+        - repo
+        - clone
+        - --url
+        - $(params.URL)
+        - --revision
+        - $(params.REVISION)
+        - --output-dir
+        - $(workspaces.output.path)/$(params.SUBDIRECTORY)
+        - --commit-output
+        - $(results.COMMIT.path)
+        - --url-output
+        - $(results.URL.path)

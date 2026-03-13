@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+
+class ValidationError(ValueError):
+    """Raised when a config document is malformed."""
+
+
+def _require(value: Any, field_name: str) -> Any:
+    if value in (None, "", []):
+        raise ValidationError(f"missing required field: {field_name}")
+    return value
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1"}:
+            return True
+        if lowered in {"false", "no", "0"}:
+            return False
+    raise ValidationError(f"invalid boolean value: {value!r}")
+
+
+def sanitize_name(value: str, max_length: int = 42) -> str:
+    cleaned = value.lower().replace("/", "-").replace(".", "")
+    cleaned = cleaned.strip("-")
+    return cleaned[:max_length]
+
+
+@dataclass(slots=True)
+class Metadata:
+    name: str
+    labels: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ModelSpec:
+    name: str
+    revision: str = "main"
+
+    @property
+    def pvc_directory_name(self) -> str:
+        return self.name.replace("/", "-")
+
+    @property
+    def resource_name(self) -> str:
+        return sanitize_name(self.name)
+
+
+@dataclass(slots=True)
+class StageSpec:
+    download: bool = True
+    deploy: bool = True
+    benchmark: bool = True
+    collect: bool = True
+    cleanup: bool = True
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> "StageSpec":
+        raw = raw or {}
+        return cls(
+            download=_as_bool(raw.get("download"), True),
+            deploy=_as_bool(raw.get("deploy"), True),
+            benchmark=_as_bool(raw.get("benchmark"), True),
+            collect=_as_bool(raw.get("collect"), True),
+            cleanup=_as_bool(raw.get("cleanup"), True),
+        )
+
+
+@dataclass(slots=True)
+class MlflowSpec:
+    experiment: str = "benchflow"
+    tags: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> "MlflowSpec":
+        raw = raw or {}
+        tags = {str(key): str(value) for key, value in (raw.get("tags") or {}).items()}
+        return cls(experiment=str(raw.get("experiment", "benchflow")), tags=tags)
+
+
+@dataclass(slots=True)
+class ExperimentSpec:
+    model: ModelSpec
+    deployment_profile: str
+    benchmark_profile: str
+    metrics_profile: str = "default"
+    namespace: str = "benchflow"
+    service_account: str = "benchflow-runner"
+    ttl_seconds_after_finished: int = 3600
+    stages: StageSpec = field(default_factory=StageSpec)
+    mlflow: MlflowSpec = field(default_factory=MlflowSpec)
+
+
+@dataclass(slots=True)
+class Experiment:
+    api_version: str
+    kind: str
+    metadata: Metadata
+    spec: ExperimentSpec
+
+
+@dataclass(slots=True)
+class RuntimeSpec:
+    image: str = ""
+    replicas: int = 1
+    tensor_parallelism: int = 1
+    vllm_args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ModelStorageSpec:
+    pvc_name: str = "models-storage"
+    cache_dir: str = "/models"
+    mount_path: str = "/model-cache"
+
+
+@dataclass(slots=True)
+class DeploymentProfileSpec:
+    platform: str
+    mode: str
+    runtime: RuntimeSpec = field(default_factory=RuntimeSpec)
+    model_storage: ModelStorageSpec = field(default_factory=ModelStorageSpec)
+    namespace: str | None = None
+    repo_url: str = "https://github.com/llm-d/llm-d.git"
+    repo_ref: str = "main"
+    gateway: str = "istio"
+    endpoint_path: str = "/v1/models"
+    scheduler_profile: str = ""
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class DeploymentProfile:
+    api_version: str
+    kind: str
+    metadata: Metadata
+    spec: DeploymentProfileSpec
+
+
+@dataclass(slots=True)
+class BenchmarkProfileSpec:
+    tool: str = "guidellm"
+    backend_type: str = "openai_http"
+    rate_type: str = "concurrent"
+    rates: list[int] = field(default_factory=list)
+    data: str = "prompt_tokens=1000,output_tokens=1000"
+    max_seconds: int = 600
+    max_requests: int | None = None
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class BenchmarkProfile:
+    api_version: str
+    kind: str
+    metadata: Metadata
+    spec: BenchmarkProfileSpec
+
+
+@dataclass(slots=True)
+class MetricsProfileSpec:
+    prometheus_url: str
+    query_step: str
+    query_timeout: str
+    verify_tls: bool = False
+    queries: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class MetricsProfile:
+    api_version: str
+    kind: str
+    metadata: Metadata
+    spec: MetricsProfileSpec
+
+
+@dataclass(slots=True)
+class TargetSpec:
+    discovery: str
+    base_url: str = ""
+    resource_kind: str = ""
+    resource_name: str = ""
+    path: str = "/v1/models"
+
+
+@dataclass(slots=True)
+class ResolvedDeployment:
+    platform: str
+    mode: str
+    namespace: str
+    release_name: str
+    runtime: RuntimeSpec
+    model_storage: ModelStorageSpec
+    repo_url: str
+    repo_ref: str
+    gateway: str
+    scheduler_profile: str
+    options: dict[str, Any]
+    target: TargetSpec
+
+
+@dataclass(slots=True)
+class ProfileRefs:
+    deployment: str
+    benchmark: str
+    metrics: str
+
+
+@dataclass(slots=True)
+class ResolvedRunPlan:
+    api_version: str
+    kind: str
+    metadata: Metadata
+    profiles: ProfileRefs
+    model: ModelSpec
+    deployment: ResolvedDeployment
+    benchmark: BenchmarkProfileSpec
+    metrics: MetricsProfileSpec
+    stages: StageSpec
+    mlflow: MlflowSpec
+    service_account: str
+    ttl_seconds_after_finished: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def parse_metadata(raw: dict[str, Any]) -> Metadata:
+    metadata = raw.get("metadata") or {}
+    return Metadata(
+        name=str(_require(metadata.get("name"), "metadata.name")),
+        labels={
+            str(key): str(value)
+            for key, value in (metadata.get("labels") or {}).items()
+        },
+    )
+
+
+def parse_model_spec(raw: dict[str, Any]) -> ModelSpec:
+    return ModelSpec(
+        name=str(_require(raw.get("name"), "spec.model.name")),
+        revision=str(raw.get("revision", "main")),
+    )
