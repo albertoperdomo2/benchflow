@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from .cluster import CommandError, discover_repo_root, require_command
+from .ui import detail, emit, panel, rule, step, success, warning
 
 
 CONNECTIVITY_MARKERS = (
@@ -83,78 +84,90 @@ class Installer:
 
     def print_intro(self) -> None:
         options = self.options
-        print("Installing BenchFlow")
-        print(f"  Namespace: {options.namespace}")
-        print(f"  Install Tekton if missing: {str(options.install_tekton).lower()}")
-        print(f"  Install Grafana if missing: {str(options.install_grafana).lower()}")
-        print(f"  OpenShift Pipelines channel: {options.tekton_channel}")
-        print(f"  Grafana operator channel: {options.grafana_channel}")
-        print(
-            "  models-storage: "
-            f"{options.models_storage_access_mode} {options.models_storage_size}"
-            f"{f' via {options.models_storage_class}' if options.models_storage_class else ''}"
-        )
-        print(
-            "  benchmark-results: "
-            f"ReadWriteOnce {options.results_storage_size}"
-            f"{f' via {options.results_storage_class}' if options.results_storage_class else ''}"
-        )
-        print(
-            "  metrics access: cluster-monitoring-view -> benchflow-runner, benchflow-grafana-datasource"
+        rule("BenchFlow Install")
+        panel(
+            "Configuration",
+            (
+                ("Namespace", options.namespace),
+                ("Install Tekton if missing", str(options.install_tekton).lower()),
+                ("Install Grafana if missing", str(options.install_grafana).lower()),
+                ("OpenShift Pipelines channel", options.tekton_channel),
+                ("Grafana operator channel", options.grafana_channel),
+                (
+                    "models-storage",
+                    f"{options.models_storage_access_mode} {options.models_storage_size}"
+                    f"{f' via {options.models_storage_class}' if options.models_storage_class else ''}",
+                ),
+                (
+                    "benchmark-results",
+                    f"ReadWriteOnce {options.results_storage_size}"
+                    f"{f' via {options.results_storage_class}' if options.results_storage_class else ''}",
+                ),
+                (
+                    "metrics access",
+                    "cluster-monitoring-view -> benchflow-runner, benchflow-grafana-datasource",
+                ),
+            ),
         )
         if options.models_storage_class is None:
-            print(
-                f"  default StorageClass for models-storage: {self.default_storage_class()}"
+            detail(
+                f"default StorageClass for models-storage: {self.default_storage_class()}"
             )
         if options.models_storage_access_mode == "ReadWriteOnce":
-            print(
-                "  note: the shipped qwen smoke profile is single-replica and matches ReadWriteOnce"
+            detail(
+                "note: the shipped qwen smoke profile is single-replica and matches ReadWriteOnce"
             )
-        print()
 
     def print_summary(self) -> None:
         options = self.options
-        grafana_host = self.discover_grafana_route_host()
-
-        print()
-        print("Install complete")
-        print(f"  Namespace: {options.namespace}")
-        print(f"  Tekton install attempted: {str(options.install_tekton).lower()}")
-        print(f"  Grafana install attempted: {str(options.install_grafana).lower()}")
-        print(f"  OpenShift Pipelines channel: {options.tekton_channel}")
-        print(f"  Grafana operator channel: {options.grafana_channel}")
-        print(
-            "  models-storage: "
-            f"{options.models_storage_access_mode} {options.models_storage_size}"
-            f"{f' via {options.models_storage_class}' if options.models_storage_class else ''}"
-        )
-        print(
-            "  benchmark-results: "
-            f"ReadWriteOnce {options.results_storage_size}"
-            f"{f' via {options.results_storage_class}' if options.results_storage_class else ''}"
-        )
-        print(
-            "  metrics access: cluster-monitoring-view bound to benchflow-runner and benchflow-grafana-datasource"
+        grafana_host: str | None = None
+        try:
+            grafana_host = self.discover_grafana_route_host()
+        except CommandError as exc:
+            warning(f"Could not query the Grafana route for the final summary: {exc}")
+        rule("Install Complete")
+        panel(
+            "BenchFlow",
+            (
+                ("Namespace", options.namespace),
+                ("Tekton install attempted", str(options.install_tekton).lower()),
+                ("Grafana install attempted", str(options.install_grafana).lower()),
+                ("OpenShift Pipelines channel", options.tekton_channel),
+                ("Grafana operator channel", options.grafana_channel),
+                (
+                    "models-storage",
+                    f"{options.models_storage_access_mode} {options.models_storage_size}"
+                    f"{f' via {options.models_storage_class}' if options.models_storage_class else ''}",
+                ),
+                (
+                    "benchmark-results",
+                    f"ReadWriteOnce {options.results_storage_size}"
+                    f"{f' via {options.results_storage_class}' if options.results_storage_class else ''}",
+                ),
+                (
+                    "metrics access",
+                    "cluster-monitoring-view bound to benchflow-runner and benchflow-grafana-datasource",
+                ),
+                (
+                    "Grafana route",
+                    f"https://{grafana_host}" if grafana_host else "not detected yet",
+                ),
+            ),
         )
         if grafana_host:
-            print(f"  Grafana route: https://{grafana_host}")
-            print(
-                "  Grafana admin password: "
+            detail(
+                "Grafana admin password: "
                 f"oc get secret -n {options.namespace} {self.grafana_admin_secret_name} "
                 '-o go-template=\'{{index .data "GF_SECURITY_ADMIN_PASSWORD" | base64decode}}{{"\\n"}}\''
             )
-        else:
-            print("  Grafana route: not detected yet")
-        print()
-        print("Required secrets if you have not already created them:")
-        print("  - config/cluster/secrets/huggingface-token.example.yaml")
-        print("  - config/cluster/secrets/mlflow-auth.example.yaml")
-        print("  - config/cluster/secrets/mlflow-s3-creds.example.yaml")
-        print()
-        print("Example run:")
-        print("  pip install -e .")
-        print(
-            f"  bflow experiment run experiments/examples/qwen3-06b-llm-d-smoke.yaml --namespace {options.namespace}"
+        step("Required secrets if you have not already created them")
+        detail("config/cluster/secrets/huggingface-token.example.yaml")
+        detail("config/cluster/secrets/mlflow-auth.example.yaml")
+        detail("config/cluster/secrets/mlflow-s3-creds.example.yaml")
+        step("Example run")
+        detail("pip install -e .")
+        detail(
+            f"bflow experiment run experiments/examples/qwen3-06b-llm-d-smoke.yaml --namespace {options.namespace}"
         )
 
     def _is_connectivity_error(self, output: str) -> bool:
@@ -185,7 +198,7 @@ class Installer:
             )
             if result.returncode == 0:
                 if echo_output and result.stdout:
-                    print(result.stdout, end="")
+                    emit(result.stdout, end="")
                 return result
 
             output = (result.stderr or result.stdout or "").strip()
@@ -193,12 +206,11 @@ class Installer:
 
             if retry and self._is_connectivity_error(output) and attempt < attempts:
                 current = description or "running command"
-                print(
-                    f"Warning: transient cluster API error while {current}; retrying ({attempt}/{attempts})...",
-                    flush=True,
+                warning(
+                    f"Transient cluster API error while {current}; retrying ({attempt}/{attempts})..."
                 )
                 if output:
-                    print(output)
+                    detail(output)
                 time.sleep(delay_seconds)
                 delay_seconds *= 2
                 continue
@@ -310,7 +322,7 @@ class Installer:
 
     def ensure_namespace(self) -> None:
         if not self._resource_exists("get", "namespace", self.options.namespace):
-            print(f"Creating namespace: {self.options.namespace}")
+            step(f"Creating namespace {self.options.namespace}")
             self._oc(
                 "create",
                 "namespace",
@@ -332,13 +344,11 @@ class Installer:
         if not deletion_timestamp:
             return
 
-        print(
-            f"Waiting for namespace {self.options.namespace} to finish terminating..."
-        )
+        step(f"Waiting for namespace {self.options.namespace} to finish terminating")
         deadline = time.time() + 600
         while time.time() < deadline:
             if not self._resource_exists("get", "namespace", self.options.namespace):
-                print(f"Creating namespace: {self.options.namespace}")
+                step(f"Creating namespace {self.options.namespace}")
                 self._oc(
                     "create",
                     "namespace",
@@ -396,7 +406,7 @@ class Installer:
     def _print_olm_diagnostics(
         self, *, subscription_name: str, namespace: str, catalog_source: str
     ) -> None:
-        print("Operator OLM diagnostics:")
+        warning("Operator OLM diagnostics")
         for argv in (
             ["get", "subscription", subscription_name, "-n", namespace, "-o", "yaml"],
             ["get", "csv", "-n", namespace],
@@ -415,7 +425,7 @@ class Installer:
             result = self._oc(*argv, check=False)
             output = result.stdout or result.stderr or ""
             if output:
-                print(output, end="" if output.endswith("\n") else "\n")
+                emit(output, end="" if output.endswith("\n") else "\n", stderr=True)
 
     def _wait_for_subscription_current_csv(
         self, *, subscription_name: str, namespace: str, timeout_seconds: int
@@ -520,7 +530,7 @@ class Installer:
                     f"refusing to auto-approve InstallPlan {installplan_name}: unexpected CSV {csv_name}"
                 )
 
-        print(f"Approving pending InstallPlan {installplan_name}...")
+        step(f"Approving pending InstallPlan {installplan_name}")
         self._oc(
             "patch",
             "installplan",
@@ -581,7 +591,7 @@ class Installer:
 
     def install_tekton_if_needed(self) -> None:
         if self.tekton_ready():
-            print("Tekton CRDs already present")
+            success("Tekton CRDs already present")
             return
 
         if not self.options.install_tekton:
@@ -589,8 +599,8 @@ class Installer:
                 "Tekton is not installed and --skip-tekton-install was requested"
             )
 
-        print(
-            f"Installing OpenShift Pipelines operator in {self.pipelines_operator_namespace}..."
+        step(
+            f"Installing OpenShift Pipelines operator in {self.pipelines_operator_namespace}"
         )
         subscription_path = (
             self.repo_root
@@ -607,13 +617,13 @@ class Installer:
             description="applying OpenShift Pipelines subscription",
         )
 
-        print("Waiting for the Tekton subscription to resolve...")
+        step("Waiting for the Tekton subscription to resolve")
         tekton_csv = self._wait_for_subscription_current_csv(
             subscription_name="openshift-pipelines-operator",
             namespace=self.pipelines_operator_namespace,
             timeout_seconds=600,
         )
-        print(f"Waiting for CSV {tekton_csv} to succeed...")
+        step(f"Waiting for CSV {tekton_csv} to succeed")
         self._wait_for_csv_succeeded(
             subscription_name="openshift-pipelines-operator",
             namespace=self.pipelines_operator_namespace,
@@ -623,7 +633,7 @@ class Installer:
             catalog_source="redhat-operators",
         )
 
-        print("Waiting for Tekton CRDs...")
+        step("Waiting for Tekton CRDs")
         self._wait_for_resource(
             resource="crd/tasks.tekton.dev",
             namespace=None,
@@ -643,7 +653,7 @@ class Installer:
             label="CRD pipelineruns.tekton.dev",
         )
 
-        print("Waiting for Tekton service accounts...")
+        step("Waiting for Tekton service accounts")
         for sa_name in (
             "serviceaccount/tekton-pipelines-controller",
             "serviceaccount/tekton-events-controller",
@@ -658,7 +668,7 @@ class Installer:
 
         self.configure_tekton_scc()
 
-        print("Waiting for Tekton controllers...")
+        step("Waiting for Tekton controllers")
         for deployment in (
             "deployment/tekton-pipelines-controller",
             "deployment/tekton-pipelines-webhook",
@@ -684,12 +694,12 @@ class Installer:
         if not self._resource_exists(
             "get", "namespace", self.pipelines_runtime_namespace
         ):
-            print(
+            detail(
                 f"Skipping Tekton SCC configuration because {self.pipelines_runtime_namespace} does not exist yet"
             )
             return
 
-        print("Configuring Tekton SCCs...")
+        step("Configuring Tekton SCCs")
         for service_account in (
             "tekton-pipelines-controller",
             "tekton-events-controller",
@@ -709,13 +719,15 @@ class Installer:
                 check=False,
             )
             if result.returncode != 0:
-                print(f"  Warning: could not grant privileged SCC to {service_account}")
+                warning(f"Could not grant privileged SCC to {service_account}")
                 if result.stderr:
-                    print(
-                        result.stderr, end="" if result.stderr.endswith("\n") else "\n"
+                    emit(
+                        result.stderr,
+                        end="" if result.stderr.endswith("\n") else "\n",
+                        stderr=True,
                     )
             else:
-                print(f"  Granted privileged SCC to {service_account}")
+                success(f"Granted privileged SCC to {service_account}")
 
     def install_grafana_if_needed(self) -> None:
         if self._resource_exists(
@@ -725,7 +737,7 @@ class Installer:
             "-n",
             self.options.namespace,
         ):
-            print(
+            success(
                 f"Grafana operator subscription already present in {self.options.namespace}"
             )
         else:
@@ -735,7 +747,7 @@ class Installer:
                     "--skip-grafana-install was requested"
                 )
 
-            print(f"Installing Grafana operator in {self.options.namespace}...")
+            step(f"Installing Grafana operator in {self.options.namespace}")
             operator_group = {
                 "apiVersion": "operators.coreos.com/v1",
                 "kind": "OperatorGroup",
@@ -766,13 +778,13 @@ class Installer:
                 description="applying Grafana operator resources",
             )
 
-        print("Waiting for the Grafana subscription to resolve...")
+        step("Waiting for the Grafana subscription to resolve")
         grafana_csv = self._wait_for_subscription_current_csv(
             subscription_name=self.grafana_operator_name,
             namespace=self.options.namespace,
             timeout_seconds=600,
         )
-        print(f"Waiting for CSV {grafana_csv} to succeed...")
+        step(f"Waiting for CSV {grafana_csv} to succeed")
         self._wait_for_csv_succeeded(
             subscription_name=self.grafana_operator_name,
             namespace=self.options.namespace,
@@ -782,7 +794,7 @@ class Installer:
             catalog_source="community-operators",
         )
 
-        print("Waiting for Grafana CRDs...")
+        step("Waiting for Grafana CRDs")
         for crd in (
             "crd/grafanas.grafana.integreatly.org",
             "crd/grafanadashboards.grafana.integreatly.org",
@@ -799,7 +811,7 @@ class Installer:
             if secret_file.name.endswith(".example.yaml"):
                 continue
             found = True
-            print(f"Applying secret: {secret_file.name}")
+            step(f"Applying secret {secret_file.name}")
             self._oc(
                 "apply",
                 "-n",
@@ -811,12 +823,12 @@ class Installer:
                 echo_output=True,
             )
         if not found:
-            print("No non-example secrets found under config/cluster/secrets")
+            detail("No non-example secrets found under config/cluster/secrets")
 
     def apply_manifest_tree(self, root_dir: Path, label: str) -> None:
-        print(f"Applying {label}...")
+        step(f"Applying {label}")
         for manifest in sorted(root_dir.rglob("*.yaml")):
-            print(f"  - {manifest.relative_to(self.repo_root)}")
+            detail(str(manifest.relative_to(self.repo_root)))
             self._oc(
                 "apply",
                 "-n",
@@ -829,7 +841,7 @@ class Installer:
             )
 
     def apply_workspace_pvcs(self) -> None:
-        print("Applying workspace PVCs...")
+        step("Applying workspace PVCs")
         documents = [
             {
                 "apiVersion": "v1",
@@ -880,7 +892,7 @@ class Installer:
         )
 
     def apply_cluster_monitoring_rbac(self) -> None:
-        print("Applying cluster monitoring RBAC...")
+        step("Applying cluster monitoring RBAC")
         if not self._resource_exists("get", "clusterrole", "cluster-monitoring-view"):
             raise CommandError(
                 "required ClusterRole not found: cluster-monitoring-view. "
@@ -917,7 +929,7 @@ class Installer:
         )
 
     def apply_runner_rbac(self) -> None:
-        print("Applying runner RBAC...")
+        step("Applying runner RBAC")
         namespaced_documents = [
             {
                 "apiVersion": "rbac.authorization.k8s.io/v1",
@@ -1066,7 +1078,7 @@ class Installer:
         )
 
     def apply_namespaced_resources(self) -> None:
-        print("Applying RBAC...")
+        step("Applying namespace RBAC")
         rbac_dir = self.repo_root / "config" / "cluster" / "rbac"
         self._oc(
             "apply",
@@ -1144,7 +1156,7 @@ class Installer:
         )
 
     def apply_grafana_stack(self) -> None:
-        print("Applying Grafana monitoring RBAC...")
+        step("Applying Grafana monitoring RBAC")
         self._apply_documents(
             [
                 {
@@ -1213,7 +1225,7 @@ class Installer:
             timeout_seconds=300,
         )
 
-        print("Applying Grafana instance and route...")
+        step("Applying Grafana instance and route")
         self._apply_documents(
             [
                 {
@@ -1240,9 +1252,9 @@ class Installer:
             namespace=self.options.namespace,
             description="applying Grafana instance",
         )
-        print("Waiting for Grafana route...")
+        step("Waiting for Grafana route")
         self.wait_for_grafana_route(timeout_seconds=600)
-        print("Waiting for Grafana to become ready...")
+        step("Waiting for Grafana to become ready")
         self.wait_for_grafana_ready(timeout_seconds=600)
 
         dashboard_json = (
@@ -1309,7 +1321,7 @@ class Installer:
             },
         ]
 
-        print("Applying Grafana datasource and dashboard...")
+        step("Applying Grafana datasource and dashboard")
         self._apply_documents(
             documents,
             namespace=self.options.namespace,

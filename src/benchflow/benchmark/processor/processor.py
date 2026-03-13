@@ -13,12 +13,9 @@ import yaml
 from botocore.exceptions import ClientError
 from plotly.subplots import make_subplots
 
+from ...ui import configure_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+configure_logging("INFO")
 logger = logging.getLogger("benchmark_processor")
 
 
@@ -379,9 +376,15 @@ class BenchmarkProcessor:
             "itl_p99": _get_nested(itl_metrics, "percentiles", "p99"),
             "itl_p90": _get_nested(itl_metrics, "percentiles", "p90"),
             "tpot_p90": _get_nested(tpot_metrics, "percentiles", "p90"),
-            "request_latency_p90": _get_nested(request_latency_metrics, "percentiles", "p90"),
-            "request_latency_p95": _get_nested(request_latency_metrics, "percentiles", "p95"),
-            "request_latency_p99": _get_nested(request_latency_metrics, "percentiles", "p99"),
+            "request_latency_p90": _get_nested(
+                request_latency_metrics, "percentiles", "p90"
+            ),
+            "request_latency_p95": _get_nested(
+                request_latency_metrics, "percentiles", "p95"
+            ),
+            "request_latency_p99": _get_nested(
+                request_latency_metrics, "percentiles", "p99"
+            ),
             "runtime_args": self.runtime_args,
             "replicas": self.replicas,
         }

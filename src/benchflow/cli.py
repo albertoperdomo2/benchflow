@@ -45,6 +45,7 @@ from .repository import clone_repo
 from .renderers.deployment import write_deployment_assets
 from .renderers.tekton import render_pipelinerun
 from .tasking import assert_task_status, write_stage_results
+from .ui import HelpFormatter, error as ui_error
 from .waiting import wait_for_endpoint
 
 
@@ -327,8 +328,14 @@ def _dump(data, output_format: str) -> str:
 
 
 def _add_profile_source_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--repo-root")
-    parser.add_argument("--profiles-dir")
+    parser.add_argument(
+        "--repo-root",
+        help="BenchFlow repository root. Defaults to the current checkout.",
+    )
+    parser.add_argument(
+        "--profiles-dir",
+        help="Profiles directory. Defaults to <repo-root>/profiles.",
+    )
 
 
 def _format_profile_list(entries: list[dict[str, object]]) -> str:
@@ -1259,22 +1266,59 @@ def cmd_complete_internal(args: argparse.Namespace) -> int:
 
 
 def _add_experiment_input_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("experiment", nargs="?")
-    parser.add_argument("--repo-root")
-    parser.add_argument("--profiles-dir")
-    parser.add_argument("--namespace")
-    parser.add_argument("--name")
-    parser.add_argument("--label", action="append", default=[], metavar="KEY=VALUE")
-    parser.add_argument("--model")
-    parser.add_argument("--model-revision")
-    parser.add_argument("--deployment-profile")
-    parser.add_argument("--benchmark-profile")
-    parser.add_argument("--metrics-profile")
-    parser.add_argument("--service-account")
-    parser.add_argument("--ttl-seconds-after-finished", type=int)
-    parser.add_argument("--mlflow-experiment")
     parser.add_argument(
-        "--mlflow-tag", action="append", default=[], metavar="KEY=VALUE"
+        "experiment",
+        nargs="?",
+        help="Experiment file to load. If omitted, define the experiment entirely with flags.",
+    )
+    parser.add_argument(
+        "--repo-root",
+        help="BenchFlow repository root. Defaults to the current checkout.",
+    )
+    parser.add_argument(
+        "--profiles-dir",
+        help="Profiles directory. Defaults to <repo-root>/profiles.",
+    )
+    parser.add_argument("--namespace", help="Target namespace for the run.")
+    parser.add_argument("--name", help="Experiment name override.")
+    parser.add_argument(
+        "--label",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Experiment label override. Repeat to set multiple labels.",
+    )
+    parser.add_argument(
+        "--model", help="Model identifier, for example Qwen/Qwen3-0.6B."
+    )
+    parser.add_argument("--model-revision", help="Model revision or tag.")
+    parser.add_argument(
+        "--deployment-profile",
+        help="Deployment profile name.",
+    )
+    parser.add_argument(
+        "--benchmark-profile",
+        help="Benchmark profile name.",
+    )
+    parser.add_argument(
+        "--metrics-profile",
+        help="Metrics profile name.",
+    )
+    parser.add_argument(
+        "--service-account", help="Service account used by the PipelineRun."
+    )
+    parser.add_argument(
+        "--ttl-seconds-after-finished",
+        type=int,
+        help="TTL for finished PipelineRuns.",
+    )
+    parser.add_argument("--mlflow-experiment", help="MLflow experiment name override.")
+    parser.add_argument(
+        "--mlflow-tag",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="MLflow tag override. Repeat to set multiple tags.",
     )
     for stage_name in ("download", "deploy", "benchmark", "collect", "cleanup"):
         parser.add_argument(
@@ -1282,48 +1326,149 @@ def _add_experiment_input_arguments(parser: argparse.ArgumentParser) -> None:
             dest=f"stage_{stage_name}",
             action=argparse.BooleanOptionalAction,
             default=None,
+            help=f"Enable or disable the {stage_name} stage.",
         )
 
 
 def _add_run_plan_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--run-plan-file")
-    parser.add_argument("--run-plan-json")
+    parser.add_argument(
+        "--run-plan-file",
+        help="Path to a pre-resolved RunPlan file.",
+    )
+    parser.add_argument(
+        "--run-plan-json",
+        help="Inline RunPlan JSON payload.",
+    )
+
+
+def _add_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    name: str,
+    *,
+    help_text: str | None = None,
+    description: str | None = None,
+    add_help: bool = True,
+    hidden: bool = False,
+) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        name,
+        help=argparse.SUPPRESS if hidden else help_text,
+        description=description,
+        formatter_class=HelpFormatter,
+        add_help=add_help,
+    )
+    if hidden:
+        subparsers._choices_actions = [  # type: ignore[attr-defined]
+            action
+            for action in subparsers._choices_actions  # type: ignore[attr-defined]
+            if getattr(action, "dest", None) != name
+        ]
+    return parser
 
 
 def _register_experiment_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    *,
+    hidden: bool = False,
 ) -> None:
-    validate = subparsers.add_parser("validate")
+    validate = _add_parser(
+        subparsers,
+        "validate",
+        help_text="Validate an experiment definition",
+        description="Validate an experiment file or CLI-defined experiment.",
+        hidden=hidden,
+    )
     _add_experiment_input_arguments(validate)
     validate.set_defaults(func=cmd_validate)
 
-    resolve = subparsers.add_parser("resolve")
+    resolve = _add_parser(
+        subparsers,
+        "resolve",
+        help_text="Resolve profiles into a complete RunPlan",
+        description="Resolve an experiment into the fully expanded RunPlan used by BenchFlow.",
+        hidden=hidden,
+    )
     _add_experiment_input_arguments(resolve)
     resolve.add_argument("--format", choices=("yaml", "json"), default="yaml")
     resolve.set_defaults(func=cmd_resolve)
 
-    render_pr = subparsers.add_parser("render-pipelinerun")
+    render_pr = _add_parser(
+        subparsers,
+        "render-pipelinerun",
+        help_text="Render the Tekton PipelineRun manifest",
+        description="Render the Tekton PipelineRun that would be submitted for an experiment.",
+        hidden=hidden,
+    )
     _add_experiment_input_arguments(render_pr)
-    render_pr.add_argument("--pipeline-name", default="benchflow-e2e")
+    render_pr.add_argument(
+        "--pipeline-name",
+        default="benchflow-e2e",
+        help="Pipeline name to reference in the rendered PipelineRun.",
+    )
     render_pr.set_defaults(func=cmd_render_pipelinerun)
 
-    render_deployment = subparsers.add_parser("render-deployment")
+    render_deployment = _add_parser(
+        subparsers,
+        "render-deployment",
+        help_text="Render deployment manifests to disk",
+        description="Render deployment assets for an experiment without submitting a run.",
+        hidden=hidden,
+    )
     _add_experiment_input_arguments(render_deployment)
-    render_deployment.add_argument("--output-dir", required=True)
+    render_deployment.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where the rendered deployment assets should be written.",
+    )
     render_deployment.set_defaults(func=cmd_render_deployment)
 
-    run = subparsers.add_parser("run")
+    run = _add_parser(
+        subparsers,
+        "run",
+        help_text="Submit an experiment as a PipelineRun",
+        description="Submit an experiment to the cluster and optionally follow it.",
+        hidden=hidden,
+    )
     _add_experiment_input_arguments(run)
-    run.add_argument("--pipeline-name", default="benchflow-e2e")
-    run.add_argument("--output")
-    run.add_argument("--follow", action="store_true")
+    run.add_argument(
+        "--pipeline-name",
+        default="benchflow-e2e",
+        help="Pipeline name to reference when rendering the PipelineRun.",
+    )
+    run.add_argument(
+        "--output",
+        help="Write the rendered PipelineRun manifest to this file before submitting.",
+    )
+    run.add_argument(
+        "--follow",
+        action="store_true",
+        help="Follow the PipelineRun after submission.",
+    )
     run.set_defaults(func=cmd_run, follow=False)
 
-    cleanup = subparsers.add_parser("cleanup")
+    cleanup = _add_parser(
+        subparsers,
+        "cleanup",
+        help_text="Submit a cleanup-only PipelineRun",
+        description="Submit a cleanup-only run for an experiment.",
+        hidden=hidden,
+    )
     _add_experiment_input_arguments(cleanup)
-    cleanup.add_argument("--pipeline-name", default="benchflow-e2e")
-    cleanup.add_argument("--output")
-    cleanup.add_argument("--no-follow", dest="follow", action="store_false")
+    cleanup.add_argument(
+        "--pipeline-name",
+        default="benchflow-e2e",
+        help="Pipeline name to reference when rendering the cleanup PipelineRun.",
+    )
+    cleanup.add_argument(
+        "--output",
+        help="Write the rendered cleanup PipelineRun manifest to this file before submitting.",
+    )
+    cleanup.add_argument(
+        "--no-follow",
+        dest="follow",
+        action="store_false",
+        help="Submit the cleanup PipelineRun without following it.",
+    )
     cleanup.set_defaults(func=cmd_cleanup, follow=True)
 
 
@@ -1335,7 +1480,12 @@ def _register_runtime_plan_source_arguments(parser: argparse.ArgumentParser) -> 
 def _register_repo_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    clone = subparsers.add_parser("clone")
+    clone = _add_parser(
+        subparsers,
+        "clone",
+        help_text="Clone a source repository",
+        description="Clone a repository into a local directory for deployment work.",
+    )
     clone.add_argument("--url", required=True)
     clone.add_argument("--revision", default="main")
     clone.add_argument("--output-dir", required=True)
@@ -1348,7 +1498,12 @@ def _register_repo_commands(
 def _register_model_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    download = subparsers.add_parser("download")
+    download = _add_parser(
+        subparsers,
+        "download",
+        help_text="Download a model into the model cache",
+        description="Download a model referenced by the RunPlan into the shared model cache.",
+    )
     _register_runtime_plan_source_arguments(download)
     download.add_argument("--models-storage-path", required=True)
     download.add_argument("--no-skip-if-exists", action="store_true")
@@ -1358,7 +1513,12 @@ def _register_model_commands(
 def _register_deploy_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    llmd = subparsers.add_parser("llm-d")
+    llmd = _add_parser(
+        subparsers,
+        "llm-d",
+        help_text="Deploy an llm-d scenario",
+        description="Deploy an llm-d scenario from a resolved RunPlan.",
+    )
     _register_runtime_plan_source_arguments(llmd)
     llmd.add_argument("--source-dir")
     llmd.add_argument("--manifests-dir")
@@ -1372,7 +1532,12 @@ def _register_deploy_commands(
 def _register_undeploy_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    llmd = subparsers.add_parser("llm-d")
+    llmd = _add_parser(
+        subparsers,
+        "llm-d",
+        help_text="Remove an llm-d deployment",
+        description="Tear down an llm-d deployment from a resolved RunPlan.",
+    )
     _register_runtime_plan_source_arguments(llmd)
     llmd.add_argument("--no-wait", action="store_true")
     llmd.add_argument("--timeout-seconds", type=int, default=600)
@@ -1383,7 +1548,12 @@ def _register_undeploy_commands(
 def _register_wait_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    endpoint = subparsers.add_parser("endpoint")
+    endpoint = _add_parser(
+        subparsers,
+        "endpoint",
+        help_text="Wait for the deployment endpoint to become ready",
+        description="Poll the resolved target endpoint until it becomes reachable.",
+    )
     _register_runtime_plan_source_arguments(endpoint)
     endpoint.add_argument("--target-url")
     endpoint.add_argument("--endpoint-path")
@@ -1396,7 +1566,12 @@ def _register_wait_commands(
 def _register_benchmark_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    run = subparsers.add_parser("run")
+    run = _add_parser(
+        subparsers,
+        "run",
+        help_text="Run a GuideLLM benchmark",
+        description="Execute the configured benchmark and optionally upload results to MLflow.",
+    )
     _register_runtime_plan_source_arguments(run)
     run.add_argument("--target-url")
     run.add_argument("--output-dir")
@@ -1409,7 +1584,12 @@ def _register_benchmark_commands(
     run.add_argument("--benchmark-end-time-output")
     run.set_defaults(func=cmd_benchmark_run)
 
-    report = subparsers.add_parser("report")
+    report = _add_parser(
+        subparsers,
+        "report",
+        help_text="Generate a benchmark report",
+        description="Generate a report from benchmark JSON and optional MLflow metadata.",
+    )
     _register_runtime_plan_source_arguments(report)
     report.add_argument("--json-path")
     report.add_argument("--model-name")
@@ -1432,7 +1612,12 @@ def _register_benchmark_commands(
 def _register_metrics_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    collect = subparsers.add_parser("collect")
+    collect = _add_parser(
+        subparsers,
+        "collect",
+        help_text="Collect Prometheus metrics for a benchmark window",
+        description="Collect benchmark metrics from Prometheus or Thanos for a resolved RunPlan.",
+    )
     _register_runtime_plan_source_arguments(collect)
     collect.add_argument("--benchmark-start-time", required=True)
     collect.add_argument("--benchmark-end-time", required=True)
@@ -1443,7 +1628,12 @@ def _register_metrics_commands(
 def _register_artifacts_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    collect = subparsers.add_parser("collect")
+    collect = _add_parser(
+        subparsers,
+        "collect",
+        help_text="Collect run artifacts into a local directory",
+        description="Collect the artifacts BenchFlow expects from a finished run.",
+    )
     _register_runtime_plan_source_arguments(collect)
     collect.add_argument("--artifacts-dir", required=True)
     collect.add_argument("--pipeline-run-name")
@@ -1453,7 +1643,12 @@ def _register_artifacts_commands(
 def _register_mlflow_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    upload = subparsers.add_parser("upload")
+    upload = _add_parser(
+        subparsers,
+        "upload",
+        help_text="Upload artifacts and metrics to MLflow",
+        description="Upload benchmark artifacts, metrics, and metadata to MLflow.",
+    )
     _register_runtime_plan_source_arguments(upload)
     upload.add_argument("--mlflow-run-id", required=True)
     upload.add_argument("--benchmark-start-time", required=True)
@@ -1466,7 +1661,12 @@ def _register_mlflow_commands(
 def _register_task_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    resolve = subparsers.add_parser("resolve-run-plan")
+    resolve = _add_parser(
+        subparsers,
+        "resolve-run-plan",
+        help_text="Internal task entrypoint for RunPlan stage outputs",
+        description="Internal command used by Tekton tasks to resolve a RunPlan into stage files.",
+    )
     resolve.add_argument("--run-plan-json", required=True)
     resolve.add_argument("--stage-download-path", required=True)
     resolve.add_argument("--stage-deploy-path", required=True)
@@ -1475,7 +1675,12 @@ def _register_task_commands(
     resolve.add_argument("--stage-cleanup-path", required=True)
     resolve.set_defaults(func=cmd_task_resolve_run_plan)
 
-    assert_status_cmd = subparsers.add_parser("assert-status")
+    assert_status_cmd = _add_parser(
+        subparsers,
+        "assert-status",
+        help_text="Internal task entrypoint for status assertions",
+        description="Internal command used by Tekton tasks to assert task status transitions.",
+    )
     assert_status_cmd.add_argument("--task-name", required=True)
     assert_status_cmd.add_argument("--task-status", required=True)
     assert_status_cmd.add_argument(
@@ -1486,105 +1691,318 @@ def _register_task_commands(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="bflow")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        prog="bflow",
+        description=(
+            "BenchFlow installs the cluster prerequisites and runs LLM inference "
+            "benchmarks from experiment files or direct CLI flags."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  bflow install\n"
+            "  bflow experiment run experiments/examples/qwen3-06b-llm-d-smoke.yaml\n"
+            "  bflow experiment run --model Qwen/Qwen3-0.6B "
+            "--deployment-profile llm-d-inference-scheduling "
+            "--benchmark-profile concurrent-1k-1k"
+        ),
+        formatter_class=HelpFormatter,
+    )
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+        title="Commands",
+        metavar="COMMAND",
+    )
 
-    install = subparsers.add_parser("install")
-    install.add_argument("--repo-root")
-    install.add_argument("--namespace")
-    install.add_argument("--skip-tekton-install", action="store_true")
-    install.add_argument("--skip-grafana-install", action="store_true")
-    install.add_argument("--tekton-channel")
-    install.add_argument("--grafana-channel")
-    install.add_argument("--models-storage-class")
-    install.add_argument("--models-size")
-    install.add_argument("--models-access-mode")
-    install.add_argument("--results-storage-class")
-    install.add_argument("--results-size")
+    install = _add_parser(
+        subparsers,
+        "install",
+        help_text="Install BenchFlow and cluster dependencies",
+        description="Install BenchFlow into a namespace and bootstrap Tekton, Grafana, RBAC, and PVCs.",
+    )
+    install.add_argument(
+        "--repo-root",
+        help="BenchFlow repository root. Defaults to the current checkout.",
+    )
+    install.add_argument(
+        "--namespace",
+        help="Target namespace. Defaults to benchflow.",
+    )
+    install.add_argument(
+        "--skip-tekton-install",
+        action="store_true",
+        help="Do not install Tekton if it is missing.",
+    )
+    install.add_argument(
+        "--skip-grafana-install",
+        action="store_true",
+        help="Do not install the Grafana operator if it is missing.",
+    )
+    install.add_argument(
+        "--tekton-channel",
+        help="OpenShift Pipelines operator channel.",
+    )
+    install.add_argument(
+        "--grafana-channel",
+        help="Grafana operator channel.",
+    )
+    install.add_argument(
+        "--models-storage-class",
+        help="StorageClass for the shared model cache PVC.",
+    )
+    install.add_argument(
+        "--models-size",
+        help="Requested size for the model cache PVC.",
+    )
+    install.add_argument(
+        "--models-access-mode",
+        help="Access mode for the model cache PVC.",
+    )
+    install.add_argument(
+        "--results-storage-class",
+        help="StorageClass for the benchmark results PVC.",
+    )
+    install.add_argument(
+        "--results-size",
+        help="Requested size for the benchmark results PVC.",
+    )
     install.set_defaults(func=cmd_install)
 
-    experiment = subparsers.add_parser("experiment")
+    experiment = _add_parser(
+        subparsers,
+        "experiment",
+        help_text="Work with experiment definitions",
+        description="Validate, resolve, render, run, or clean up BenchFlow experiments.",
+    )
     experiment_subparsers = experiment.add_subparsers(
-        dest="experiment_command", required=True
+        dest="experiment_command",
+        required=True,
+        title="Experiment commands",
+        metavar="EXPERIMENT_COMMAND",
     )
     _register_experiment_commands(experiment_subparsers)
 
-    repo = subparsers.add_parser("repo")
-    repo_subparsers = repo.add_subparsers(dest="repo_command", required=True)
+    repo = _add_parser(
+        subparsers,
+        "repo",
+        help_text="Repository utilities",
+        description="Repository helpers used by deployment workflows.",
+    )
+    repo_subparsers = repo.add_subparsers(
+        dest="repo_command",
+        required=True,
+        title="Repo commands",
+        metavar="REPO_COMMAND",
+    )
     _register_repo_commands(repo_subparsers)
 
-    model = subparsers.add_parser("model")
-    model_subparsers = model.add_subparsers(dest="model_command", required=True)
+    model = _add_parser(
+        subparsers,
+        "model",
+        help_text="Model cache operations",
+        description="Manage cached models used by BenchFlow runs.",
+    )
+    model_subparsers = model.add_subparsers(
+        dest="model_command",
+        required=True,
+        title="Model commands",
+        metavar="MODEL_COMMAND",
+    )
     _register_model_commands(model_subparsers)
 
-    deploy = subparsers.add_parser("deploy")
-    deploy_subparsers = deploy.add_subparsers(dest="deploy_command", required=True)
+    deploy = _add_parser(
+        subparsers,
+        "deploy",
+        help_text="Deployment operations",
+        description="Deploy a scenario from a resolved BenchFlow RunPlan.",
+    )
+    deploy_subparsers = deploy.add_subparsers(
+        dest="deploy_command",
+        required=True,
+        title="Deployment commands",
+        metavar="DEPLOYMENT_COMMAND",
+    )
     _register_deploy_commands(deploy_subparsers)
 
-    undeploy = subparsers.add_parser("undeploy")
+    undeploy = _add_parser(
+        subparsers,
+        "undeploy",
+        help_text="Cleanup deployment resources",
+        description="Remove a deployment created from a BenchFlow RunPlan.",
+    )
     undeploy_subparsers = undeploy.add_subparsers(
-        dest="undeploy_command", required=True
+        dest="undeploy_command",
+        required=True,
+        title="Cleanup commands",
+        metavar="CLEANUP_COMMAND",
     )
     _register_undeploy_commands(undeploy_subparsers)
 
-    wait = subparsers.add_parser("wait")
-    wait_subparsers = wait.add_subparsers(dest="wait_command", required=True)
+    wait = _add_parser(
+        subparsers,
+        "wait",
+        help_text="Wait for runtime conditions",
+        description="Wait for endpoints or other runtime conditions to become ready.",
+    )
+    wait_subparsers = wait.add_subparsers(
+        dest="wait_command",
+        required=True,
+        title="Wait commands",
+        metavar="WAIT_COMMAND",
+    )
     _register_wait_commands(wait_subparsers)
 
-    benchmark = subparsers.add_parser("benchmark")
+    benchmark = _add_parser(
+        subparsers,
+        "benchmark",
+        help_text="Benchmark execution and reporting",
+        description="Run benchmarks and generate reports for BenchFlow scenarios.",
+    )
     benchmark_subparsers = benchmark.add_subparsers(
-        dest="benchmark_command", required=True
+        dest="benchmark_command",
+        required=True,
+        title="Benchmark commands",
+        metavar="BENCHMARK_COMMAND",
     )
     _register_benchmark_commands(benchmark_subparsers)
 
-    artifacts = subparsers.add_parser("artifacts")
+    artifacts = _add_parser(
+        subparsers,
+        "artifacts",
+        help_text="Artifact collection",
+        description="Collect benchmark and run artifacts into a local directory.",
+    )
     artifacts_subparsers = artifacts.add_subparsers(
-        dest="artifacts_command", required=True
+        dest="artifacts_command",
+        required=True,
+        title="Artifact commands",
+        metavar="ARTIFACT_COMMAND",
     )
     _register_artifacts_commands(artifacts_subparsers)
 
-    metrics = subparsers.add_parser("metrics")
-    metrics_subparsers = metrics.add_subparsers(dest="metrics_command", required=True)
+    metrics = _add_parser(
+        subparsers,
+        "metrics",
+        help_text="Metrics collection",
+        description="Collect Prometheus metrics for BenchFlow benchmark windows.",
+    )
+    metrics_subparsers = metrics.add_subparsers(
+        dest="metrics_command",
+        required=True,
+        title="Metrics commands",
+        metavar="METRICS_COMMAND",
+    )
     _register_metrics_commands(metrics_subparsers)
 
-    mlflow_cmd = subparsers.add_parser("mlflow")
-    mlflow_subparsers = mlflow_cmd.add_subparsers(dest="mlflow_command", required=True)
+    mlflow_cmd = _add_parser(
+        subparsers,
+        "mlflow",
+        help_text="MLflow integration",
+        description="Upload and organize BenchFlow benchmark outputs in MLflow.",
+    )
+    mlflow_subparsers = mlflow_cmd.add_subparsers(
+        dest="mlflow_command",
+        required=True,
+        title="MLflow commands",
+        metavar="MLFLOW_COMMAND",
+    )
     _register_mlflow_commands(mlflow_subparsers)
 
-    task = subparsers.add_parser("task")
-    task_subparsers = task.add_subparsers(dest="task_command", required=True)
+    task = _add_parser(
+        subparsers,
+        "task",
+        help_text="Internal Tekton task entrypoints",
+        description="Internal commands invoked by Tekton tasks inside the BenchFlow image.",
+    )
+    task_subparsers = task.add_subparsers(
+        dest="task_command",
+        required=True,
+        title="Task commands",
+        metavar="TASK_COMMAND",
+    )
     _register_task_commands(task_subparsers)
 
-    watch = subparsers.add_parser("watch")
-    watch.add_argument("pipelinerun_name")
-    watch.add_argument("--namespace")
+    watch = _add_parser(
+        subparsers,
+        "watch",
+        help_text="Follow a PipelineRun until completion",
+        description="Stream a PipelineRun and report its terminal state.",
+    )
+    watch.add_argument("pipelinerun_name", help="PipelineRun name to follow.")
+    watch.add_argument(
+        "--namespace",
+        help="Namespace that contains the PipelineRun. Defaults to the current oc project.",
+    )
     watch.set_defaults(func=cmd_watch)
 
-    _register_experiment_commands(subparsers)
+    _register_experiment_commands(subparsers, hidden=True)
 
-    profiles = subparsers.add_parser("profiles")
-    profile_subparsers = profiles.add_subparsers(dest="profiles_command", required=True)
+    profiles = _add_parser(
+        subparsers,
+        "profiles",
+        help_text="Inspect available profiles",
+        description="List and inspect deployment, benchmark, and metrics profiles.",
+    )
+    profile_subparsers = profiles.add_subparsers(
+        dest="profiles_command",
+        required=True,
+        title="Profile commands",
+        metavar="PROFILE_COMMAND",
+    )
 
-    profiles_list = profile_subparsers.add_parser("list")
+    profiles_list = _add_parser(
+        profile_subparsers,
+        "list",
+        help_text="List available profiles",
+        description="List the profiles available in the current repository.",
+    )
     _add_profile_source_arguments(profiles_list)
-    profiles_list.add_argument("--kind", choices=("deployment", "benchmark", "metrics"))
     profiles_list.add_argument(
-        "--format", choices=("table", "yaml", "json"), default="table"
+        "--kind",
+        choices=("deployment", "benchmark", "metrics"),
+        help="Restrict the list to one profile kind.",
+    )
+    profiles_list.add_argument(
+        "--format",
+        choices=("table", "yaml", "json"),
+        default="table",
+        help="Output format.",
     )
     profiles_list.set_defaults(func=cmd_profiles_list)
 
-    profiles_show = profile_subparsers.add_parser("show")
+    profiles_show = _add_parser(
+        profile_subparsers,
+        "show",
+        help_text="Show a single profile",
+        description="Print a single profile document in YAML or JSON.",
+    )
     _add_profile_source_arguments(profiles_show)
-    profiles_show.add_argument("name")
-    profiles_show.add_argument("--kind", choices=("deployment", "benchmark", "metrics"))
-    profiles_show.add_argument("--format", choices=("yaml", "json"), default="yaml")
+    profiles_show.add_argument("name", help="Profile name.")
+    profiles_show.add_argument(
+        "--kind",
+        choices=("deployment", "benchmark", "metrics"),
+        help="Profile kind when the name is ambiguous.",
+    )
+    profiles_show.add_argument(
+        "--format",
+        choices=("yaml", "json"),
+        default="yaml",
+        help="Output format.",
+    )
     profiles_show.set_defaults(func=cmd_profiles_show)
 
-    completion = subparsers.add_parser("completion")
-    completion.add_argument("shell", choices=("bash", "zsh"))
+    completion = _add_parser(
+        subparsers,
+        "completion",
+        help_text="Generate shell completion",
+        description="Emit shell completion setup for bash or zsh.",
+    )
+    completion.add_argument("shell", choices=("bash", "zsh"), help="Target shell.")
     completion.set_defaults(func=cmd_completion)
 
-    complete_internal = subparsers.add_parser("_complete", add_help=False)
+    complete_internal = _add_parser(
+        subparsers, "_complete", add_help=False, hidden=True
+    )
     complete_internal.add_argument("shell", choices=("bash", "zsh"))
     complete_internal.add_argument("words", nargs=argparse.REMAINDER)
     complete_internal.set_defaults(func=cmd_complete_internal)
@@ -1598,7 +2016,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except (CommandError, ValidationError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        ui_error(str(exc))
         return 1
 
 

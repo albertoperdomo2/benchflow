@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .ui import detail, step, success, warning
+
 
 class CommandError(RuntimeError):
     """Raised when a required external command fails."""
@@ -147,6 +149,7 @@ def follow_pipelinerun(namespace: str, name: str, *, poll_interval: int = 5) -> 
     require_command("oc")
 
     if shutil.which("tkn") is not None:
+        step(f"Following PipelineRun {name} in namespace {namespace}")
         subprocess.run(
             ["tkn", "pipelinerun", "logs", "-f", "-n", namespace, name],
             check=False,
@@ -154,21 +157,29 @@ def follow_pipelinerun(namespace: str, name: str, *, poll_interval: int = 5) -> 
         state, finished, succeeded, message = pipelinerun_state(
             get_pipelinerun(namespace, name)
         )
-        print(f"{name}: {state}")
+        if succeeded:
+            success(f"{name}: {state}")
+        else:
+            warning(f"{name}: {state}")
         if message:
-            print(message)
+            detail(message)
         return finished and succeeded
 
     last_state: tuple[str, bool, bool, str] | None = None
+    step(f"Watching PipelineRun {name} in namespace {namespace}")
     while True:
         state = pipelinerun_state(get_pipelinerun(namespace, name))
         if state != last_state:
             label, _, _, message = state
-            print(f"{name}: {label}")
+            detail(f"{name}: {label}")
             if message:
-                print(message)
+                detail(message)
             last_state = state
         label, finished, succeeded, _ = state
         if finished:
+            if succeeded:
+                success(f"{name}: {label}")
+            else:
+                warning(f"{name}: {label}")
             return succeeded
         time.sleep(poll_interval)

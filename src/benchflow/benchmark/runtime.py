@@ -12,6 +12,8 @@ from typing import Dict, Any
 
 import mlflow
 
+from ..ui import configure_logging, emit
+
 # Disable SSL warnings if using self-signed certificates
 if os.environ.get("MLFLOW_TRACKING_INSECURE_TLS", "false").lower() == "true":
     import urllib3
@@ -30,11 +32,7 @@ except ImportError:
 
 # Configure logging level from environment variable
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+configure_logging(log_level)
 logger = logging.getLogger(__name__)
 
 
@@ -304,7 +302,7 @@ def run_guidellm_cli(
             )
 
             for line in process.stdout:
-                print(line, end="")
+                emit(line, end="")
                 log_file.write(line)
                 log_file.flush()
 
