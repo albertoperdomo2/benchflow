@@ -1476,20 +1476,36 @@ def main():
     # Log in to HF
     hf_token = os.environ.get("HF_TOKEN")
     if hf_token:
-        if shutil.which("hf"):
-            hf_cmd = ["hf", "auth", "login", "--token", hf_token]
-        elif shutil.which("huggingface-cli"):
-            hf_cmd = ["huggingface-cli", "login", "--token", hf_token]
-        else:
-            logger.error("No Huggingface CLI tool found...")
+        try:
+            from huggingface_hub import login as hf_login
 
-        subprocess.run(
-            hf_cmd,
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-        logger.info("Successfully authenticated with HuggingFace")
+            hf_login(
+                token=hf_token,
+                add_to_git_credential=False,
+                skip_if_logged_in=True,
+            )
+            logger.info("Successfully authenticated with HuggingFace")
+        except Exception as exc:
+            logger.warning(
+                "Python Hugging Face login failed (%s); trying CLI fallback",
+                exc,
+            )
+            if shutil.which("hf"):
+                hf_cmd = ["hf", "auth", "login", "--token", hf_token]
+            elif shutil.which("huggingface-cli"):
+                hf_cmd = ["huggingface-cli", "login", "--token", hf_token]
+            else:
+                raise RuntimeError(
+                    "HF_TOKEN is set but no Hugging Face login method is available"
+                ) from exc
+
+            subprocess.run(
+                hf_cmd,
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            logger.info("Successfully authenticated with HuggingFace")
 
     # Check if MLflow is enabled via environment variable
     mlflow_enabled = os.environ.get("MLFLOW_ENABLED", "false").lower() == "true"
