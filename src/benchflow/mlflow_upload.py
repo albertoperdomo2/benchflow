@@ -48,7 +48,6 @@ def _discover_grafana_base_url(namespace: str) -> str:
 
 def _build_grafana_url(
     plan: ResolvedRunPlan,
-    experiment_id: str,
     run_id: str,
     benchmark_start_time: str,
     benchmark_end_time: str,
@@ -61,23 +60,12 @@ def _build_grafana_url(
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
     return (
-        f"{grafana_base_url}/d/benchflow-archive"
-        f"?var-experiment_id={experiment_id}"
-        f"&var-run_id={run_id}"
+        f"{grafana_base_url}/d/benchflow"
+        f"?var-run_id={run_id}"
         f"&var-namespace={plan.deployment.namespace}"
         f"&var-release={plan.deployment.release_name}"
         f"&from={start_ms}"
         f"&to={end_ms}"
-    )
-
-
-def _build_metrics_archive_url(
-    *, experiment_id: str, run_id: str, public_base_url: str
-) -> str:
-    if not public_base_url:
-        return ""
-    return (
-        f"{public_base_url.rstrip('/')}/{experiment_id}/{run_id}/artifacts/metrics/raw"
     )
 
 
@@ -134,31 +122,16 @@ def upload_to_mlflow(
         experiment_id = str(run.info.experiment_id)
         detail(f"MLflow experiment ID: {experiment_id}")
         client.set_tag(mlflow_run_id, "mlflow_experiment_id", experiment_id)
-        public_base_url = os.environ.get("BENCHFLOW_ARCHIVE_BASE_URL", "").strip()
-        archive_url = _build_metrics_archive_url(
-            experiment_id=experiment_id,
-            run_id=mlflow_run_id,
-            public_base_url=public_base_url,
-        )
-        if not archive_url:
-            warning(
-                "BENCHFLOW_ARCHIVE_BASE_URL is not configured; "
-                "the archive dashboard URL will not be recorded"
-            )
         grafana_base_url = grafana_url or _discover_grafana_base_url(
             plan.deployment.namespace
         )
         full_grafana_url = _build_grafana_url(
             plan,
-            experiment_id,
             mlflow_run_id,
             benchmark_start_time,
             benchmark_end_time,
             grafana_base_url,
         )
-        if archive_url:
-            detail(f"Setting metrics archive URL tag: {archive_url}")
-            client.set_tag(mlflow_run_id, "metrics_archive_url", archive_url)
         if full_grafana_url:
             detail(f"Setting Grafana URL tag: {full_grafana_url}")
             client.set_tag(mlflow_run_id, "grafana_url", full_grafana_url)

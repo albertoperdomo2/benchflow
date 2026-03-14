@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import secrets
 import subprocess
@@ -8,7 +7,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 import yaml
 
@@ -1278,41 +1276,6 @@ class Installer:
             / "monitoring"
             / "grafana-dashboard-benchflow.json"
         ).read_text(encoding="utf-8")
-        dashboard_archive_json = (
-            self.repo_root
-            / "config"
-            / "monitoring"
-            / "grafana-dashboard-benchflow-archive.json"
-        ).read_text(encoding="utf-8")
-        archive_base_url = ""
-        if self._resource_exists(
-            "get", "secret", "mlflow-s3-secret", "-n", self.options.namespace
-        ):
-            mlflow_secret = self._oc_json(
-                "get",
-                "secret",
-                "mlflow-s3-secret",
-                "-n",
-                self.options.namespace,
-                retry=True,
-                description="reading secret/mlflow-s3-secret",
-            )
-            secret_data = mlflow_secret.get("data", {}) or {}
-            encoded = str(secret_data.get("archive-base-url", "") or "")
-            if encoded:
-                archive_base_url = base64.b64decode(encoded).decode("utf-8")
-        if not archive_base_url:
-            warning(
-                "mlflow-s3-secret does not define archive-base-url; "
-                "the archive dashboard will need that HTTP(S) MLflow artifact root "
-                "configured before Infinity queries can succeed"
-            )
-            archive_base_url = "https://example.invalid/mlflow"
-        archive_allowed_host = (
-            f"{urlsplit(archive_base_url).scheme}://{urlsplit(archive_base_url).netloc}"
-            if urlsplit(archive_base_url).netloc
-            else archive_base_url
-        )
 
         datasources_yaml = yaml.safe_dump(
             {
@@ -1332,16 +1295,6 @@ class Installer:
                         },
                         "secureJsonData": {
                             "httpHeaderValue1": "Bearer ${GRAFANA_THANOS_TOKEN}",
-                        },
-                    },
-                    {
-                        "name": "benchflow-archive",
-                        "uid": "benchflow-archive",
-                        "type": "yesoreyeram-infinity-datasource",
-                        "access": "proxy",
-                        "url": "${BENCHFLOW_ARCHIVE_BASE_URL}",
-                        "jsonData": {
-                            "allowedHosts": [archive_allowed_host],
                         },
                     },
                 ],
@@ -1393,7 +1346,6 @@ class Installer:
                 },
                 "data": {
                     "benchflow-live.json": dashboard_live_json,
-                    "benchflow-archive.json": dashboard_archive_json,
                 },
             },
             {
@@ -1448,10 +1400,6 @@ class Installer:
                                             },
                                         },
                                         {
-                                            "name": "GF_INSTALL_PLUGINS",
-                                            "value": "yesoreyeram-infinity-datasource",
-                                        },
-                                        {
                                             "name": "GRAFANA_THANOS_TOKEN",
                                             "valueFrom": {
                                                 "secretKeyRef": {
@@ -1459,10 +1407,6 @@ class Installer:
                                                     "key": "token",
                                                 }
                                             },
-                                        },
-                                        {
-                                            "name": "BENCHFLOW_ARCHIVE_BASE_URL",
-                                            "value": archive_base_url,
                                         },
                                     ],
                                     "volumeMounts": [

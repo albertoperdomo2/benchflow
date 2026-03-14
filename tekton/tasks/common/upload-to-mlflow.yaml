@@ -8,7 +8,7 @@ metadata:
     tekton.dev/displayName: "Upload to MLflow"
 spec:
   description: >-
-    Upload the full per-run BenchFlow bundle to MLflow, set archive-related tags,
+    Upload the full per-run BenchFlow bundle to MLflow, set the Grafana tag,
     and clean the local run directory afterward.
   params:
     - name: IMAGE
@@ -67,12 +67,6 @@ spec:
             secretKeyRef:
               name: mlflow-s3-secret
               key: region
-              optional: true
-        - name: BENCHFLOW_ARCHIVE_BASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: mlflow-s3-secret
-              key: archive-base-url
               optional: true
         - name: MLFLOW_TRACKING_INSECURE_TLS
           value: "true"
