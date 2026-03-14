@@ -88,6 +88,20 @@ spec:
           value: "true"
         - name: LOG_LEVEL
           value: "INFO"
+        - name: HOME
+          value: "/tmp/benchflow-guidellm/home"
+        - name: DOCKER_CONFIG
+          value: "/tmp/benchflow-guidellm/docker"
+        - name: HF_HOME
+          value: "/tmp/benchflow-guidellm/huggingface"
+        - name: XDG_CACHE_HOME
+          value: "/tmp/benchflow-guidellm/xdg-cache"
+        - name: HF_HUB_CACHE
+          value: "/tmp/benchflow-guidellm/huggingface/hub"
+        - name: HF_XET_CACHE
+          value: "/tmp/benchflow-guidellm/huggingface/xet"
+        - name: TRANSFORMERS_CACHE
+          value: "/tmp/benchflow-guidellm/huggingface/transformers"
       command:
         - bflow
       args:

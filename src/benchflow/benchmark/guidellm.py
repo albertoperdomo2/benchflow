@@ -45,6 +45,27 @@ def _runtime_args(plan: ResolvedRunPlan) -> str:
     return " ".join(plan.deployment.runtime.vllm_args)
 
 
+def _configure_benchmark_runtime() -> dict[str, str]:
+    runtime_root = Path("/tmp/benchflow-guidellm")
+    home_dir = runtime_root / "home"
+    hf_home = runtime_root / "huggingface"
+    xdg_cache_home = runtime_root / "xdg-cache"
+    docker_config = runtime_root / "docker"
+
+    for path in (home_dir, hf_home, xdg_cache_home, docker_config):
+        path.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "HOME": str(home_dir),
+        "DOCKER_CONFIG": str(docker_config),
+        "HF_HOME": str(hf_home),
+        "XDG_CACHE_HOME": str(xdg_cache_home),
+        "HF_HUB_CACHE": str(hf_home / "hub"),
+        "HF_XET_CACHE": str(hf_home / "xet"),
+        "TRANSFORMERS_CACHE": str(hf_home / "transformers"),
+    }
+
+
 @contextmanager
 def _patched_environment(extra_env: dict[str, str]):
     original = {key: os.environ.get(key) for key in extra_env}
@@ -76,7 +97,8 @@ def run_benchmark(
 
     start_time = _iso8601_now()
     run_id = ""
-    benchmark_env = dict(plan.benchmark.env)
+    benchmark_env = _configure_benchmark_runtime()
+    benchmark_env.update(plan.benchmark.env)
     step(f"Preparing benchmark run for {plan.model.name}")
     detail(f"Target: {benchmark_target}")
     detail(
@@ -85,6 +107,8 @@ def run_benchmark(
         f"{plan.benchmark.max_requests if plan.benchmark.max_requests is not None else 'unbounded'}"
     )
     detail(f"Benchmark output mode: {'MLflow' if enable_mlflow else 'local artifacts'}")
+    detail(f"Runtime HOME: {benchmark_env['HOME']}")
+    detail(f"Hugging Face cache: {benchmark_env['HF_HUB_CACHE']}")
     if output_dir is not None:
         detail(f"Output directory: {output_dir}")
 

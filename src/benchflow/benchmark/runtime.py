@@ -310,6 +310,10 @@ def run_guidellm_cli(
 
             if return_code != 0:
                 logger.error(f"Guidellm command failed with return code {return_code}")
+                raise RuntimeError(
+                    "guidellm benchmark command failed "
+                    f"(exit code {return_code}); see {console_log_path}"
+                )
             else:
                 logger.info("Guidellm completed successfully")
 
@@ -317,7 +321,7 @@ def run_guidellm_cli(
 
     except Exception as e:
         logger.error(f"Guidellm command failed: {e}")
-        return output_path, console_log_path
+        raise
 
 
 def generate_visualization_report(
@@ -443,7 +447,7 @@ def _run_and_process_benchmark(
         benchmarks = result_json.get("benchmarks", [])
         logger.info(f"Found {len(benchmarks)} benchmark results")
     else:
-        logger.warning(f"Output JSON not found: {json_path}")
+        raise FileNotFoundError(f"Benchmark output JSON not found: {json_path}")
 
     if not Path(console_log_path).exists():
         logger.warning(f"Console log not found: {console_log_path}")
