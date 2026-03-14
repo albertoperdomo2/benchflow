@@ -16,7 +16,6 @@ dependencies = [
   "mlflow==3.7.0",
   "certifi==2025.7.9",
   "mistral-common",
-  "transformers>=5.0.0",
   "huggingface_hub>=1.3.0,<2.0",
   "rich>=13.9.0",
   "rich-argparse>=1.7.0",
