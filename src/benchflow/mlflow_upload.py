@@ -91,6 +91,12 @@ def _cleanup_dir_contents(directory: Path) -> None:
             item.unlink()
 
 
+def _count_files(directory: Path) -> int:
+    if not directory.exists():
+        return 0
+    return sum(1 for path in directory.rglob("*") if path.is_file())
+
+
 def upload_to_mlflow(
     plan: ResolvedRunPlan,
     *,
@@ -159,20 +165,31 @@ def upload_to_mlflow(
 
         artifact_count = 0
         if artifacts_dir.exists():
-            for file_path in sorted(
-                path for path in artifacts_dir.rglob("*") if path.is_file()
-            ):
-                relative_path = file_path.relative_to(artifacts_dir)
-                artifact_path = (
-                    str(relative_path.parent)
-                    if str(relative_path.parent) != "."
-                    else None
-                )
-                client.log_artifact(
-                    mlflow_run_id, str(file_path), artifact_path=artifact_path
-                )
-                artifact_count += 1
-        detail(f"Uploaded {artifact_count} artifact file(s) from {artifacts_dir}")
+            for child in sorted(artifacts_dir.iterdir()):
+                if child.name == "benchmark":
+                    detail(
+                        "Skipping benchmark workspace bundle because GuideLLM already "
+                        "logs its own results, reports, and console output"
+                    )
+                    continue
+                if child.is_dir():
+                    child_count = _count_files(child)
+                    if child_count == 0:
+                        continue
+                    detail(
+                        f"Uploading directory {child.name} ({child_count} file(s)) to MLflow"
+                    )
+                    client.log_artifacts(
+                        mlflow_run_id, str(child), artifact_path=child.name
+                    )
+                    artifact_count += child_count
+                elif child.is_file():
+                    detail(f"Uploading file {child.name} to MLflow")
+                    client.log_artifact(mlflow_run_id, str(child))
+                    artifact_count += 1
+        detail(
+            f"Uploaded {artifact_count} additional artifact file(s) from {artifacts_dir}"
+        )
         success(f"MLflow upload complete for run {mlflow_run_id}")
         return artifacts_dir
     finally:

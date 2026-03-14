@@ -1148,6 +1148,47 @@ class Installer:
                     },
                 },
                 {
+                    "apiVersion": "rbac.authorization.k8s.io/v1",
+                    "kind": "Role",
+                    "metadata": {
+                        "name": "benchflow-grafana-route-reader",
+                        "labels": {
+                            "app.kubernetes.io/name": "benchflow",
+                            "benchflow.io/component": "grafana",
+                        },
+                    },
+                    "rules": [
+                        {
+                            "apiGroups": ["route.openshift.io"],
+                            "resources": ["routes"],
+                            "verbs": ["get", "list"],
+                        }
+                    ],
+                },
+                {
+                    "apiVersion": "rbac.authorization.k8s.io/v1",
+                    "kind": "RoleBinding",
+                    "metadata": {
+                        "name": "benchflow-grafana-route-reader",
+                        "labels": {
+                            "app.kubernetes.io/name": "benchflow",
+                            "benchflow.io/component": "grafana",
+                        },
+                    },
+                    "subjects": [
+                        {
+                            "kind": "ServiceAccount",
+                            "name": "benchflow-runner",
+                            "namespace": self.options.namespace,
+                        }
+                    ],
+                    "roleRef": {
+                        "apiGroup": "rbac.authorization.k8s.io",
+                        "kind": "Role",
+                        "name": "benchflow-grafana-route-reader",
+                    },
+                },
+                {
                     "apiVersion": "v1",
                     "kind": "Secret",
                     "metadata": {
