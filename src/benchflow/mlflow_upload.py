@@ -128,7 +128,7 @@ def upload_to_mlflow(
         experiment_id = str(run.info.experiment_id)
         detail(f"MLflow experiment ID: {experiment_id}")
         client.set_tag(mlflow_run_id, "mlflow_experiment_id", experiment_id)
-        public_base_url = os.environ.get("BENCHFLOW_S3_PUBLIC_BASE_URL", "").strip()
+        public_base_url = os.environ.get("BENCHFLOW_ARCHIVE_BASE_URL", "").strip()
         archive_url = _build_metrics_archive_url(
             experiment_id=experiment_id,
             run_id=mlflow_run_id,
@@ -136,7 +136,7 @@ def upload_to_mlflow(
         )
         if not archive_url:
             warning(
-                "BENCHFLOW_S3_PUBLIC_BASE_URL is not configured; "
+                "BENCHFLOW_ARCHIVE_BASE_URL is not configured; "
                 "the archive dashboard URL will not be recorded"
             )
         grafana_base_url = grafana_url or _discover_grafana_base_url(

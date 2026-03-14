@@ -74,11 +74,11 @@ spec:
               name: mlflow-s3-secret
               key: endpoint-url
               optional: true
-        - name: BENCHFLOW_S3_PUBLIC_BASE_URL
+        - name: BENCHFLOW_ARCHIVE_BASE_URL
           valueFrom:
             secretKeyRef:
               name: mlflow-s3-secret
-              key: public-base-url
+              key: archive-base-url
               optional: true
         - name: MLFLOW_TRACKING_INSECURE_TLS
           value: "true"

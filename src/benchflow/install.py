@@ -1256,14 +1256,13 @@ class Installer:
                 retry=True,
                 description="reading secret/mlflow-s3-secret",
             )
-            encoded = str(
-                mlflow_secret.get("data", {}).get("public-base-url", "") or ""
-            )
+            secret_data = mlflow_secret.get("data", {}) or {}
+            encoded = str(secret_data.get("archive-base-url", "") or "")
             if encoded:
                 archive_base_url = base64.b64decode(encoded).decode("utf-8")
         if not archive_base_url:
             warning(
-                "mlflow-s3-secret does not define public-base-url; "
+                "mlflow-s3-secret does not define archive-base-url; "
                 "the archive dashboard will need that HTTP(S) MLflow artifact root "
                 "configured before Infinity queries can succeed"
             )
