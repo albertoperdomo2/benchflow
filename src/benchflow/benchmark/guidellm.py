@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from importlib import metadata
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..cluster import CommandError
 from ..models import ResolvedRunPlan
+from ..ui import detail, step, success
 from . import runtime as runtime_module
 
 
@@ -14,7 +16,16 @@ def _load_guidellm_module():
     try:
         return runtime_module
     except Exception as exc:  # noqa: BLE001
-        raise CommandError(f"failed to load GuideLLM benchmark module: {exc}") from exc
+        versions: list[str] = []
+        for package_name in ("guidellm", "transformers", "huggingface_hub"):
+            try:
+                versions.append(f"{package_name}=={metadata.version(package_name)}")
+            except metadata.PackageNotFoundError:
+                continue
+        version_text = f" ({', '.join(versions)})" if versions else ""
+        raise CommandError(
+            f"failed to load GuideLLM benchmark module: {exc}{version_text}"
+        ) from exc
 
 
 def _iso8601_now() -> str:
@@ -66,9 +77,20 @@ def run_benchmark(
     start_time = _iso8601_now()
     run_id = ""
     benchmark_env = dict(plan.benchmark.env)
+    step(f"Preparing benchmark run for {plan.model.name}")
+    detail(f"Target: {benchmark_target}")
+    detail(
+        f"Rates: {','.join(str(rate) for rate in plan.benchmark.rates)}, "
+        f"duration: {plan.benchmark.max_seconds}s, max requests: "
+        f"{plan.benchmark.max_requests if plan.benchmark.max_requests is not None else 'unbounded'}"
+    )
+    detail(f"Benchmark output mode: {'MLflow' if enable_mlflow else 'local artifacts'}")
+    if output_dir is not None:
+        detail(f"Output directory: {output_dir}")
 
     with _patched_environment(benchmark_env):
         if enable_mlflow:
+            step("Executing GuideLLM benchmark with MLflow tracking")
             run_id = module.run_benchmark_with_mlflow(
                 target=benchmark_target,
                 model=plan.model.name,
@@ -91,6 +113,7 @@ def run_benchmark(
         else:
             if output_dir is None:
                 raise CommandError("--output-dir is required when MLflow is disabled")
+            step("Executing GuideLLM benchmark without MLflow tracking")
             module.run_benchmark_without_mlflow(
                 target=benchmark_target,
                 model=plan.model.name,
@@ -109,6 +132,10 @@ def run_benchmark(
             )
 
     end_time = _iso8601_now()
+    success(
+        f"GuideLLM benchmark completed for {plan.model.name} "
+        f"({'MLflow run ' + run_id if run_id else 'local output'})"
+    )
     return run_id, start_time, end_time
 
 

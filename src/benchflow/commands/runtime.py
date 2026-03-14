@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from ..model import download_model
 from ..models import ValidationError
 from ..repository import clone_repo
 from ..tasking import assert_task_status, write_stage_results
+from ..ui import detail, emit, step, success
 from ..waiting import wait_for_endpoint
 from .shared import (
     add_experiment_input_arguments,
@@ -156,6 +158,18 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
             f"unsupported benchmark tool: {plan.benchmark.tool}; only guidellm is implemented"
         )
     output_dir = Path(args.output_dir).resolve() if args.output_dir else None
+    benchmark_target = args.target_url or plan.deployment.target.base_url
+    step(f"Running {plan.benchmark.tool} benchmark against {benchmark_target}")
+    detail(
+        "Rates: "
+        + ",".join(str(rate) for rate in plan.benchmark.rates)
+        + f", rate type: {plan.benchmark.rate_type}, backend: {plan.benchmark.backend_type}"
+    )
+    detail(f"Benchmark data: {plan.benchmark.data}")
+    detail(
+        f"MLflow: {'disabled' if args.no_mlflow else 'enabled'}, "
+        f"output dir: {str(output_dir) if output_dir is not None else 'not requested'}"
+    )
     previous_pipeline_run_name = os.environ.get("PIPELINE_RUN_NAME")
     try:
         if args.pipeline_run_name:
@@ -185,6 +199,10 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
             end_time, encoding="utf-8"
         )
 
+    success(
+        f"Benchmark finished. Start: {start_time}, end: {end_time}, "
+        f"MLflow run: {run_id or 'not created'}"
+    )
     if run_id:
         print(run_id)
     elif output_dir is not None:
@@ -299,6 +317,17 @@ def cmd_task_resolve_run_plan(args: argparse.Namespace) -> int:
         raise ValidationError(
             f"unsupported benchmark tool: {plan.benchmark.tool}; only guidellm is implemented"
         )
+    step(
+        f"Resolved RunPlan for {plan.metadata.name} "
+        f"({plan.deployment.platform}/{plan.deployment.mode})"
+    )
+    detail(
+        "Stages: "
+        f"download={plan.stages.download}, deploy={plan.stages.deploy}, "
+        f"benchmark={plan.stages.benchmark}, collect={plan.stages.collect}, "
+        f"cleanup={plan.stages.cleanup}"
+    )
+    emit(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
     write_stage_results(
         plan,
         stage_download_path=Path(args.stage_download_path).resolve(),
@@ -307,6 +336,7 @@ def cmd_task_resolve_run_plan(args: argparse.Namespace) -> int:
         stage_collect_path=Path(args.stage_collect_path).resolve(),
         stage_cleanup_path=Path(args.stage_cleanup_path).resolve(),
     )
+    success("RunPlan resolved and stage outputs written")
     print("resolved")
     return 0
 

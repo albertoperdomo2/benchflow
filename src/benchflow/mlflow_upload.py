@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .cluster import require_any_command, run_command
 from .models import ResolvedRunPlan
+from .ui import detail, step, success, warning
 
 
 def _discover_grafana_base_url(namespace: str) -> str:
@@ -81,10 +82,23 @@ def upload_to_mlflow(
     explicit_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
     if explicit_tracking_uri:
         mlflow.set_tracking_uri(explicit_tracking_uri)
+    step(
+        f"Uploading artifacts to MLflow run {mlflow_run_id or '<missing>'} "
+        f"for release {plan.deployment.release_name}"
+    )
     if not mlflow_run_id or not explicit_tracking_uri:
+        warning(
+            "Skipping MLflow upload because "
+            + (
+                "the run ID is missing"
+                if not mlflow_run_id
+                else "MLFLOW_TRACKING_URI is not configured"
+            )
+        )
         return artifacts_dir
 
     client = mlflow.tracking.MlflowClient()
+    detail(f"MLflow tracking URI: {explicit_tracking_uri}")
     grafana_base_url = grafana_url or _discover_grafana_base_url(
         plan.deployment.namespace
     )
@@ -92,8 +106,10 @@ def upload_to_mlflow(
         plan, mlflow_run_id, benchmark_start_time, benchmark_end_time, grafana_base_url
     )
     if full_grafana_url:
+        detail(f"Setting Grafana URL tag: {full_grafana_url}")
         client.set_tag(mlflow_run_id, "grafana_url", full_grafana_url)
 
+    artifact_count = 0
     if artifacts_dir.exists():
         for file_path in sorted(
             path for path in artifacts_dir.rglob("*") if path.is_file()
@@ -105,6 +121,8 @@ def upload_to_mlflow(
             client.log_artifact(
                 mlflow_run_id, str(file_path), artifact_path=artifact_path
             )
+            artifact_count += 1
+    detail(f"Uploaded {artifact_count} artifact file(s) from {artifacts_dir}")
 
     if artifacts_dir.exists():
         for item in artifacts_dir.iterdir():
@@ -112,4 +130,5 @@ def upload_to_mlflow(
                 shutil.rmtree(item)
             else:
                 item.unlink()
+    success(f"MLflow upload complete for run {mlflow_run_id}")
     return artifacts_dir

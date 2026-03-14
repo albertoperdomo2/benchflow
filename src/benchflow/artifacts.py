@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .models import ResolvedRunPlan
+from .ui import detail, step, success
 
 
 def _pod_type(pod_name: str) -> str:
@@ -66,6 +67,13 @@ def collect_artifacts(
 ) -> Path:
     kubectl_cmd = require_any_command("oc", "kubectl")
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    step(
+        f"Collecting artifacts for release {plan.deployment.release_name} "
+        f"in namespace {plan.deployment.namespace}"
+    )
+    if pipeline_run_name:
+        detail(f"PipelineRun: {pipeline_run_name}")
+    detail(f"Artifacts directory: {artifacts_dir}")
     for relative in (
         "logs/pipeline",
         "logs/model",
@@ -80,6 +88,7 @@ def collect_artifacts(
     pipeline_pods: list[str] = []
     pipeline_count = 0
     if pipeline_run_name:
+        detail("Collecting Tekton task pod logs")
         payload = run_json_command(
             [
                 kubectl_cmd,
@@ -99,6 +108,7 @@ def collect_artifacts(
                 kubectl_cmd, namespace, pod_name, artifacts_dir / "logs" / "pipeline"
             ):
                 pipeline_count += 1
+        detail(f"Collected logs from {pipeline_count} pipeline pod(s)")
 
     payload = run_json_command(
         [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"]
@@ -120,9 +130,14 @@ def collect_artifacts(
                 gaie_count += 1
             else:
                 infra_count += 1
+    detail(
+        f"Collected workload logs from {model_count} model pod(s), "
+        f"{gaie_count} gaie pod(s), and {infra_count} infra pod(s)"
+    )
 
     manifest_root = artifacts_dir / "manifests"
     manifest_count = 0
+    detail("Collecting Kubernetes manifests for deployed resources")
     for resource_type in (
         "deployments",
         "pods",
@@ -185,5 +200,8 @@ def collect_artifacts(
     }
     (artifacts_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2), encoding="utf-8"
+    )
+    success(
+        f"Artifacts collected in {artifacts_dir} ({manifest_count} manifest file(s))"
     )
     return artifacts_dir

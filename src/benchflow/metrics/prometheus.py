@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..cluster import CommandError
 from ..models import ResolvedRunPlan
+from ..ui import detail, step, success, warning
 
 
 def _parse_iso8601(value: str) -> datetime:
@@ -83,6 +84,15 @@ def collect_metrics(
     raw_dir = metrics_dir / "raw"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
+    step(
+        f"Collecting Prometheus metrics for {plan.deployment.release_name} "
+        f"from {benchmark_start_time} to {benchmark_end_time}"
+    )
+    detail(f"Prometheus URL: {plan.metrics.prometheus_url}")
+    detail(
+        f"Query step: {plan.metrics.query_step}, timeout: {plan.metrics.query_timeout}, "
+        f"TLS verification: {'enabled' if plan.metrics.verify_tls else 'disabled'}"
+    )
 
     queries = plan.metrics.queries or {}
     if not queries:
@@ -93,6 +103,7 @@ def collect_metrics(
             ),
             encoding="utf-8",
         )
+        warning("No metrics queries configured; wrote disabled metrics summary")
         return metrics_dir
 
     token_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
@@ -126,12 +137,16 @@ def collect_metrics(
         "queries": {},
         "failures": {},
     }
+    detail(
+        f"Collecting {len(queries)} metrics quer{'y' if len(queries) == 1 else 'ies'}"
+    )
 
     for metric_name, query_template in sorted(queries.items()):
         resolved_query = query_template.replace(
             "$namespace", plan.deployment.namespace
         ).replace("$release", plan.deployment.release_name)
         query_metadata[metric_name] = resolved_query
+        detail(f"Querying metric {metric_name}")
         params = urllib.parse.urlencode(
             {
                 "query": resolved_query,
@@ -153,9 +168,13 @@ def collect_metrics(
                 payload = json.load(response)
         except urllib.error.HTTPError as exc:
             summary["failures"][metric_name] = f"HTTP {exc.code}: {exc.reason}"
+            warning(
+                f"Metric query failed for {metric_name}: HTTP {exc.code}: {exc.reason}"
+            )
             continue
         except Exception as exc:  # noqa: BLE001
             summary["failures"][metric_name] = str(exc)
+            warning(f"Metric query failed for {metric_name}: {exc}")
             continue
 
         (raw_dir / f"{metric_name}.json").write_text(
@@ -163,11 +182,19 @@ def collect_metrics(
         )
         if payload.get("status") != "success":
             summary["failures"][metric_name] = payload.get("error", "query failed")
+            warning(
+                f"Metric query returned non-success status for {metric_name}: "
+                f"{summary['failures'][metric_name]}"
+            )
             continue
         result = payload.get("data", {}).get("result", [])
         metric_summary = _summarize_series(result)
         metric_summary["query"] = resolved_query
         summary["queries"][metric_name] = metric_summary
+        detail(
+            f"{metric_name}: {metric_summary['series_count']} series, "
+            f"{metric_summary['sample_count']} samples"
+        )
 
     (metrics_dir / "resolved_queries.json").write_text(
         json.dumps(query_metadata, indent=2), encoding="utf-8"
@@ -178,4 +205,8 @@ def collect_metrics(
 
     if summary["failures"]:
         raise CommandError(json.dumps(summary["failures"], indent=2))
+    success(
+        f"Collected metrics into {metrics_dir} "
+        f"({len(summary['queries'])} successful quer{'y' if len(summary['queries']) == 1 else 'ies'})"
+    )
     return metrics_dir
