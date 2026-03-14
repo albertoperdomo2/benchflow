@@ -36,6 +36,12 @@ configure_logging(log_level)
 logger = logging.getLogger(__name__)
 
 
+class BenchmarkExecutionError(RuntimeError):
+    def __init__(self, message: str, *, run_id: str = "") -> None:
+        super().__init__(message)
+        self.run_id = run_id
+
+
 def _get_nested(d: Dict[str, Any], *keys: str, default: Any = None) -> Any:
     """Safely get a nested value from a dictionary."""
     for key in keys:
@@ -811,7 +817,9 @@ def run_benchmark_with_mlflow(
         except Exception as e:
             logger.error(f"Benchmark sweep failed: {e}", exc_info=True)
             mlflow.log_param("error", str(e))
-            raise
+            raise BenchmarkExecutionError(
+                f"Benchmark sweep failed: {e}", run_id=run.info.run_id
+            ) from e
 
 
 def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:

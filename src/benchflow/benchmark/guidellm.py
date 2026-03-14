@@ -8,8 +8,23 @@ from pathlib import Path
 
 from ..cluster import CommandError
 from ..models import ResolvedRunPlan
-from ..ui import detail, step, success
+from ..ui import detail, step, success, warning
 from . import runtime as runtime_module
+
+
+class BenchmarkRunFailed(CommandError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        run_id: str = "",
+        start_time: str = "",
+        end_time: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.run_id = run_id
+        self.start_time = start_time
+        self.end_time = end_time
 
 
 def _load_guidellm_module():
@@ -113,47 +128,64 @@ def run_benchmark(
         detail(f"Output directory: {output_dir}")
 
     with _patched_environment(benchmark_env):
-        if enable_mlflow:
-            step("Executing GuideLLM benchmark with MLflow tracking")
-            run_id = module.run_benchmark_with_mlflow(
-                target=benchmark_target,
-                model=plan.model.name,
-                rate=",".join(str(rate) for rate in plan.benchmark.rates),
-                backend_type=plan.benchmark.backend_type,
-                rate_type=plan.benchmark.rate_type,
-                data=plan.benchmark.data,
-                max_seconds=plan.benchmark.max_seconds,
-                max_requests=plan.benchmark.max_requests,
-                accelerator=plan.deployment.options.get("accelerator"),
-                experiment_name=plan.mlflow.experiment,
-                mlflow_tracking_uri=mlflow_tracking_uri
-                or os.environ.get("MLFLOW_TRACKING_URI"),
-                tags=tags,
-                version=_version_from_plan(plan),
-                tp_size=plan.deployment.runtime.tensor_parallelism,
-                runtime_args=_runtime_args(plan),
-                replicas=str(plan.deployment.runtime.replicas),
-            )
-        else:
-            if output_dir is None:
-                raise CommandError("--output-dir is required when MLflow is disabled")
-            step("Executing GuideLLM benchmark without MLflow tracking")
-            module.run_benchmark_without_mlflow(
-                target=benchmark_target,
-                model=plan.model.name,
-                rate=",".join(str(rate) for rate in plan.benchmark.rates),
-                backend_type=plan.benchmark.backend_type,
-                rate_type=plan.benchmark.rate_type,
-                data=plan.benchmark.data,
-                max_seconds=plan.benchmark.max_seconds,
-                max_requests=plan.benchmark.max_requests,
-                output_dir=str(output_dir),
-                accelerator=plan.deployment.options.get("accelerator"),
-                version=_version_from_plan(plan),
-                tp_size=plan.deployment.runtime.tensor_parallelism,
-                runtime_args=_runtime_args(plan),
-                replicas=plan.deployment.runtime.replicas,
-            )
+        try:
+            if enable_mlflow:
+                step("Executing GuideLLM benchmark with MLflow tracking")
+                run_id = module.run_benchmark_with_mlflow(
+                    target=benchmark_target,
+                    model=plan.model.name,
+                    rate=",".join(str(rate) for rate in plan.benchmark.rates),
+                    backend_type=plan.benchmark.backend_type,
+                    rate_type=plan.benchmark.rate_type,
+                    data=plan.benchmark.data,
+                    max_seconds=plan.benchmark.max_seconds,
+                    max_requests=plan.benchmark.max_requests,
+                    accelerator=plan.deployment.options.get("accelerator"),
+                    experiment_name=plan.mlflow.experiment,
+                    mlflow_tracking_uri=mlflow_tracking_uri
+                    or os.environ.get("MLFLOW_TRACKING_URI"),
+                    tags=tags,
+                    version=_version_from_plan(plan),
+                    tp_size=plan.deployment.runtime.tensor_parallelism,
+                    runtime_args=_runtime_args(plan),
+                    replicas=str(plan.deployment.runtime.replicas),
+                )
+            else:
+                if output_dir is None:
+                    raise CommandError(
+                        "--output-dir is required when MLflow is disabled"
+                    )
+                step("Executing GuideLLM benchmark without MLflow tracking")
+                module.run_benchmark_without_mlflow(
+                    target=benchmark_target,
+                    model=plan.model.name,
+                    rate=",".join(str(rate) for rate in plan.benchmark.rates),
+                    backend_type=plan.benchmark.backend_type,
+                    rate_type=plan.benchmark.rate_type,
+                    data=plan.benchmark.data,
+                    max_seconds=plan.benchmark.max_seconds,
+                    max_requests=plan.benchmark.max_requests,
+                    output_dir=str(output_dir),
+                    accelerator=plan.deployment.options.get("accelerator"),
+                    version=_version_from_plan(plan),
+                    tp_size=plan.deployment.runtime.tensor_parallelism,
+                    runtime_args=_runtime_args(plan),
+                    replicas=plan.deployment.runtime.replicas,
+                )
+        except Exception as exc:  # noqa: BLE001
+            end_time = _iso8601_now()
+            failed_run_id = str(getattr(exc, "run_id", "") or "")
+            if failed_run_id:
+                warning(
+                    "GuideLLM failed after creating MLflow run "
+                    f"{failed_run_id}; preserving that run for later uploads"
+                )
+            raise BenchmarkRunFailed(
+                str(exc),
+                run_id=failed_run_id,
+                start_time=start_time,
+                end_time=end_time,
+            ) from exc
 
     end_time = _iso8601_now()
     success(

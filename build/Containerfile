@@ -39,7 +39,11 @@ WORKDIR /opt/benchflow
 COPY pyproject.toml .
 COPY src/ src/
 
-RUN pip install --no-cache-dir .
+# Keep the GuideLLM base image dependency stack intact and force the
+# huggingface_hub API level that the shipped GuideLLM/transformers pair expects.
+RUN pip install --no-cache-dir . \
+    && pip install --no-cache-dir "huggingface_hub>=0.34.0,<1.0" \
+    && pip check
 
 ENTRYPOINT ["bflow"]
 CMD ["--help"]

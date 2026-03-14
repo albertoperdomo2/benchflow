@@ -1,3 +1,3 @@
-from .guidellm import generate_report, run_benchmark
+from .guidellm import BenchmarkRunFailed, generate_report, run_benchmark
 
-__all__ = ["generate_report", "run_benchmark"]
+__all__ = ["BenchmarkRunFailed", "generate_report", "run_benchmark"]

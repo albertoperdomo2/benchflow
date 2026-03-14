@@ -1511,6 +1511,10 @@ class Installer:
                 "spec": {
                     "to": {"kind": "Service", "name": "grafana"},
                     "port": {"targetPort": "http"},
+                    "tls": {
+                        "termination": "edge",
+                        "insecureEdgeTerminationPolicy": "Redirect",
+                    },
                 },
             },
         ]

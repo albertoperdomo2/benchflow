@@ -108,6 +108,7 @@ spec:
 
     - name: collect-artifacts
       runAfter: [benchmark]
+      onError: continue
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-collect)"
           operator: in
@@ -176,7 +177,7 @@ spec:
       workspaces:
         - name: artifacts
           workspace: results
-          subPath: $(context.pipelineRun.name)/artifacts
+          subPath: $(context.pipelineRun.name)
 
   finally:
     - name: cleanup

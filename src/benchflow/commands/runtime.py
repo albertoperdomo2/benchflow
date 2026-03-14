@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from ..artifacts import collect_artifacts
-from ..benchmark import generate_report, run_benchmark
+from ..benchmark import BenchmarkRunFailed, generate_report, run_benchmark
 from ..cleanup import cleanup_llmd
 from ..cluster import follow_pipelinerun, get_current_namespace
 from ..deploy import deploy_llmd
@@ -169,17 +169,43 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
         f"output dir: {str(output_dir) if output_dir is not None else 'not requested'}"
     )
     previous_pipeline_run_name = os.environ.get("PIPELINE_RUN_NAME")
+    run_id = ""
+    start_time = ""
+    end_time = ""
     try:
         if args.pipeline_run_name:
             os.environ["PIPELINE_RUN_NAME"] = args.pipeline_run_name
-        run_id, start_time, end_time = run_benchmark(
-            plan=plan,
-            target=args.target_url,
-            output_dir=output_dir,
-            mlflow_tracking_uri=args.mlflow_tracking_uri,
-            enable_mlflow=not args.no_mlflow,
-            extra_tags=parse_mapping(args.tag, "--tag"),
-        )
+        try:
+            run_id, start_time, end_time = run_benchmark(
+                plan=plan,
+                target=args.target_url,
+                output_dir=output_dir,
+                mlflow_tracking_uri=args.mlflow_tracking_uri,
+                enable_mlflow=not args.no_mlflow,
+                extra_tags=parse_mapping(args.tag, "--tag"),
+            )
+        except BenchmarkRunFailed as exc:
+            run_id = exc.run_id
+            start_time = exc.start_time
+            end_time = exc.end_time
+            if run_id:
+                detail(
+                    "Preserving MLflow run information after benchmark failure: "
+                    f"run_id={run_id}, start={start_time}, end={end_time}"
+                )
+            if args.mlflow_run_id_output and run_id:
+                Path(args.mlflow_run_id_output).resolve().write_text(
+                    run_id, encoding="utf-8"
+                )
+            if args.benchmark_start_time_output and start_time:
+                Path(args.benchmark_start_time_output).resolve().write_text(
+                    start_time, encoding="utf-8"
+                )
+            if args.benchmark_end_time_output and end_time:
+                Path(args.benchmark_end_time_output).resolve().write_text(
+                    end_time, encoding="utf-8"
+                )
+            raise
     finally:
         if args.pipeline_run_name:
             if previous_pipeline_run_name is None:
