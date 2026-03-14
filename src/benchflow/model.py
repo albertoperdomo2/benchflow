@@ -44,6 +44,7 @@ def download_model(
 
     try:
         from huggingface_hub import snapshot_download
+
         cache_dir = _configure_huggingface_runtime()
 
         snapshot_download(

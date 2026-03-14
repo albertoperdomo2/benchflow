@@ -483,8 +483,7 @@ class Installer:
             "-n",
             namespace,
             retry=True,
-            description=description
-            or f"reading subscription/{subscription_name}",
+            description=description or f"reading subscription/{subscription_name}",
         )
 
     def _approve_pending_installplan(
@@ -1048,6 +1047,11 @@ class Installer:
                     },
                     {
                         "apiGroups": ["telemetry.istio.io"],
+                        "resources": ["*"],
+                        "verbs": ["*"],
+                    },
+                    {
+                        "apiGroups": ["networking.istio.io"],
                         "resources": ["*"],
                         "verbs": ["*"],
                     },
