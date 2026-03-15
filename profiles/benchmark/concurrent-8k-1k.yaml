@@ -9,4 +9,4 @@ spec:
   data: prompt_tokens=8000,output_tokens=1000
   max_seconds: 600
   env:
-    GUIDELLM__REQUEST_TIMEOUT: "6000"
+    GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "DEBUG"

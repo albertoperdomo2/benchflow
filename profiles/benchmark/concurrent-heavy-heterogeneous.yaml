@@ -1,12 +1,12 @@
 apiVersion: benchflow.io/v1alpha1
 kind: BenchmarkProfile
 metadata:
-  name: guidellm-concurrent-1k-1k
+  name: guidellm-concurrent-heavy-heterogeneous
 spec:
   backend_type: openai_http
   rate_type: concurrent
   rates: [650, 500, 300, 200, 100, 50, 1]
-  data: prompt_tokens=1000,output_tokens=1000
+  data: prompt_tokens=8000,prompt_tokens_stdev=8500,prompt_tokens_min=50,prompt_tokens_max=30000,output_tokens=800,output_tokens_stdev=1500,output_tokens_min=20,output_tokens_max=8000
   max_seconds: 600
   env:
     GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "DEBUG"
