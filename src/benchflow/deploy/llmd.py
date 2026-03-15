@@ -174,6 +174,49 @@ def _capture_manifests(
     shutil.copy2(values_path, rendered_dir / "values.yaml")
 
 
+def _create_httproute(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    route = {
+        "apiVersion": "gateway.networking.k8s.io/v1",
+        "kind": "HTTPRoute",
+        "metadata": {
+            "name": f"llm-d-{plan.deployment.release_name}",
+            "namespace": plan.deployment.namespace,
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                "benchflow.io/platform": "llm-d",
+                "benchflow.io/release": plan.deployment.release_name,
+            },
+        },
+        "spec": {
+            "parentRefs": [
+                {
+                    "group": "gateway.networking.k8s.io",
+                    "kind": "Gateway",
+                    "name": f"infra-{plan.deployment.release_name}-inference-gateway",
+                }
+            ],
+            "rules": [
+                {
+                    "backendRefs": [
+                        {
+                            "group": "inference.networking.x-k8s.io",
+                            "kind": "InferencePool",
+                            "name": f"gaie-{plan.deployment.release_name}",
+                            "port": 8000,
+                            "weight": 1,
+                        }
+                    ],
+                    "matches": [{"path": {"type": "PathPrefix", "value": "/"}}],
+                }
+            ],
+        },
+    }
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text=yaml.safe_dump(route, sort_keys=False),
+    )
+
+
 def _pods_ready(
     namespace: str, selector: str, kubectl_cmd: str
 ) -> tuple[bool, int, int]:
@@ -208,12 +251,30 @@ def _gateway_exists(namespace: str, release_name: str, kubectl_cmd: str) -> bool
     return result.returncode == 0
 
 
+def _httproute_exists(namespace: str, release_name: str, kubectl_cmd: str) -> bool:
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "httproute",
+            f"llm-d-{release_name}",
+            "-n",
+            namespace,
+            "-o",
+            "name",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
     release_name = plan.deployment.release_name
     deadline = time.time() + timeout_seconds
-    last_snapshot: tuple[int, int, bool] | None = None
+    last_snapshot: tuple[int, int, bool, bool] | None = None
 
     step(
         f"Waiting for llm-d deployment {release_name} in namespace {namespace} to become ready"
@@ -231,17 +292,19 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
                 namespace, "llm-d.ai/inferenceServing=true", kubectl_cmd
             )
         gateway_ready = _gateway_exists(namespace, release_name, kubectl_cmd)
-        snapshot = (epp_ready_count, ms_ready_count, gateway_ready)
+        httproute_ready = _httproute_exists(namespace, release_name, kubectl_cmd)
+        snapshot = (epp_ready_count, ms_ready_count, gateway_ready, httproute_ready)
 
         if snapshot != last_snapshot:
             detail(
                 f"EPP pods ready: {epp_ready_count}/{epp_total}, "
                 f"model-service pods ready: {ms_ready_count}/{ms_total}, "
-                f"gateway present: {'yes' if gateway_ready else 'no'}"
+                f"gateway present: {'yes' if gateway_ready else 'no'}, "
+                f"httproute present: {'yes' if httproute_ready else 'no'}"
             )
             last_snapshot = snapshot
 
-        if epp_ready and ms_ready and gateway_ready:
+        if epp_ready and ms_ready and gateway_ready and httproute_ready:
             success(
                 f"llm-d deployment {release_name} is ready "
                 f"(EPP {epp_ready_count}/{epp_total}, model-service {ms_ready_count}/{ms_total})"
@@ -266,7 +329,7 @@ def deploy_llmd(
 ) -> Path:
     require_command("helm")
     require_command("helmfile")
-    require_any_command("oc", "kubectl")
+    kubectl_cmd = require_any_command("oc", "kubectl")
 
     if skip_if_exists and _release_exists(
         plan.deployment.namespace, plan.deployment.release_name
@@ -340,6 +403,8 @@ def deploy_llmd(
         cwd=guide_dir,
         env=env,
     )
+    step(f"Applying HTTPRoute llm-d-{plan.deployment.release_name}")
+    _create_httproute(plan, kubectl_cmd)
     success(
         f"Applied llm-d releases for {plan.deployment.release_name} in namespace "
         f"{plan.deployment.namespace}"
