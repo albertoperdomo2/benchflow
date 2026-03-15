@@ -9,7 +9,6 @@ spec:
   repo_ref: v0.4.0
   gateway: istio
   endpoint_path: /v1/models
-  scheduler_profile: precise-prefix-cache
   model_storage:
     pvc_name: models-storage
     cache_dir: /models
@@ -24,8 +23,3 @@ spec:
       - --trust-remote-code
       - --disable-log-requests
       - --enable-prefix-caching
-  options:
-    block_size: 64
-    hash_seed: 42
-    zmq_port: 5557
-    create_httproute: true

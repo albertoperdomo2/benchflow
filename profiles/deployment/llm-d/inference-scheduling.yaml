@@ -22,5 +22,3 @@ spec:
       - --gpu-memory-utilization=0.92
       - --trust-remote-code
       - --disable-log-requests
-  options:
-    create_httproute: true

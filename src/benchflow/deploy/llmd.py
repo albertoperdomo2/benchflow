@@ -174,44 +174,6 @@ def _capture_manifests(
     shutil.copy2(values_path, rendered_dir / "values.yaml")
 
 
-def _create_httproute(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
-    route = {
-        "apiVersion": "gateway.networking.k8s.io/v1",
-        "kind": "HTTPRoute",
-        "metadata": {
-            "name": f"llm-d-{plan.deployment.release_name}",
-            "namespace": plan.deployment.namespace,
-        },
-        "spec": {
-            "parentRefs": [
-                {
-                    "group": "gateway.networking.k8s.io",
-                    "kind": "Gateway",
-                    "name": f"infra-{plan.deployment.release_name}-inference-gateway",
-                }
-            ],
-            "rules": [
-                {
-                    "backendRefs": [
-                        {
-                            "group": "inference.networking.x-k8s.io",
-                            "kind": "InferencePool",
-                            "name": f"gaie-{plan.deployment.release_name}",
-                            "port": 8000,
-                            "weight": 1,
-                        }
-                    ],
-                    "matches": [{"path": {"type": "PathPrefix", "value": "/"}}],
-                }
-            ],
-        },
-    }
-    run_command(
-        [kubectl_cmd, "apply", "-f", "-"],
-        input_text=yaml.safe_dump(route, sort_keys=False),
-    )
-
-
 def _pods_ready(
     namespace: str, selector: str, kubectl_cmd: str
 ) -> tuple[bool, int, int]:
@@ -304,7 +266,7 @@ def deploy_llmd(
 ) -> Path:
     require_command("helm")
     require_command("helmfile")
-    kubectl_cmd = require_any_command("oc", "kubectl")
+    require_any_command("oc", "kubectl")
 
     if skip_if_exists and _release_exists(
         plan.deployment.namespace, plan.deployment.release_name
@@ -382,10 +344,6 @@ def deploy_llmd(
         f"Applied llm-d releases for {plan.deployment.release_name} in namespace "
         f"{plan.deployment.namespace}"
     )
-
-    if plan.deployment.options.get("create_httproute", True):
-        step(f"Creating HTTPRoute llm-d-{plan.deployment.release_name}")
-        _create_httproute(plan, kubectl_cmd)
 
     if verify:
         _verify_deployment(plan, verify_timeout_seconds)
