@@ -103,6 +103,45 @@ def run_json_command(
         ) from exc
 
 
+def resolve_target_base_url(target: Any, namespace: str) -> str:
+    if target.discovery == "static":
+        if not target.base_url:
+            raise CommandError(
+                "target discovery is static but target.base_url is empty"
+            )
+        return str(target.base_url).rstrip("/")
+
+    if target.discovery == "llminferenceservice-status-url":
+        kubectl_cmd = require_any_command("oc", "kubectl")
+        resource_name = str(target.resource_name or "").strip()
+        if not resource_name:
+            raise CommandError(
+                "target discovery is llminferenceservice-status-url but "
+                "target.resource_name is empty"
+            )
+        payload = run_json_command(
+            [
+                kubectl_cmd,
+                "get",
+                "llminferenceservice",
+                resource_name,
+                "-n",
+                namespace,
+                "-o",
+                "json",
+            ]
+        )
+        url = str(payload.get("status", {}).get("url") or "").strip()
+        if not url:
+            raise CommandError(
+                f"LLMInferenceService {resource_name} in namespace {namespace} "
+                "does not have status.url yet"
+            )
+        return url.rstrip("/")
+
+    raise CommandError(f"unsupported target discovery strategy: {target.discovery}")
+
+
 def create_manifest(manifest_yaml: str, namespace: str) -> dict[str, Any]:
     require_command("oc")
     result = run_command(

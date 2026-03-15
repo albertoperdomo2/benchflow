@@ -1,16 +1,16 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: rhoai-kserve
+  name: rhoai-precise-prefix-cache
 spec:
   platform: rhoai
-  mode: kserve
+  mode: precise-prefix-cache
   endpoint_path: /v1/models
   model_storage:
     pvc_name: models-storage
     cache_dir: /models
   runtime:
-    replicas: 1
+    replicas: 2
     tensor_parallelism: 1
     vllm_args:
       - --max-model-len=8192

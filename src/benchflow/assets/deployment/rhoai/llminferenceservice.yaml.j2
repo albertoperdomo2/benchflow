@@ -1,0 +1,171 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: {{ release_name }}
+  namespace: {{ namespace }}
+  labels:
+{% for key, value in labels.items() %}
+    {{ key }}: {{ value | tojson }}
+{% endfor %}
+  annotations:
+    security.opendatahub.io/enable-auth: {{ enable_auth | tojson }}
+    serving.kserve.io/enable-prometheus-scraping: "true"
+{% if precise_prefix_cache_enabled %}
+    benchflow.io/prefix-caching: "precise"
+{% endif %}
+spec:
+  model:
+    name: {{ model_name | tojson }}
+    uri: {{ model_uri | tojson }}
+  replicas: {{ replicas }}
+  router:
+    route: {}
+    gateway: {}
+    scheduler:
+      template:
+{% if precise_prefix_cache_enabled %}
+        volumes:
+          - name: tokenizers
+            emptyDir: {}
+{% endif %}
+        containers:
+          - name: main
+{% if precise_prefix_cache_enabled %}
+            ports:
+              - containerPort: 5557
+                name: zmq
+                protocol: TCP
+{% endif %}
+            args:
+              - --pool-name
+              - '{% raw %}{{ ChildName .ObjectMeta.Name `-inference-pool` }}{% endraw %}'
+              - --pool-namespace
+              - '{% raw %}{{ .ObjectMeta.Namespace }}{% endraw %}'
+              - --pool-group
+              - inference.networking.x-k8s.io
+              - --zap-encoder
+              - json
+              - --grpc-port
+              - "9002"
+              - --grpc-health-port
+              - "9003"
+              - --secure-serving
+              - --model-server-metrics-scheme
+              - https
+{% if precise_prefix_cache_enabled %}
+              - --model-server-metrics-https-insecure-skip-verify
+{% endif %}
+              - --cert-path
+              - /var/run/kserve/tls
+              - --config-text
+              - |
+                apiVersion: inference.networking.x-k8s.io/v1alpha1
+                kind: EndpointPickerConfig
+{% if precise_prefix_cache_enabled %}
+                plugins:
+                - type: single-profile-handler
+                - type: precise-prefix-cache-scorer
+                  parameters:
+                    kvEventsConfig:
+                      zmqEndpoint: tcp://*:5557
+                      topicFilter: kv
+                    indexerConfig:
+                      tokenProcessorConfig:
+                        blockSize: 64
+                        hashSeed: "42"
+                      kvBlockIndexConfig:
+                        enableMetrics: true
+                        metricsLoggingInterval: 10000000000
+                      tokenizersPoolConfig:
+                        hf:
+                          tokenizersCacheDir: /mnt/tokenizers
+                - type: kv-cache-utilization-scorer
+                - type: queue-scorer
+                - type: max-score-picker
+                schedulingProfiles:
+                - name: default
+                  plugins:
+                  - pluginRef: precise-prefix-cache-scorer
+                    weight: 3.0
+                  - pluginRef: kv-cache-utilization-scorer
+                    weight: 2.0
+                  - pluginRef: queue-scorer
+                    weight: 2.0
+                  - pluginRef: max-score-picker
+{% else %}
+                plugins:
+                - type: queue-scorer
+                - type: kv-cache-utilization-scorer
+                - type: prefix-cache-scorer
+                schedulingProfiles:
+                - name: default
+                  plugins:
+                  - pluginRef: queue-scorer
+                    weight: 2.0
+                  - pluginRef: kv-cache-utilization-scorer
+                    weight: 2.0
+                  - pluginRef: prefix-cache-scorer
+                    weight: 3.0
+{% endif %}
+{% if precise_prefix_cache_enabled %}
+            env:
+              - name: HF_HOME
+                value: /mnt/tokenizers
+            volumeMounts:
+              - mountPath: /mnt/tokenizers
+                name: tokenizers
+{% endif %}
+            resources: {}
+  template:
+    containers:
+      - name: main
+{% if runtime_image %}
+        image: {{ runtime_image | tojson }}
+{% endif %}
+        command:
+          - python3
+          - -m
+          - vllm.entrypoints.openai.api_server
+        resources:
+          limits:
+            nvidia.com/gpu: {{ gpu_count | tojson }}
+          requests:
+            nvidia.com/gpu: {{ gpu_count | tojson }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+            scheme: HTTPS
+          initialDelaySeconds: 400
+          periodSeconds: 10
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        args:
+{% for arg in runtime_args %}
+          - {{ arg | tojson }}
+{% endfor %}
+{% if precise_prefix_cache_enabled %}
+          - "--enable-prefix-caching"
+          - "--prefix-caching-hash-algo=sha256_cbor"
+          - "--block-size=64"
+          - '--kv-events-config={"enable_kv_cache_events": true, "publisher": "zmq", "endpoint": "tcp://{{ release_name }}-epp-service:5557", "topic": "kv@$(POD_IP)@$(MODEL_NAME)"}'
+{% endif %}
+{% if runtime_env or precise_prefix_cache_enabled %}
+        env:
+{% for entry in runtime_env %}
+          - name: {{ entry.name }}
+            value: {{ entry.value | tojson }}
+{% endfor %}
+{% if precise_prefix_cache_enabled %}
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: status.podIP
+          - name: MODEL_NAME
+            value: {{ model_name | tojson }}
+          - name: PYTHONHASHSEED
+            value: "42"
+{% endif %}
+{% endif %}

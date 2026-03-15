@@ -1,8 +1,8 @@
 # BenchFlow Advanced Guide
 
 This document is the full operational guide for BenchFlow as it exists today.
-The implemented execution path is `llm-d`. `rhoai` and `rhaiis` remain future
-platforms and should be treated as unsupported placeholders.
+The implemented execution paths are `llm-d` and `rhoai`. `rhaiis` remains future
+work and should be treated as an unsupported placeholder.
 
 ## Mental Model
 
@@ -371,11 +371,10 @@ BenchFlow currently assumes:
 - MLflow is reachable
 - MLflow artifacts are backed by S3
 - a suitable storage class exists for the BenchFlow PVCs
-- `llm-d` is the only implemented execution platform
+- `llm-d` and `rhoai` are the implemented execution platforms
 
 It does not currently implement:
 
-- `rhoai` execution
 - `rhaiis` execution
 - public cluster-stored custom profiles
 - public RunPlan matrix submission from a JSON array

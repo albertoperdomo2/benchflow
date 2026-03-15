@@ -1,0 +1,28 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: cleanup-run-plan
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/displayName: "Cleanup RunPlan"
+spec:
+  description: >-
+    Remove the deployment resources described by the resolved RunPlan while
+    preserving the shared model PVC contents.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+    - name: RUN_PLAN
+      type: string
+  steps:
+    - name: cleanup
+      image: $(params.IMAGE)
+      command:
+        - bflow
+      args:
+        - task
+        - cleanup-run-plan
+        - --run-plan-json
+        - $(params.RUN_PLAN)

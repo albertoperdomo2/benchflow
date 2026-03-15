@@ -14,9 +14,14 @@ from ..benchmark import (
     generate_report,
     run_benchmark,
 )
-from ..cleanup import cleanup_llmd
-from ..cluster import create_manifest, follow_pipelinerun, get_current_namespace
-from ..deploy import deploy_llmd
+from ..cleanup import cleanup_llmd, cleanup_rhoai
+from ..cluster import (
+    create_manifest,
+    follow_pipelinerun,
+    get_current_namespace,
+    resolve_target_base_url,
+)
+from ..deploy import deploy_llmd, deploy_rhoai
 from ..execution import load_run_plan_from_sources, require_platform
 from ..install import BootstrapOptions, run_bootstrap
 from ..loaders import load_run_plan_data
@@ -31,7 +36,6 @@ from ..ui import detail, emit, step, success, warning
 from ..waiting import wait_for_endpoint
 from .shared import (
     dump_yaml,
-    experiment_input_options,
     invoke_handler,
     load_runtime_plan,
     parse_mapping,
@@ -39,6 +43,15 @@ from .shared import (
     repo_root_from,
     runtime_plan_source_options,
 )
+
+
+def _resolved_target_url(args: argparse.Namespace) -> tuple[str, str]:
+    plan = load_runtime_plan(args)
+    target_url = args.target_url or resolve_target_base_url(
+        plan.deployment.target, plan.deployment.namespace
+    )
+    endpoint_path = args.endpoint_path or plan.deployment.target.path
+    return target_url, endpoint_path
 
 
 def cmd_bootstrap(args: argparse.Namespace) -> int:
@@ -81,7 +94,6 @@ def cmd_repo_clone(args: argparse.Namespace) -> int:
 
 def cmd_model_download(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    require_platform(plan, "llm-d")
     target_dir = download_model(
         plan,
         models_storage_path=Path(args.models_storage_path).resolve(),
@@ -124,14 +136,40 @@ def cmd_undeploy_llmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_deploy_rhoai(args: argparse.Namespace) -> int:
+    plan = load_runtime_plan(args)
+    require_platform(plan, "rhoai")
+    output_dir = deploy_rhoai(
+        plan,
+        manifests_dir=Path(args.manifests_dir).resolve()
+        if args.manifests_dir
+        else None,
+        skip_if_exists=not args.no_skip_if_exists,
+        verify=not args.no_verify,
+        verify_timeout_seconds=args.verify_timeout_seconds,
+    )
+    print(output_dir)
+    return 0
+
+
+def cmd_undeploy_rhoai(args: argparse.Namespace) -> int:
+    plan = load_runtime_plan(args)
+    require_platform(plan, "rhoai")
+    cleanup_rhoai(
+        plan,
+        wait_for_deletion=not args.no_wait,
+        timeout_seconds=args.timeout_seconds,
+        skip_if_not_exists=not args.no_skip_if_not_exists,
+    )
+    print(plan.deployment.release_name)
+    return 0
+
+
 def cmd_wait_endpoint(args: argparse.Namespace) -> int:
     target_url = args.target_url
     endpoint_path = args.endpoint_path
     if not target_url:
-        plan = load_runtime_plan(args)
-        require_platform(plan, "llm-d")
-        target_url = plan.deployment.target.base_url
-        endpoint_path = args.endpoint_path or plan.deployment.target.path
+        target_url, endpoint_path = _resolved_target_url(args)
     wait_for_endpoint(
         target_url=target_url,
         endpoint_path=endpoint_path or "/v1/models",
@@ -145,13 +183,14 @@ def cmd_wait_endpoint(args: argparse.Namespace) -> int:
 
 def cmd_benchmark_run(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    require_platform(plan, "llm-d")
     if plan.benchmark.tool != "guidellm":
         raise ValidationError(
             f"unsupported benchmark tool: {plan.benchmark.tool}; only guidellm is implemented"
         )
     output_dir = Path(args.output_dir).resolve() if args.output_dir else None
-    benchmark_target = args.target_url or plan.deployment.target.base_url
+    benchmark_target = args.target_url or resolve_target_base_url(
+        plan.deployment.target, plan.deployment.namespace
+    )
     step(f"Running {plan.benchmark.tool} benchmark against {benchmark_target}")
     detail(
         "Rates: "
@@ -173,7 +212,7 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
         try:
             run_id, start_time, end_time = run_benchmark(
                 plan=plan,
-                target=args.target_url,
+                target=benchmark_target,
                 output_dir=output_dir,
                 mlflow_tracking_uri=args.mlflow_tracking_uri,
                 enable_mlflow=not args.no_mlflow,
@@ -241,7 +280,6 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         or args.deployment_profile
     ):
         plan = load_runtime_plan(args)
-        require_platform(plan, "llm-d")
 
     json_path = Path(args.json_path).resolve() if args.json_path else None
     model = args.model_name or (plan.model.name if plan is not None else None)
@@ -289,7 +327,6 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
 
 def cmd_artifacts_collect(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    require_platform(plan, "llm-d")
     artifact_dir = collect_artifacts(
         plan,
         artifacts_dir=Path(args.artifacts_dir).resolve(),
@@ -301,7 +338,6 @@ def cmd_artifacts_collect(args: argparse.Namespace) -> int:
 
 def cmd_metrics_collect(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    require_platform(plan, "llm-d")
     metrics_dir = collect_metrics(
         plan,
         benchmark_start_time=args.benchmark_start_time,
@@ -314,7 +350,6 @@ def cmd_metrics_collect(args: argparse.Namespace) -> int:
 
 def cmd_mlflow_upload(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    require_platform(plan, "llm-d")
     upload_to_mlflow(
         plan,
         mlflow_run_id=args.mlflow_run_id,
@@ -355,6 +390,65 @@ def cmd_task_resolve_run_plan(args: argparse.Namespace) -> int:
     )
     success("RunPlan resolved and stage outputs written")
     print("resolved")
+    return 0
+
+
+def cmd_task_deploy_run_plan(args: argparse.Namespace) -> int:
+    plan = load_run_plan_from_sources(run_plan_json=args.run_plan_json)
+    manifests_dir = Path(args.manifests_dir).resolve() if args.manifests_dir else None
+
+    if plan.deployment.platform == "llm-d":
+        output_dir = deploy_llmd(
+            plan,
+            workspace_dir=Path(args.workspace_dir).resolve()
+            if args.workspace_dir
+            else None,
+            manifests_dir=manifests_dir,
+            pipeline_run_name=args.pipeline_run_name or "",
+            skip_if_exists=not args.no_skip_if_exists,
+            verify=not args.no_verify,
+            verify_timeout_seconds=args.verify_timeout_seconds,
+        )
+    elif plan.deployment.platform == "rhoai":
+        output_dir = deploy_rhoai(
+            plan,
+            manifests_dir=manifests_dir,
+            skip_if_exists=not args.no_skip_if_exists,
+            verify=not args.no_verify,
+            verify_timeout_seconds=args.verify_timeout_seconds,
+        )
+    else:
+        raise ValidationError(
+            f"unsupported deployment platform: {plan.deployment.platform}"
+        )
+
+    print(output_dir)
+    return 0
+
+
+def cmd_task_cleanup_run_plan(args: argparse.Namespace) -> int:
+    plan = load_run_plan_from_sources(run_plan_json=args.run_plan_json)
+
+    if plan.deployment.platform == "llm-d":
+        cleanup_llmd(
+            plan,
+            wait_for_deletion=not args.no_wait,
+            timeout_seconds=args.timeout_seconds,
+            skip_if_not_exists=not args.no_skip_if_not_exists,
+        )
+    elif plan.deployment.platform == "rhoai":
+        cleanup_rhoai(
+            plan,
+            wait_for_deletion=not args.no_wait,
+            timeout_seconds=args.timeout_seconds,
+            skip_if_not_exists=not args.no_skip_if_not_exists,
+        )
+    else:
+        raise ValidationError(
+            f"unsupported deployment platform: {plan.deployment.platform}"
+        )
+
+    print(plan.deployment.release_name)
     return 0
 
 
@@ -610,6 +704,38 @@ def deploy_llmd_command(**kwargs: object) -> int:
     return invoke_handler(cmd_deploy_llmd, **kwargs)
 
 
+@deploy_group.command(
+    "rhoai",
+    help="Deploy a RHOAI LLMInferenceService scenario from a resolved RunPlan.",
+    short_help="Deploy a RHOAI scenario",
+)
+@runtime_plan_source_options
+@click.option(
+    "--manifests-dir",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Directory where rendered manifests should be written.",
+)
+@click.option(
+    "--no-skip-if-exists",
+    is_flag=True,
+    help="Redeploy even if the target service already exists.",
+)
+@click.option(
+    "--no-verify",
+    is_flag=True,
+    help="Skip post-deploy readiness verification.",
+)
+@click.option(
+    "--verify-timeout-seconds",
+    type=int,
+    default=900,
+    show_default=True,
+    help="Maximum time to wait for deployment verification.",
+)
+def deploy_rhoai_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_deploy_rhoai, **kwargs)
+
+
 @click.group(
     "undeploy",
     help="Remove a deployment created from a BenchFlow RunPlan.",
@@ -644,6 +770,33 @@ def undeploy_group() -> None:
 )
 def undeploy_llmd_command(**kwargs: object) -> int:
     return invoke_handler(cmd_undeploy_llmd, **kwargs)
+
+
+@undeploy_group.command(
+    "rhoai",
+    help="Tear down a RHOAI deployment from a resolved RunPlan.",
+    short_help="Remove a RHOAI deployment",
+)
+@runtime_plan_source_options
+@click.option(
+    "--no-wait",
+    is_flag=True,
+    help="Do not wait for deployment resources to disappear.",
+)
+@click.option(
+    "--timeout-seconds",
+    type=int,
+    default=300,
+    show_default=True,
+    help="Maximum time to wait for cleanup.",
+)
+@click.option(
+    "--no-skip-if-not-exists",
+    is_flag=True,
+    help="Fail instead of skipping when the service is already absent.",
+)
+def undeploy_rhoai_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_undeploy_rhoai, **kwargs)
 
 
 @click.group(
@@ -947,6 +1100,75 @@ def task_group() -> None:
 )
 def task_resolve_run_plan_command(**kwargs: object) -> int:
     return invoke_handler(cmd_task_resolve_run_plan, **kwargs)
+
+
+@task_group.command(
+    "deploy-run-plan",
+    help="Internal command used by Tekton to deploy the platform described by a RunPlan.",
+    short_help="Deploy a RunPlan in Tekton",
+)
+@click.option("--run-plan-json", required=True, help="Inline RunPlan JSON payload.")
+@click.option(
+    "--workspace-dir",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Workspace directory used by platforms that require source checkout.",
+)
+@click.option(
+    "--manifests-dir",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Directory where rendered manifests should be written.",
+)
+@click.option(
+    "--pipeline-run-name",
+    default="",
+    help="Owning PipelineRun name for label and log propagation.",
+)
+@click.option(
+    "--no-skip-if-exists",
+    is_flag=True,
+    help="Redeploy even if the target workload already exists.",
+)
+@click.option(
+    "--no-verify",
+    is_flag=True,
+    help="Skip post-deploy readiness verification.",
+)
+@click.option(
+    "--verify-timeout-seconds",
+    type=int,
+    default=900,
+    show_default=True,
+    help="Maximum time to wait for deployment verification.",
+)
+def task_deploy_run_plan_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_task_deploy_run_plan, **kwargs)
+
+
+@task_group.command(
+    "cleanup-run-plan",
+    help="Internal command used by Tekton to clean up the platform described by a RunPlan.",
+    short_help="Clean up a RunPlan in Tekton",
+)
+@click.option("--run-plan-json", required=True, help="Inline RunPlan JSON payload.")
+@click.option(
+    "--no-wait",
+    is_flag=True,
+    help="Do not wait for resource deletion.",
+)
+@click.option(
+    "--timeout-seconds",
+    type=int,
+    default=600,
+    show_default=True,
+    help="Maximum time to wait for cleanup.",
+)
+@click.option(
+    "--no-skip-if-not-exists",
+    is_flag=True,
+    help="Fail instead of skipping when the workload is already absent.",
+)
+def task_cleanup_run_plan_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_task_cleanup_run_plan, **kwargs)
 
 
 @task_group.command(

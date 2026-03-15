@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0",
   "click>=8.1.0",
+  "Jinja2>=3.1.0",
   "requests>=2.31.0",
   "boto3>=1.26.0",
   "pandas>=1.5.0",
@@ -30,5 +31,5 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"benchflow" = ["assets/**/*.yaml", "assets/**/*.json"]
+"benchflow" = ["assets/**/*.yaml", "assets/**/*.json", "assets/**/*.j2"]
 "benchflow.benchmark.processor" = ["config/*.yaml"]

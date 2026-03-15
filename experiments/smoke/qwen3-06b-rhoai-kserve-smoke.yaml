@@ -1,0 +1,11 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen3-06b
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: rhoai-kserve
+  benchmark_profile: guidellm-smoke
+  metrics_profile: detailed
+  namespace: benchflow

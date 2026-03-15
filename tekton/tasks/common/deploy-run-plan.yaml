@@ -1,0 +1,44 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: deploy-run-plan
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/displayName: "Deploy RunPlan"
+spec:
+  description: >-
+    Deploy the platform described by the resolved RunPlan through the BenchFlow
+    control image.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+    - name: RUN_PLAN
+      type: string
+    - name: PIPELINE_RUN_NAME
+      type: string
+      default: ""
+  workspaces:
+    - name: source
+      description: Workspace used by platforms that need a source checkout
+      optional: true
+    - name: manifests-storage
+      description: Workspace for storing rendered manifests
+      optional: true
+  steps:
+    - name: deploy
+      image: $(params.IMAGE)
+      command:
+        - bflow
+      args:
+        - task
+        - deploy-run-plan
+        - --run-plan-json
+        - $(params.RUN_PLAN)
+        - --workspace-dir
+        - $(workspaces.source.path)
+        - --manifests-dir
+        - $(workspaces.manifests-storage.path)
+        - --pipeline-run-name
+        - $(params.PIPELINE_RUN_NAME)

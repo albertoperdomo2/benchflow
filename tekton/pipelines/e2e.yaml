@@ -6,9 +6,9 @@ metadata:
     app.kubernetes.io/name: benchflow
 spec:
   description: >
-    Generic run-plan pipeline for the real llm-d end-to-end path. The pipeline
-    consumes one immutable RUN_PLAN and delegates all lifecycle steps to the
-    BenchFlow control image.
+    Generic run-plan pipeline for the BenchFlow end-to-end path. The pipeline
+    consumes one immutable RUN_PLAN and delegates platform-specific lifecycle
+    steps to the BenchFlow control image.
   params:
     - name: RUN_PLAN
       type: string
@@ -55,7 +55,7 @@ spec:
           operator: in
           values: ["true"]
       taskRef:
-        name: deploy-llm-d-inference-scheduling
+        name: deploy-run-plan
       params:
         - name: IMAGE
           value: $(params.BENCHFLOW_IMAGE)
@@ -186,7 +186,7 @@ spec:
           operator: in
           values: ["true"]
       taskRef:
-        name: cleanup-llm-d-deployment
+        name: cleanup-run-plan
       params:
         - name: IMAGE
           value: $(params.BENCHFLOW_IMAGE)

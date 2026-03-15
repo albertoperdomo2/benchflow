@@ -5,6 +5,7 @@ from typing import Any
 
 import yaml
 
+from ..assets import render_jinja_yaml_document
 from ..models import ResolvedRunPlan
 
 
@@ -45,9 +46,16 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
     }
 
 
-def render_rhoai_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
+def _rhoai_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    return [
+        {"name": key, "value": value}
+        for key, value in sorted(plan.deployment.runtime.env.items())
+    ]
+
+
+def _rhoai_vllm_args(plan: ResolvedRunPlan) -> list[str]:
     model_path = f"/mnt/models{_model_path(plan)}"
-    args = [
+    return [
         "--port=8000",
         "--host=0.0.0.0",
         f"--model={model_path}",
@@ -58,54 +66,31 @@ def render_rhoai_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
         "--ssl-keyfile=/var/run/kserve/tls/tls.key",
     ] + plan.deployment.runtime.vllm_args
 
+
+def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
     return {
-        "apiVersion": "serving.kserve.io/v1alpha1",
-        "kind": "LLMInferenceService",
-        "metadata": {
-            "name": plan.deployment.release_name,
-            "namespace": plan.deployment.namespace,
-            "labels": _base_labels(plan),
-            "annotations": {
-                "security.opendatahub.io/enable-auth": str(
-                    plan.deployment.options.get("enable_auth", False)
-                ).lower(),
-                "serving.kserve.io/enable-prometheus-scraping": "true",
-            },
-        },
-        "spec": {
-            "model": {
-                "name": plan.model.name,
-                "uri": f"pvc://{plan.deployment.model_storage.pvc_name}",
-            },
-            "replicas": plan.deployment.runtime.replicas,
-            "router": {"route": {}, "gateway": {}, "scheduler": {}},
-            "template": {
-                "containers": [
-                    {
-                        "name": "main",
-                        "command": [
-                            "python3",
-                            "-m",
-                            "vllm.entrypoints.openai.api_server",
-                        ],
-                        "args": args,
-                        "resources": {
-                            "limits": {
-                                "nvidia.com/gpu": str(
-                                    plan.deployment.runtime.tensor_parallelism
-                                )
-                            },
-                            "requests": {
-                                "nvidia.com/gpu": str(
-                                    plan.deployment.runtime.tensor_parallelism
-                                )
-                            },
-                        },
-                    }
-                ]
-            },
-        },
+        "release_name": plan.deployment.release_name,
+        "namespace": plan.deployment.namespace,
+        "labels": _base_labels(plan),
+        "enable_auth": str(plan.deployment.options.get("enable_auth", False)).lower(),
+        "model_name": plan.model.name,
+        "model_uri": f"pvc://{plan.deployment.model_storage.pvc_name}",
+        "replicas": plan.deployment.runtime.replicas,
+        "runtime_image": plan.deployment.runtime.image,
+        "runtime_args": _rhoai_vllm_args(plan),
+        "runtime_env": _rhoai_runtime_env(plan),
+        "gpu_count": str(plan.deployment.runtime.tensor_parallelism),
+        "precise_prefix_cache_enabled": plan.deployment.mode == "precise-prefix-cache",
     }
+
+
+def render_rhoai_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
+    if plan.deployment.mode not in {"kserve", "precise-prefix-cache"}:
+        raise ValueError(f"unsupported RHOAI deployment mode: {plan.deployment.mode}")
+    return render_jinja_yaml_document(
+        "deployment/rhoai/llminferenceservice.yaml.j2",
+        _rhoai_template_context(plan),
+    )
 
 
 def render_rhaiis_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:

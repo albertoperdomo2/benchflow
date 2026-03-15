@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from jinja2 import Environment, StrictUndefined
 
 
 _PLACEHOLDER_RE = re.compile(r"{{\s*([A-Z0-9_]+)\s*}}")
@@ -55,3 +56,19 @@ def render_yaml_documents(
     documents = list(yaml.safe_load_all(asset_text(relative_path)))
     rendered = [_render_value(document, variables) for document in documents]
     return [document for document in rendered if document is not None]
+
+
+def render_jinja_yaml_document(
+    relative_path: str | Path, variables: dict[str, Any]
+) -> dict[str, Any]:
+    environment = Environment(
+        undefined=StrictUndefined,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    template = environment.from_string(asset_text(relative_path))
+    rendered = template.render(**variables)
+    document = yaml.safe_load(rendered)
+    if not isinstance(document, dict):
+        raise ValueError(f"{relative_path} did not render to a YAML mapping document")
+    return document

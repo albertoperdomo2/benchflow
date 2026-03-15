@@ -2,13 +2,13 @@
 
 [![Image build status](https://github.com/albertoperdomo2/benchflow/actions/workflows/build-images.yaml/badge.svg)](https://github.com/albertoperdomo2/benchflow/actions/workflows/build-images.yaml)
 
-BenchFlow is a control plane for repeatable LLM inference benchmarks on OpenShift. It turns an experiment file, or an equivalent set of CLI flags, into one resolved run plan, deploys the scenario, runs the benchmark, captures metrics and artifacts, and pushes the result to MLflow. The current implemented execution path is `llm-d`. Experiments may also define cartesian products of deployment, benchmark, and metrics profiles; in that case BenchFlow submits one supervisor PipelineRun that executes the child combinations sequentially in the cluster.
+BenchFlow is a control plane for repeatable LLM inference benchmarks on OpenShift. It turns an experiment file, or an equivalent set of CLI flags, into one resolved run plan, deploys the scenario, runs the benchmark, captures metrics and artifacts, and pushes the result to MLflow. The current implemented execution paths are `llm-d` and `rhoai`. Experiments may also define cartesian products of deployment, benchmark, and metrics profiles; in that case BenchFlow submits one supervisor PipelineRun that executes the child combinations sequentially in the cluster.
 
 The default runtime image is `ghcr.io/albertoperdomo2/benchflow/benchflow:latest`. The default namespace is `benchflow`.
 
 For the full command reference and advanced workflows, see [docs/ADVANCED.md](docs/ADVANCED.md).
 
-BenchFlow bootstraps the cluster resources it owns. That includes NFD, the NVIDIA GPU Operator, Tekton, Grafana, RBAC, PVCs, and the packaged Tekton tasks and pipelines. It does not implement `rhoai` or `rhaiis` execution yet, and it assumes an OpenShift cluster with cluster monitoring enabled and a reachable MLflow deployment backed by S3.
+BenchFlow bootstraps the cluster resources it owns. That includes NFD, the NVIDIA GPU Operator, Tekton, Grafana, RBAC, PVCs, and the packaged Tekton tasks and pipelines. It currently supports `llm-d` and `rhoai` execution, leaves `rhaiis` as future work, and assumes an OpenShift cluster with cluster monitoring enabled and a reachable MLflow deployment backed by S3.
 
 ## Bootstrap
 

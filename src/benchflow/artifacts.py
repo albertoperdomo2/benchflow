@@ -145,6 +145,7 @@ def collect_artifacts(
         "configmaps",
         "gateways",
         "inferencepool",
+        "llminferenceservices",
         "httproutes",
     ):
         get_result = run_command(
