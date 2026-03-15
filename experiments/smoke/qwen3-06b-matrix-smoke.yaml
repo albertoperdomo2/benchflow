@@ -8,6 +8,8 @@ spec:
   deployment_profile:
     - llm-d-inference-scheduling
     - llm-d-precise-prefix-cache
+    - rhoai-kserve
+    - rhoai-precise-prefix-cache
   benchmark_profile: guidellm-smoke
   metrics_profile: detailed
   namespace: benchflow
