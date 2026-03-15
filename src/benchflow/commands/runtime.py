@@ -8,7 +8,12 @@ from pathlib import Path
 import click
 
 from ..artifacts import collect_artifacts
-from ..benchmark import BenchmarkRunFailed, generate_report, run_benchmark
+from ..benchmark import (
+    BenchmarkRunFailed,
+    benchmark_version_from_plan,
+    generate_report,
+    run_benchmark,
+)
 from ..cleanup import cleanup_llmd
 from ..cluster import create_manifest, follow_pipelinerun, get_current_namespace
 from ..deploy import deploy_llmd
@@ -241,9 +246,7 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
     json_path = Path(args.json_path).resolve() if args.json_path else None
     model = args.model_name or (plan.model.name if plan is not None else None)
     version = args.version or (
-        f"{plan.deployment.platform}-{plan.deployment.mode}"
-        if plan is not None
-        else None
+        benchmark_version_from_plan(plan) if plan is not None else None
     )
     tp_size = (
         args.tp

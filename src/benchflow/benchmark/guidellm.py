@@ -52,7 +52,9 @@ def _iso8601_now() -> str:
     )
 
 
-def _version_from_plan(plan: ResolvedRunPlan) -> str:
+def benchmark_version_from_plan(plan: ResolvedRunPlan) -> str:
+    if plan.deployment.platform == "llm-d":
+        return f"llm-d-{plan.deployment.repo_ref}"
     return f"{plan.deployment.platform}-{plan.deployment.mode}"
 
 
@@ -145,7 +147,7 @@ def run_benchmark(
                     mlflow_tracking_uri=mlflow_tracking_uri
                     or os.environ.get("MLFLOW_TRACKING_URI"),
                     tags=tags,
-                    version=_version_from_plan(plan),
+                    version=benchmark_version_from_plan(plan),
                     tp_size=plan.deployment.runtime.tensor_parallelism,
                     runtime_args=_runtime_args(plan),
                     replicas=str(plan.deployment.runtime.replicas),
@@ -167,7 +169,7 @@ def run_benchmark(
                     max_requests=plan.benchmark.max_requests,
                     output_dir=str(output_dir),
                     accelerator=plan.deployment.options.get("accelerator"),
-                    version=_version_from_plan(plan),
+                    version=benchmark_version_from_plan(plan),
                     tp_size=plan.deployment.runtime.tensor_parallelism,
                     runtime_args=_runtime_args(plan),
                     replicas=plan.deployment.runtime.replicas,
