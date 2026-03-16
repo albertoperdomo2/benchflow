@@ -69,10 +69,15 @@ def _build_grafana_url(
     )
 
 
-def _cleanup_dir_contents(directory: Path) -> None:
+def _cleanup_dir_contents(
+    directory: Path, *, preserve_names: set[str] | None = None
+) -> None:
     if not directory.exists():
         return
+    preserved = preserve_names or set()
     for item in directory.iterdir():
+        if item.name in preserved:
+            continue
         if item.is_dir():
             shutil.rmtree(item)
         else:
@@ -163,5 +168,5 @@ def upload_to_mlflow(
     )
     success(f"MLflow upload complete for run {mlflow_run_id}")
     if artifacts_dir.exists():
-        _cleanup_dir_contents(artifacts_dir)
+        _cleanup_dir_contents(artifacts_dir, preserve_names={"platform-state"})
     return artifacts_dir

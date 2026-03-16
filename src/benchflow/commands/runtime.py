@@ -513,9 +513,10 @@ def cmd_task_deploy_run_plan(args: argparse.Namespace) -> int:
 
 def cmd_task_cleanup_run_plan(args: argparse.Namespace) -> int:
     plan = load_run_plan_from_sources(run_plan_json=args.run_plan_json)
-    setup_state = load_setup_state(
+    setup_state_path = (
         Path(args.setup_state_path).resolve() if args.setup_state_path else None
     )
+    setup_state = load_setup_state(setup_state_path)
     teardown = _teardown_requested(args.teardown_text, default=True)
     cleanup_error: Exception | None = None
 
@@ -552,6 +553,15 @@ def cmd_task_cleanup_run_plan(args: argparse.Namespace) -> int:
 
     if cleanup_error is not None:
         raise cleanup_error
+
+    if setup_state_path is not None and setup_state_path.exists():
+        setup_state_path.unlink()
+        parent = setup_state_path.parent
+        if parent.exists():
+            try:
+                next(parent.iterdir())
+            except StopIteration:
+                parent.rmdir()
 
     print(plan.deployment.release_name)
     return 0
