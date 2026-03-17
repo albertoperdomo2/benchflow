@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
-from .backends import ArgoBackend, ExecutionBackend, ExecutionSummary
-from .cluster import CommandError
-from .loaders import load_run_plan_data, load_run_plan_file
-from .models import ResolvedRunPlan, ValidationError
+from ..cluster import CommandError, create_manifest
+from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
+from ..loaders import load_run_plan_data, load_run_plan_file
+from ..setup import load_setup_state
+from ..toolbox import setup_platform, teardown_platform
+from ..ui import detail, step, success, warning
+from .argo import ArgoOrchestrator
+from .base import ExecutionOrchestrator
 
 DEFAULT_EXECUTION_NAME = "benchflow-e2e"
 DEFAULT_MATRIX_EXECUTION_NAME = "benchflow-matrix"
 
-_BACKENDS: dict[str, ExecutionBackend] = {
-    "argo": ArgoBackend(),
+_BACKENDS: dict[str, ExecutionOrchestrator] = {
+    "argo": ArgoOrchestrator(),
 }
 
 
@@ -50,7 +55,7 @@ def normalize_execution_backend(name: str | None) -> str:
     return backend
 
 
-def get_execution_backend(name: str | None) -> ExecutionBackend:
+def get_execution_backend(name: str | None) -> ExecutionOrchestrator:
     return _BACKENDS[normalize_execution_backend(name)]
 
 
@@ -97,35 +102,27 @@ def render_matrix_execution_manifest(
     )
 
 
-def _execution_summaries_for_backend(
-    backend_name: str, namespace: str
-) -> list[ExecutionSummary]:
-    backend = get_execution_backend(backend_name)
+def _execution_summaries_for_backend(namespace: str) -> list[dict[str, Any]]:
+    backend = get_execution_backend("argo")
     try:
         items = backend.list(
             namespace, label_selector="app.kubernetes.io/name=benchflow"
         )
     except CommandError:
         return []
-    return [backend.summarize(item) for item in items]
+    return [backend.summarize(item).to_dict() for item in items]
 
 
 def list_benchflow_executions(
     namespace: str,
     *,
     include_completed: bool = True,
-    backend: str | None = None,
 ) -> list[dict[str, Any]]:
-    backend_names = (
-        [normalize_execution_backend(backend)] if backend else list(_BACKENDS)
-    )
-    summaries: list[ExecutionSummary] = []
-    for backend_name in backend_names:
-        summaries.extend(_execution_summaries_for_backend(backend_name, namespace))
-    summaries.sort(key=lambda item: item.start_time or "", reverse=True)
+    summaries = _execution_summaries_for_backend(namespace)
+    summaries.sort(key=lambda item: item.get("start_time", "") or "", reverse=True)
     if not include_completed:
-        summaries = [item for item in summaries if not item.finished]
-    return [item.to_dict() for item in summaries]
+        summaries = [item for item in summaries if not item.get("finished")]
+    return summaries
 
 
 def _detect_execution_backend(namespace: str, name: str) -> str:
@@ -189,3 +186,111 @@ def follow_execution(
     return get_execution_backend(backend_name).follow(
         namespace, name, poll_interval=poll_interval
     )
+
+
+def submit_execution_manifest(manifest: dict[str, Any], namespace: str) -> str:
+    submitted = create_manifest(
+        json.dumps(manifest, separators=(",", ":"), sort_keys=True), namespace
+    )
+    name = submitted.get("metadata", {}).get("name")
+    if not name:
+        raise ValidationError("execution submission returned no name")
+    return str(name)
+
+
+def run_matrix_supervisor(
+    plans: list[ResolvedRunPlan],
+    *,
+    child_execution_name: str,
+) -> list[str]:
+    if not plans:
+        raise ValidationError("matrix execution requires at least one RunPlan")
+
+    namespaces = {plan.deployment.namespace for plan in plans}
+    execution_backends = {plan.execution.backend for plan in plans}
+    if len(namespaces) != 1:
+        raise ValidationError(
+            "matrix execution requires all child RunPlans to target the same namespace"
+        )
+    if len(execution_backends) != 1:
+        raise ValidationError(
+            "matrix execution requires all child RunPlans to use the same execution backend"
+        )
+
+    step(
+        f"Running matrix supervisor for {plans[0].metadata.name} "
+        f"with {len(plans)} profile combination(s)"
+    )
+    failures: list[str] = []
+    total = len(plans)
+    setup_state: dict[str, Any] = {}
+    setup_hoisted = False
+    setup_state_dir: tempfile.TemporaryDirectory[str] | None = None
+    setup_state_path: Path | None = None
+
+    matrix_platform = (
+        plans[0].deployment.platform
+        if len({plan.deployment.platform for plan in plans}) == 1
+        else ""
+    )
+    if (
+        matrix_platform in {"llm-d", "rhoai"}
+        and all(plan.stages.deploy for plan in plans)
+        and all(plan.stages.cleanup for plan in plans)
+    ):
+        step(f"Setting up {matrix_platform} platform once for the whole matrix")
+        setup_state_dir = tempfile.TemporaryDirectory(prefix="benchflow-matrix-setup-")
+        setup_state_path = Path(setup_state_dir.name) / "setup-state.json"
+        setup_hoisted = True
+        setup_state = setup_platform(
+            plans[0],
+            context=ExecutionContext(state_path=setup_state_path),
+        )
+
+    try:
+        for index, plan in enumerate(plans, start=1):
+            descriptor = (
+                f"deployment={plan.profiles.deployment}, "
+                f"benchmark={plan.profiles.benchmark}, "
+                f"metrics={plan.profiles.metrics}"
+            )
+            step(f"[{index}/{total}] Submitting child execution")
+            detail(descriptor)
+            manifest = render_execution_manifest(
+                plan,
+                execution_name=child_execution_name,
+                setup_mode="skip" if setup_hoisted else "auto",
+                teardown=False if setup_hoisted else True,
+            )
+            name = submit_execution_manifest(manifest, plan.deployment.namespace)
+            detail(f"Created execution {name} in namespace {plan.deployment.namespace}")
+            succeeded = follow_execution(
+                plan.deployment.namespace,
+                name,
+                backend=plan.execution.backend,
+            )
+            if succeeded:
+                success(f"[{index}/{total}] {name} succeeded")
+                continue
+            warning(f"[{index}/{total}] {name} failed")
+            failures.append(name)
+    finally:
+        if setup_hoisted:
+            step(f"Tearing down hoisted {plans[0].deployment.platform} platform setup")
+            if setup_state_path is not None:
+                setup_state = load_setup_state(setup_state_path)
+            teardown_platform(
+                plans[0],
+                setup_state,
+                context=ExecutionContext(state_path=setup_state_path),
+            )
+        if setup_state_dir is not None:
+            setup_state_dir.cleanup()
+
+    if failures:
+        raise ValidationError(
+            f"{len(failures)} matrix child run(s) failed: {', '.join(failures)}"
+        )
+
+    success(f"Matrix supervisor completed {total} child execution(s)")
+    return failures

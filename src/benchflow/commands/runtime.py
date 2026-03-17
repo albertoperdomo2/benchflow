@@ -2,52 +2,46 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import tempfile
 from pathlib import Path
-from typing import Any
 
 import click
 
-from ..artifacts import collect_artifacts
 from ..benchmark import (
     BenchmarkRunFailed,
     benchmark_version_from_plan,
-    generate_report,
-    run_benchmark,
 )
-from ..cleanup import cleanup_llmd, cleanup_rhoai
 from ..cluster import (
-    create_manifest,
     get_current_namespace,
-    resolve_target_base_url,
 )
-from ..deploy import deploy_llmd, deploy_rhoai
-from ..execution import (
+from ..contracts import ExecutionContext, ValidationError
+from ..orchestration import (
     follow_execution,
     load_run_plan_from_sources,
-    render_execution_manifest,
     require_platform,
+    run_matrix_supervisor,
 )
 from ..install import BootstrapOptions, run_bootstrap
 from ..loaders import load_run_plan_data
-from ..metrics import collect_metrics
-from ..mlflow_upload import upload_to_mlflow
-from ..model import download_model
-from ..models import ValidationError
-from ..setup import (
-    load_setup_state,
-    setup_llmd,
-    setup_rhoai,
-    teardown_llmd,
-    teardown_rhoai,
-)
 from ..repository import clone_repo
-from ..tasking import assert_task_status, write_stage_results
-from ..ui import detail, emit, step, success, warning
+from ..tasking import assert_task_status
+from ..toolbox import (
+    cleanup_deployment,
+    cleanup_run_plan,
+    collect_plan_artifacts,
+    collect_plan_metrics,
+    deploy_platform,
+    download_cached_model,
+    generate_plan_report,
+    resolve_run_plan_stages,
+    resolve_target_url,
+    run_plan_benchmark,
+    setup_platform,
+    teardown_platform,
+    upload_plan_results,
+)
+from ..ui import detail
 from ..waiting import wait_for_endpoint
 from .shared import (
-    dump_yaml,
     invoke_handler,
     load_runtime_plan,
     parse_mapping,
@@ -57,13 +51,28 @@ from .shared import (
 )
 
 
-def _resolved_target_url(args: argparse.Namespace) -> tuple[str, str]:
-    plan = load_runtime_plan(args)
-    target_url = args.target_url or resolve_target_base_url(
-        plan.deployment.target, plan.deployment.namespace
+def _execution_context(
+    *,
+    execution_name: str = "",
+    workspace_dir: str | Path | None = None,
+    manifests_dir: str | Path | None = None,
+    models_storage_path: str | Path | None = None,
+    artifacts_dir: str | Path | None = None,
+    state_path: str | Path | None = None,
+) -> ExecutionContext:
+    def _resolve(value: str | Path | None) -> Path | None:
+        if value is None:
+            return None
+        return Path(value).resolve()
+
+    return ExecutionContext(
+        execution_name=execution_name,
+        workspace_dir=_resolve(workspace_dir),
+        manifests_dir=_resolve(manifests_dir),
+        models_storage_path=_resolve(models_storage_path),
+        artifacts_dir=_resolve(artifacts_dir),
+        state_path=_resolve(state_path),
     )
-    endpoint_path = args.endpoint_path or plan.deployment.target.path
-    return target_url, endpoint_path
 
 
 def _teardown_requested(value: str | None, default: bool = True) -> bool:
@@ -115,57 +124,24 @@ def cmd_repo_clone(args: argparse.Namespace) -> int:
 
 def cmd_model_download(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    target_dir = download_model(
+    target_dir = download_cached_model(
         plan,
-        models_storage_path=Path(args.models_storage_path).resolve(),
+        context=_execution_context(models_storage_path=args.models_storage_path),
         skip_if_exists=not args.no_skip_if_exists,
     )
     print(target_dir)
     return 0
 
 
-def _setup_platform(
-    plan,
-    *,
-    workspace_dir: Path | None = None,
-    state_path: Path | None = None,
-) -> dict[str, Any]:
-    if plan.deployment.platform == "llm-d":
-        return setup_llmd(plan, workspace_dir=workspace_dir, state_path=state_path)
-    if plan.deployment.platform == "rhoai":
-        return setup_rhoai(plan, state_path=state_path)
-    detail(
-        f"No platform setup implemented for {plan.deployment.platform}; continuing without changes"
-    )
-    return {}
-
-
-def _teardown_platform(
-    plan,
-    state: dict[str, Any],
-    *,
-    workspace_dir: Path | None = None,
-) -> None:
-    if plan.deployment.platform == "llm-d":
-        teardown_llmd(plan, state, workspace_dir=workspace_dir)
-        return
-    if plan.deployment.platform == "rhoai":
-        teardown_rhoai(plan, state)
-        return
-    detail(
-        f"No platform teardown implemented for {plan.deployment.platform}; cleanup removed only scenario resources"
-    )
-
-
 def cmd_setup_llmd(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     require_platform(plan, "llm-d")
-    state = setup_llmd(
+    state = setup_platform(
         plan,
-        workspace_dir=Path(args.workspace_dir).resolve()
-        if args.workspace_dir
-        else None,
-        state_path=Path(args.state_path).resolve() if args.state_path else None,
+        context=_execution_context(
+            workspace_dir=args.workspace_dir,
+            state_path=args.state_path,
+        ),
     )
     if args.state_path:
         print(Path(args.state_path).resolve())
@@ -177,9 +153,9 @@ def cmd_setup_llmd(args: argparse.Namespace) -> int:
 def cmd_setup_rhoai(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     require_platform(plan, "rhoai")
-    state = setup_rhoai(
+    state = setup_platform(
         plan,
-        state_path=Path(args.state_path).resolve() if args.state_path else None,
+        context=_execution_context(state_path=args.state_path),
     )
     if args.state_path:
         print(Path(args.state_path).resolve())
@@ -191,15 +167,13 @@ def cmd_setup_rhoai(args: argparse.Namespace) -> int:
 def cmd_teardown_llmd(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     require_platform(plan, "llm-d")
-    state = load_setup_state(
-        Path(args.state_path).resolve() if args.state_path else None
-    )
-    teardown_llmd(
+    teardown_platform(
         plan,
-        state,
-        workspace_dir=Path(args.workspace_dir).resolve()
-        if args.workspace_dir
-        else None,
+        {},
+        context=_execution_context(
+            workspace_dir=args.workspace_dir,
+            state_path=args.state_path,
+        ),
     )
     print(plan.deployment.release_name)
     return 0
@@ -208,10 +182,7 @@ def cmd_teardown_llmd(args: argparse.Namespace) -> int:
 def cmd_teardown_rhoai(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     require_platform(plan, "rhoai")
-    state = load_setup_state(
-        Path(args.state_path).resolve() if args.state_path else None
-    )
-    teardown_rhoai(plan, state)
+    teardown_platform(plan, {}, context=_execution_context(state_path=args.state_path))
     print(plan.deployment.release_name)
     return 0
 
@@ -219,15 +190,13 @@ def cmd_teardown_rhoai(args: argparse.Namespace) -> int:
 def cmd_deploy_llmd(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     require_platform(plan, "llm-d")
-    checkout_dir = deploy_llmd(
+    checkout_dir = deploy_platform(
         plan,
-        workspace_dir=Path(args.workspace_dir).resolve()
-        if args.workspace_dir
-        else None,
-        manifests_dir=Path(args.manifests_dir).resolve()
-        if args.manifests_dir
-        else None,
-        execution_name=args.execution_name or "",
+        context=_execution_context(
+            execution_name=args.execution_name or "",
+            workspace_dir=args.workspace_dir,
+            manifests_dir=args.manifests_dir,
+        ),
         skip_if_exists=not args.no_skip_if_exists,
         verify=not args.no_verify,
         verify_timeout_seconds=args.verify_timeout_seconds,
@@ -239,7 +208,7 @@ def cmd_deploy_llmd(args: argparse.Namespace) -> int:
 def cmd_undeploy_llmd(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     require_platform(plan, "llm-d")
-    cleanup_llmd(
+    cleanup_deployment(
         plan,
         wait_for_deletion=not args.no_wait,
         timeout_seconds=args.timeout_seconds,
@@ -252,11 +221,9 @@ def cmd_undeploy_llmd(args: argparse.Namespace) -> int:
 def cmd_deploy_rhoai(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     require_platform(plan, "rhoai")
-    output_dir = deploy_rhoai(
+    output_dir = deploy_platform(
         plan,
-        manifests_dir=Path(args.manifests_dir).resolve()
-        if args.manifests_dir
-        else None,
+        context=_execution_context(manifests_dir=args.manifests_dir),
         skip_if_exists=not args.no_skip_if_exists,
         verify=not args.no_verify,
         verify_timeout_seconds=args.verify_timeout_seconds,
@@ -268,7 +235,7 @@ def cmd_deploy_rhoai(args: argparse.Namespace) -> int:
 def cmd_undeploy_rhoai(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     require_platform(plan, "rhoai")
-    cleanup_rhoai(
+    cleanup_deployment(
         plan,
         wait_for_deletion=not args.no_wait,
         timeout_seconds=args.timeout_seconds,
@@ -282,7 +249,12 @@ def cmd_wait_endpoint(args: argparse.Namespace) -> int:
     target_url = args.target_url
     endpoint_path = args.endpoint_path
     if not target_url:
-        target_url, endpoint_path = _resolved_target_url(args)
+        plan = load_runtime_plan(args)
+        target_url, endpoint_path = resolve_target_url(
+            plan,
+            target_url=args.target_url,
+            endpoint_path=args.endpoint_path,
+        )
     wait_for_endpoint(
         target_url=target_url,
         endpoint_path=endpoint_path or "/v1/models",
@@ -301,64 +273,45 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
             f"unsupported benchmark tool: {plan.benchmark.tool}; only guidellm is implemented"
         )
     output_dir = Path(args.output_dir).resolve() if args.output_dir else None
-    benchmark_target = args.target_url or resolve_target_base_url(
-        plan.deployment.target, plan.deployment.namespace
-    )
-    step(f"Running {plan.benchmark.tool} benchmark against {benchmark_target}")
-    detail(
-        "Rates: "
-        + ",".join(str(rate) for rate in plan.benchmark.rates)
-        + f", rate type: {plan.benchmark.rate_type}, backend: {plan.benchmark.backend_type}"
-    )
-    detail(f"Benchmark data: {plan.benchmark.data}")
-    detail(
-        f"MLflow: {'disabled' if args.no_mlflow else 'enabled'}, "
-        f"output dir: {str(output_dir) if output_dir is not None else 'not requested'}"
-    )
-    previous_execution_name = os.environ.get("EXECUTION_NAME")
+    benchmark_target, _ = resolve_target_url(plan, target_url=args.target_url)
     run_id = ""
     start_time = ""
     end_time = ""
     try:
-        if args.execution_name:
-            os.environ["EXECUTION_NAME"] = args.execution_name
-        try:
-            run_id, start_time, end_time = run_benchmark(
-                plan=plan,
-                target=benchmark_target,
-                output_dir=output_dir,
-                mlflow_tracking_uri=args.mlflow_tracking_uri,
-                enable_mlflow=not args.no_mlflow,
-                extra_tags=parse_mapping(args.tag, "--tag"),
+        outcome = run_plan_benchmark(
+            plan=plan,
+            target_url=benchmark_target,
+            output_dir=output_dir,
+            mlflow_tracking_uri=args.mlflow_tracking_uri,
+            enable_mlflow=not args.no_mlflow,
+            extra_tags=parse_mapping(args.tag, "--tag"),
+            execution_name=args.execution_name or "",
+        )
+        run_id = outcome.run_id
+        start_time = outcome.start_time
+        end_time = outcome.end_time
+    except BenchmarkRunFailed as exc:
+        run_id = exc.run_id
+        start_time = exc.start_time
+        end_time = exc.end_time
+        if run_id:
+            detail(
+                "Preserving MLflow run information after benchmark failure: "
+                f"run_id={run_id}, start={start_time}, end={end_time}"
             )
-        except BenchmarkRunFailed as exc:
-            run_id = exc.run_id
-            start_time = exc.start_time
-            end_time = exc.end_time
-            if run_id:
-                detail(
-                    "Preserving MLflow run information after benchmark failure: "
-                    f"run_id={run_id}, start={start_time}, end={end_time}"
-                )
-            if args.mlflow_run_id_output and run_id:
-                Path(args.mlflow_run_id_output).resolve().write_text(
-                    run_id, encoding="utf-8"
-                )
-            if args.benchmark_start_time_output and start_time:
-                Path(args.benchmark_start_time_output).resolve().write_text(
-                    start_time, encoding="utf-8"
-                )
-            if args.benchmark_end_time_output and end_time:
-                Path(args.benchmark_end_time_output).resolve().write_text(
-                    end_time, encoding="utf-8"
-                )
-            raise
-    finally:
-        if args.execution_name:
-            if previous_execution_name is None:
-                os.environ.pop("EXECUTION_NAME", None)
-            else:
-                os.environ["EXECUTION_NAME"] = previous_execution_name
+        if args.mlflow_run_id_output and run_id:
+            Path(args.mlflow_run_id_output).resolve().write_text(
+                run_id, encoding="utf-8"
+            )
+        if args.benchmark_start_time_output and start_time:
+            Path(args.benchmark_start_time_output).resolve().write_text(
+                start_time, encoding="utf-8"
+            )
+        if args.benchmark_end_time_output and end_time:
+            Path(args.benchmark_end_time_output).resolve().write_text(
+                end_time, encoding="utf-8"
+            )
+        raise
     if args.mlflow_run_id_output:
         Path(args.mlflow_run_id_output).resolve().write_text(run_id, encoding="utf-8")
     if args.benchmark_start_time_output:
@@ -370,10 +323,6 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
             end_time, encoding="utf-8"
         )
 
-    success(
-        f"Benchmark finished. Start: {start_time}, end: {end_time}, "
-        f"MLflow run: {run_id or 'not created'}"
-    )
     if run_id:
         print(run_id)
     elif output_dir is not None:
@@ -413,15 +362,16 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         else (plan.deployment.runtime.replicas if plan is not None else 1)
     )
 
-    report_path = generate_report(
+    report_path = generate_plan_report(
+        plan=plan,
         json_path=json_path,
-        model=model,
+        model_name=model,
         accelerator=args.accelerator,
         version=version,
-        tp_size=tp_size,
+        tp=tp_size,
         runtime_args=runtime_args,
-        output_dir=Path(args.output_dir).resolve() if args.output_dir else None,
         replicas=replicas,
+        output_dir=Path(args.output_dir).resolve() if args.output_dir else None,
         mlflow_run_ids=[
             item.strip() for item in args.mlflow_run_ids.split(",") if item.strip()
         ]
@@ -440,10 +390,12 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
 
 def cmd_artifacts_collect(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    artifact_dir = collect_artifacts(
+    artifact_dir = collect_plan_artifacts(
         plan,
-        artifacts_dir=Path(args.artifacts_dir).resolve(),
-        execution_name=args.execution_name or "",
+        context=_execution_context(
+            execution_name=args.execution_name or "",
+            artifacts_dir=args.artifacts_dir,
+        ),
     )
     print(artifact_dir)
     return 0
@@ -451,11 +403,11 @@ def cmd_artifacts_collect(args: argparse.Namespace) -> int:
 
 def cmd_metrics_collect(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    metrics_dir = collect_metrics(
+    metrics_dir = collect_plan_metrics(
         plan,
         benchmark_start_time=args.benchmark_start_time,
         benchmark_end_time=args.benchmark_end_time,
-        artifacts_dir=Path(args.artifacts_dir).resolve(),
+        context=_execution_context(artifacts_dir=args.artifacts_dir),
     )
     print(metrics_dir)
     return 0
@@ -463,12 +415,12 @@ def cmd_metrics_collect(args: argparse.Namespace) -> int:
 
 def cmd_mlflow_upload(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    upload_to_mlflow(
+    upload_plan_results(
         plan,
         mlflow_run_id=args.mlflow_run_id,
         benchmark_start_time=args.benchmark_start_time,
         benchmark_end_time=args.benchmark_end_time,
-        artifacts_dir=Path(args.artifacts_dir).resolve(),
+        context=_execution_context(artifacts_dir=args.artifacts_dir),
         grafana_url=args.grafana_url or "",
     )
     print(args.mlflow_run_id)
@@ -477,22 +429,7 @@ def cmd_mlflow_upload(args: argparse.Namespace) -> int:
 
 def cmd_task_resolve_run_plan(args: argparse.Namespace) -> int:
     plan = load_run_plan_from_sources(run_plan_json=args.run_plan_json)
-    if plan.benchmark.tool != "guidellm":
-        raise ValidationError(
-            f"unsupported benchmark tool: {plan.benchmark.tool}; only guidellm is implemented"
-        )
-    step(
-        f"Resolved RunPlan for {plan.metadata.name} "
-        f"({plan.deployment.platform}/{plan.deployment.mode})"
-    )
-    detail(
-        "Stages: "
-        f"download={plan.stages.download}, deploy={plan.stages.deploy}, "
-        f"benchmark={plan.stages.benchmark}, collect={plan.stages.collect}, "
-        f"cleanup={plan.stages.cleanup}"
-    )
-    emit(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
-    write_stage_results(
+    resolve_run_plan_stages(
         plan,
         stage_download_path=Path(args.stage_download_path).resolve(),
         stage_deploy_path=Path(args.stage_deploy_path).resolve(),
@@ -500,7 +437,6 @@ def cmd_task_resolve_run_plan(args: argparse.Namespace) -> int:
         stage_collect_path=Path(args.stage_collect_path).resolve(),
         stage_cleanup_path=Path(args.stage_cleanup_path).resolve(),
     )
-    success("RunPlan resolved and stage outputs written")
     print("resolved")
     return 0
 
@@ -525,7 +461,7 @@ def cmd_task_setup_run_plan(args: argparse.Namespace) -> int:
             f"unsupported setup mode: {args.setup_mode!r}; expected auto or skip"
         )
 
-    state = _setup_platform(plan, state_path=state_path)
+    state = setup_platform(plan, context=_execution_context(state_path=state_path))
     if not state and state_path is not None:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text("{}", encoding="utf-8")
@@ -539,90 +475,31 @@ def cmd_task_setup_run_plan(args: argparse.Namespace) -> int:
 
 def cmd_task_deploy_run_plan(args: argparse.Namespace) -> int:
     plan = load_run_plan_from_sources(run_plan_json=args.run_plan_json)
-    manifests_dir = Path(args.manifests_dir).resolve() if args.manifests_dir else None
-
-    if plan.deployment.platform == "llm-d":
-        output_dir = deploy_llmd(
-            plan,
-            workspace_dir=Path(args.workspace_dir).resolve()
-            if args.workspace_dir
-            else None,
-            manifests_dir=manifests_dir,
+    output_dir = deploy_platform(
+        plan,
+        context=_execution_context(
             execution_name=args.execution_name or "",
-            skip_if_exists=not args.no_skip_if_exists,
-            verify=not args.no_verify,
-            verify_timeout_seconds=args.verify_timeout_seconds,
-        )
-    elif plan.deployment.platform == "rhoai":
-        output_dir = deploy_rhoai(
-            plan,
-            manifests_dir=manifests_dir,
-            skip_if_exists=not args.no_skip_if_exists,
-            verify=not args.no_verify,
-            verify_timeout_seconds=args.verify_timeout_seconds,
-        )
-    else:
-        raise ValidationError(
-            f"unsupported deployment platform: {plan.deployment.platform}"
-        )
-
+            workspace_dir=args.workspace_dir,
+            manifests_dir=args.manifests_dir,
+        ),
+        skip_if_exists=not args.no_skip_if_exists,
+        verify=not args.no_verify,
+        verify_timeout_seconds=args.verify_timeout_seconds,
+    )
     print(output_dir)
     return 0
 
 
 def cmd_task_cleanup_run_plan(args: argparse.Namespace) -> int:
     plan = load_run_plan_from_sources(run_plan_json=args.run_plan_json)
-    setup_state_path = (
-        Path(args.setup_state_path).resolve() if args.setup_state_path else None
+    cleanup_run_plan(
+        plan,
+        context=_execution_context(state_path=args.setup_state_path),
+        teardown=_teardown_requested(args.teardown_text, default=True),
+        wait_for_deletion=not args.no_wait,
+        timeout_seconds=args.timeout_seconds,
+        skip_if_not_exists=not args.no_skip_if_not_exists,
     )
-    setup_state = load_setup_state(setup_state_path)
-    teardown = _teardown_requested(args.teardown_text, default=True)
-    cleanup_error: Exception | None = None
-
-    if plan.deployment.platform == "llm-d":
-        try:
-            cleanup_llmd(
-                plan,
-                wait_for_deletion=not args.no_wait,
-                timeout_seconds=args.timeout_seconds,
-                skip_if_not_exists=not args.no_skip_if_not_exists,
-            )
-        except Exception as exc:  # pragma: no cover - cleanup fallback path
-            cleanup_error = exc
-        if teardown:
-            teardown_llmd(plan, setup_state)
-    elif plan.deployment.platform == "rhoai":
-        try:
-            cleanup_rhoai(
-                plan,
-                wait_for_deletion=not args.no_wait,
-                timeout_seconds=args.timeout_seconds,
-                skip_if_not_exists=not args.no_skip_if_not_exists,
-            )
-        except Exception as exc:  # pragma: no cover - cleanup fallback path
-            cleanup_error = exc
-        if teardown:
-            _teardown_platform(plan, setup_state)
-    else:
-        raise ValidationError(
-            f"unsupported deployment platform: {plan.deployment.platform}"
-        )
-
-    if cleanup_error is not None:
-        raise cleanup_error
-
-    if setup_state_path is not None and setup_state_path.exists():
-        setup_state_path.unlink()
-        parent = setup_state_path.parent
-        if parent.exists():
-            try:
-                next(parent.iterdir())
-            except StopIteration:
-                try:
-                    parent.rmdir()
-                except OSError:
-                    pass
-
     print(plan.deployment.release_name)
     return 0
 
@@ -652,89 +529,7 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
         raise ValidationError("--run-plans-json must contain a non-empty JSON array")
 
     plans = [load_run_plan_data(item) for item in raw_run_plans]
-    namespaces = {plan.deployment.namespace for plan in plans}
-    execution_backends = {plan.execution.backend for plan in plans}
-    if len(namespaces) != 1:
-        raise ValidationError(
-            "matrix execution requires all child RunPlans to target the same namespace"
-        )
-    if len(execution_backends) != 1:
-        raise ValidationError(
-            "matrix execution requires all child RunPlans to use the same execution backend"
-        )
-
-    step(
-        f"Running matrix supervisor for {plans[0].metadata.name} "
-        f"with {len(plans)} profile combination(s)"
-    )
-    failures: list[str] = []
-    total = len(plans)
-    setup_state: dict[str, Any] = {}
-    setup_hoisted = False
-    setup_state_dir: tempfile.TemporaryDirectory[str] | None = None
-    setup_state_path: Path | None = None
-
-    matrix_platform = (
-        plans[0].deployment.platform
-        if len({plan.deployment.platform for plan in plans}) == 1
-        else ""
-    )
-    if (
-        matrix_platform in {"llm-d", "rhoai"}
-        and all(plan.stages.deploy for plan in plans)
-        and all(plan.stages.cleanup for plan in plans)
-    ):
-        step(f"Setting up {matrix_platform} platform once for the whole matrix")
-        setup_state_dir = tempfile.TemporaryDirectory(prefix="benchflow-matrix-setup-")
-        setup_state_path = Path(setup_state_dir.name) / "setup-state.json"
-        setup_hoisted = True
-        setup_state = _setup_platform(plans[0], state_path=setup_state_path)
-
-    try:
-        for index, plan in enumerate(plans, start=1):
-            descriptor = (
-                f"deployment={plan.profiles.deployment}, "
-                f"benchmark={plan.profiles.benchmark}, "
-                f"metrics={plan.profiles.metrics}"
-            )
-            step(f"[{index}/{total}] Submitting child execution")
-            detail(descriptor)
-            manifest = render_execution_manifest(
-                plan,
-                execution_name=args.child_workflow_name,
-                setup_mode="skip" if setup_hoisted else "auto",
-                teardown=False if setup_hoisted else True,
-            )
-            submitted = create_manifest(dump_yaml(manifest), plan.deployment.namespace)
-            name = str(submitted.get("metadata", {}).get("name") or "")
-            if not name:
-                raise ValidationError("child execution submission returned no name")
-            detail(f"Created execution {name} in namespace {plan.deployment.namespace}")
-            succeeded = follow_execution(
-                plan.deployment.namespace,
-                name,
-                backend=plan.execution.backend,
-            )
-            if succeeded:
-                success(f"[{index}/{total}] {name} succeeded")
-                continue
-            warning(f"[{index}/{total}] {name} failed")
-            failures.append(name)
-    finally:
-        if setup_hoisted:
-            step(f"Tearing down hoisted {plans[0].deployment.platform} platform setup")
-            if setup_state_path is not None:
-                setup_state = load_setup_state(setup_state_path)
-            _teardown_platform(plans[0], setup_state)
-        if setup_state_dir is not None:
-            setup_state_dir.cleanup()
-
-    if failures:
-        raise ValidationError(
-            f"{len(failures)} matrix child run(s) failed: {', '.join(failures)}"
-        )
-
-    success(f"Matrix supervisor completed {total} child execution(s)")
+    run_matrix_supervisor(plans, child_execution_name=args.child_workflow_name)
     print("completed")
     return 0
 

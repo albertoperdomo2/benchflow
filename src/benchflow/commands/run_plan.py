@@ -5,13 +5,13 @@ from pathlib import Path
 
 import click
 
-from ..cluster import CommandError, create_manifest
-from ..execution import (
+from ..contracts import ResolvedRunPlan, StageSpec, ValidationError
+from ..orchestration import (
     follow_execution,
     load_run_plan_from_sources,
     render_execution_manifest,
+    submit_execution_manifest,
 )
-from ..models import ResolvedRunPlan, StageSpec, ValidationError
 from .shared import dump_yaml, invoke_handler
 
 
@@ -22,14 +22,6 @@ def _load_run_plan(args: argparse.Namespace) -> ResolvedRunPlan:
         run_plan_file=str(args.run_plan) if args.run_plan else None,
         run_plan_json=args.run_plan_json,
     )
-
-
-def _submit_manifest(manifest_yaml: str, namespace: str) -> str:
-    submitted = create_manifest(manifest_yaml, namespace)
-    name = submitted.get("metadata", {}).get("name")
-    if not name:
-        raise CommandError("oc create returned no execution name")
-    return str(name)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -60,7 +52,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.output:
         Path(args.output).resolve().write_text(manifest_yaml, encoding="utf-8")
 
-    name = _submit_manifest(manifest_yaml, plan.deployment.namespace)
+    name = submit_execution_manifest(
+        render_execution_manifest(
+            plan,
+            execution_name=args.workflow_name,
+        ),
+        plan.deployment.namespace,
+    )
     print(name)
 
     if args.follow:
@@ -93,7 +91,13 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     if args.output:
         Path(args.output).resolve().write_text(manifest_yaml, encoding="utf-8")
 
-    name = _submit_manifest(manifest_yaml, plan.deployment.namespace)
+    name = submit_execution_manifest(
+        render_execution_manifest(
+            plan,
+            execution_name=args.workflow_name,
+        ),
+        plan.deployment.namespace,
+    )
     print(name)
 
     if args.follow:

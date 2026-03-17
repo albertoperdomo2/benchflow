@@ -10,7 +10,7 @@ import yaml
 from click.shell_completion import CompletionItem
 
 from ..cluster import discover_repo_root
-from ..execution import load_run_plan_from_sources
+from ..orchestration import load_run_plan_from_sources
 from ..loaders import (
     ProfileCatalog,
     list_profile_entries,

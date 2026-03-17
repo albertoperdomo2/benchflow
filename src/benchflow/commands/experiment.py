@@ -5,20 +5,17 @@ from pathlib import Path
 
 import click
 
-from ..cluster import (
-    CommandError,
-    create_manifest,
-    get_current_namespace,
-)
-from ..execution import (
+from ..cluster import CommandError, get_current_namespace
+from ..contracts import StageSpec
+from ..orchestration import (
     cancel_execution,
     follow_execution,
     list_benchflow_executions,
     render_execution_manifest,
     render_matrix_execution_manifest,
+    submit_execution_manifest,
     summarize_execution,
 )
-from ..models import StageSpec
 from ..renderers.deployment import write_deployment_assets
 from ..ui import detail, step, success
 from .shared import (
@@ -179,21 +176,21 @@ def _render_manifest_yaml(
     return plans if len(plans) > 1 else plan, manifest_yaml, namespace
 
 
-def _submit_manifest(manifest_yaml: str, namespace: str) -> str:
-    submitted = create_manifest(manifest_yaml, namespace)
-    name = submitted.get("metadata", {}).get("name")
-    if not name:
-        raise CommandError("oc create returned no execution name")
-    return str(name)
-
-
 def cmd_run(args: argparse.Namespace) -> int:
     plan_or_plans, manifest_yaml, namespace = _render_manifest_yaml(args)
 
     if args.output:
         Path(args.output).resolve().write_text(manifest_yaml, encoding="utf-8")
 
-    name = _submit_manifest(manifest_yaml, namespace)
+    name = submit_execution_manifest(
+        render_execution_manifest(plan_or_plans, execution_name=args.workflow_name)
+        if hasattr(plan_or_plans, "execution")
+        else render_matrix_execution_manifest(
+            plan_or_plans,
+            child_execution_name=args.workflow_name,
+        ),
+        namespace,
+    )
     print(name)
 
     if args.follow:
@@ -214,7 +211,10 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     if args.output:
         Path(args.output).resolve().write_text(manifest_yaml, encoding="utf-8")
 
-    name = _submit_manifest(manifest_yaml, namespace)
+    name = submit_execution_manifest(
+        render_execution_manifest(plan_or_plans, execution_name=args.workflow_name),
+        namespace,
+    )
     print(name)
 
     if args.follow:

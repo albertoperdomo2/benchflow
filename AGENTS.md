@@ -18,7 +18,11 @@ BenchFlow should stay narrow, explicit, and operationally clear. If a change mak
 - The default namespace is `benchflow`, unless explicitly overridden.
 - Argo is the current execution backend. Keep business logic out of workflow definitions.
 - Python owns the control logic.
+- `src/benchflow/contracts/` owns the shared types at the orchestration/toolbox boundary.
 - Argo definitions should stay orchestration-focused and thin.
+- `src/benchflow/orchestration/` owns workflow rendering, submission, watch, and cancellation.
+- `src/benchflow/toolbox/` owns reusable operational actions such as setup, deploy, benchmark, collect, and upload.
+- CLI commands and workflow task entrypoints should delegate into the toolbox instead of re-implementing operations inline.
 - The internal contract is the `RunPlan`.
 - Tasks and internal commands should consume the run plan, not a wide flat list of parameters.
 - Keep one real implementation path. Do not keep duplicate paths alive.

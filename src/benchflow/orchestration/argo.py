@@ -3,13 +3,11 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import time
 from typing import Any
 
 from ..cluster import CommandError, require_command, run_command, run_json_command
-from ..models import ResolvedRunPlan, ValidationError
+from ..contracts import ExecutionSummary, ResolvedRunPlan, ValidationError
 from ..ui import detail, step, success, warning
-from .base import ExecutionSummary
 
 
 def _common_labels(plan: ResolvedRunPlan, *, backend: str) -> dict[str, str]:
@@ -197,7 +195,7 @@ def _workflow_log_stream_limit(namespace: str, name: str) -> int:
     return max(20, stream_count)
 
 
-class ArgoBackend:
+class ArgoOrchestrator:
     name = "argo"
 
     def render_run(
@@ -326,16 +324,16 @@ class ArgoBackend:
                 )
             state = _workflow_state(payload)
             if state != last_state:
-                label, _, _, message = state
-                detail(f"{name}: {label}")
+                status, finished, succeeded, message = state
+                if succeeded:
+                    success(f"{name}: {status}")
+                elif finished:
+                    warning(f"{name}: {status}")
+                else:
+                    detail(f"{name}: {status}")
                 if message:
                     detail(message)
                 last_state = state
-            label, finished, succeeded, _ = state
-            if finished:
-                if succeeded:
-                    success(f"{name}: {label}")
-                else:
-                    warning(f"{name}: {label}")
-                return succeeded
-            time.sleep(poll_interval)
+                if finished:
+                    return succeeded
+            subprocess.run(["sleep", str(poll_interval)], check=False)

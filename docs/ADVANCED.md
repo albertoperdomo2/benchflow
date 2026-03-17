@@ -18,6 +18,21 @@ BenchFlow has two public configuration layers.
 - contains the exact deployment, benchmark, metrics, and stage configuration
 - is what the execution backend and the internal `bflow task ...` entrypoints actually run
 
+Internally, BenchFlow is split into two implementation layers:
+
+`contracts`
+- shared `RunPlan`, execution context, and execution summary types
+- the explicit boundary between orchestration and toolbox
+
+`orchestration`
+- workflow rendering, submission, watch, and cancellation
+- Argo-specific sequencing and cluster execution behavior
+
+`toolbox`
+- reusable operational actions driven by a `RunPlan`
+- setup, deploy, benchmark, artifact collection, metrics collection, and MLflow upload
+- callable from the CLI and from orchestration without duplicating business logic
+
 The normal path is:
 
 ```bash
