@@ -188,6 +188,41 @@ def follow_execution(
     )
 
 
+def list_execution_steps(
+    namespace: str,
+    name: str,
+    *,
+    backend: str | None = None,
+) -> list[str]:
+    backend_name = (
+        normalize_execution_backend(backend)
+        if backend
+        else _detect_execution_backend(namespace, name)
+    )
+    return get_execution_backend(backend_name).list_steps(namespace, name)
+
+
+def stream_execution_logs(
+    namespace: str,
+    name: str,
+    *,
+    backend: str | None = None,
+    step_name: str | None = None,
+    all_logs: bool = False,
+) -> None:
+    backend_name = (
+        normalize_execution_backend(backend)
+        if backend
+        else _detect_execution_backend(namespace, name)
+    )
+    get_execution_backend(backend_name).logs(
+        namespace,
+        name,
+        step_name=step_name,
+        all_logs=all_logs,
+    )
+
+
 def submit_execution_manifest(manifest: dict[str, Any], namespace: str) -> str:
     submitted = create_manifest(
         json.dumps(manifest, separators=(",", ":"), sort_keys=True), namespace

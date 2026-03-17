@@ -36,3 +36,14 @@ class ExecutionOrchestrator(Protocol):
     def cancel(self, namespace: str, name: str) -> None: ...
 
     def follow(self, namespace: str, name: str, *, poll_interval: int = 5) -> bool: ...
+
+    def list_steps(self, namespace: str, name: str) -> list[str]: ...
+
+    def logs(
+        self,
+        namespace: str,
+        name: str,
+        *,
+        step_name: str | None = None,
+        all_logs: bool = False,
+    ) -> None: ...

@@ -17,6 +17,7 @@ from .commands.runtime import (
     metrics_group,
     mlflow_group,
     model_group,
+    logs_command,
     repo_group,
     setup_group,
     task_group,
@@ -82,6 +83,7 @@ cli.add_command(experiment_group)
 cli.add_command(run_plan_group)
 cli.add_command(repo_group)
 cli.add_command(model_group)
+cli.add_command(logs_command)
 cli.add_command(setup_group)
 cli.add_command(teardown_group)
 cli.add_command(deploy_group)

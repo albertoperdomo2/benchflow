@@ -195,6 +195,179 @@ def _workflow_log_stream_limit(namespace: str, name: str) -> int:
     return max(20, stream_count)
 
 
+def _get_workflow_template(namespace: str, name: str) -> dict[str, Any] | None:
+    require_command("oc")
+    result = run_command(
+        ["oc", "get", "workflowtemplate", name, "-n", namespace, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return json.loads(result.stdout)
+
+
+def _workflow_step_name(node: dict[str, Any]) -> str:
+    for key in ("displayName", "templateName"):
+        value = str(node.get(key, "") or "").strip()
+        if value and value != "pipeline":
+            return value
+    name = str(node.get("name", "") or "").strip()
+    if "." in name:
+        return name.rsplit(".", 1)[-1]
+    return name
+
+
+def _workflow_pod_nodes(workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    status = workflow.get("status", {}) or {}
+    nodes = status.get("nodes", {}) or {}
+    if not isinstance(nodes, dict):
+        return []
+    return [
+        node
+        for node in nodes.values()
+        if isinstance(node, dict) and node.get("type") == "Pod"
+    ]
+
+
+def _template_step_names(template: dict[str, Any]) -> list[str]:
+    spec = template.get("spec", {}) or {}
+    entrypoint_name = str(spec.get("entrypoint", "") or "").strip()
+    templates = spec.get("templates", []) or []
+    if not entrypoint_name or not isinstance(templates, list):
+        return []
+
+    entrypoint = next(
+        (
+            item
+            for item in templates
+            if isinstance(item, dict) and item.get("name") == entrypoint_name
+        ),
+        None,
+    )
+    if entrypoint is None:
+        return []
+
+    steps = entrypoint.get("steps", []) or []
+    names: list[str] = []
+    for group in steps:
+        if not isinstance(group, list):
+            continue
+        for item in group:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "") or "").strip()
+            if name:
+                names.append(name)
+
+    on_exit = str(spec.get("onExit", "") or "").strip()
+    if on_exit:
+        names.append(on_exit)
+    return names
+
+
+def _workflow_step_names(workflow: dict[str, Any]) -> list[str]:
+    namespace = str(workflow.get("metadata", {}).get("namespace", "") or "").strip()
+    step_names: list[str] = []
+
+    workflow_template_ref = (workflow.get("spec", {}) or {}).get(
+        "workflowTemplateRef", {}
+    ) or {}
+    workflow_template_name = str(workflow_template_ref.get("name", "") or "").strip()
+    if namespace and workflow_template_name:
+        workflow_template = _get_workflow_template(namespace, workflow_template_name)
+        if workflow_template is not None:
+            step_names.extend(_template_step_names(workflow_template))
+
+    discovered = []
+    for node in _workflow_pod_nodes(workflow):
+        step_name = _workflow_step_name(node)
+        if step_name and step_name not in discovered:
+            discovered.append(step_name)
+
+    for step_name in discovered:
+        if step_name not in step_names:
+            step_names.append(step_name)
+    return step_names
+
+
+def _step_pod_names(workflow: dict[str, Any], step_name: str) -> list[str]:
+    pod_names: list[str] = []
+    for node in _workflow_pod_nodes(workflow):
+        if _workflow_step_name(node) != step_name:
+            continue
+        pod_name = str(node.get("id", "") or "").strip()
+        if pod_name and pod_name not in pod_names:
+            pod_names.append(pod_name)
+    return pod_names
+
+
+def _stream_pod_logs(namespace: str, pod_name: str) -> None:
+    subprocess.run(
+        [
+            "oc",
+            "logs",
+            "-f",
+            f"pod/{pod_name}",
+            "-n",
+            namespace,
+            "--all-containers=true",
+            "--prefix=true",
+            "--ignore-errors=true",
+            "--pod-running-timeout=10m",
+        ],
+        check=False,
+    )
+
+
+def _node_phase(node: dict[str, Any]) -> str:
+    phase = str(node.get("phase", "") or "Pending").strip()
+    return phase or "Pending"
+
+
+def _aggregate_step_phase(phases: list[str]) -> str:
+    if not phases:
+        return "Pending"
+    if any(phase in {"Failed", "Error"} for phase in phases):
+        return next(phase for phase in phases if phase in {"Failed", "Error"})
+    if any(phase == "Running" for phase in phases):
+        return "Running"
+    if any(phase == "Pending" for phase in phases):
+        return "Pending"
+    if all(phase in {"Skipped", "Omitted"} for phase in phases):
+        return "Skipped"
+    if all(phase == "Succeeded" for phase in phases):
+        return "Succeeded"
+    return phases[-1]
+
+
+def _workflow_step_statuses(workflow: dict[str, Any]) -> list[tuple[str, str]]:
+    step_names = _workflow_step_names(workflow)
+    step_phases: dict[str, list[str]] = {step_name: [] for step_name in step_names}
+
+    for node in _workflow_pod_nodes(workflow):
+        step_name = _workflow_step_name(node)
+        if not step_name:
+            continue
+        step_phases.setdefault(step_name, []).append(_node_phase(node))
+
+    return [
+        (step_name, _aggregate_step_phase(step_phases.get(step_name, [])))
+        for step_name in step_names
+    ]
+
+
+def _emit_step_phase(step_name: str, phase: str) -> None:
+    message = f"{step_name}: {phase}"
+    if phase == "Succeeded":
+        success(message)
+        return
+    if phase in {"Failed", "Error"}:
+        warning(message)
+        return
+    detail(message)
+
+
 class ArgoOrchestrator:
     name = "argo"
 
@@ -273,48 +446,8 @@ class ArgoOrchestrator:
 
     def follow(self, namespace: str, name: str, *, poll_interval: int = 5) -> bool:
         require_command("oc")
-
-        if shutil.which("argo") is not None:
-            step(f"Following Workflow {name} in namespace {namespace}")
-            subprocess.run(
-                ["argo", "logs", "-f", "-n", namespace, name],
-                check=False,
-            )
-            payload = _get_workflow(namespace, name)
-            if payload is None:
-                raise CommandError(
-                    f"Workflow {name} in namespace {namespace} was not found"
-                )
-            state, finished, succeeded, message = _workflow_state(payload)
-            if succeeded:
-                success(f"{name}: {state}")
-            else:
-                warning(f"{name}: {state}")
-            if message:
-                detail(message)
-            return finished and succeeded
-
-        step(f"Following Workflow {name} logs in namespace {namespace} with oc logs")
-        max_log_requests = _workflow_log_stream_limit(namespace, name)
-        subprocess.run(
-            [
-                "oc",
-                "logs",
-                "-f",
-                "-n",
-                namespace,
-                "-l",
-                f"workflows.argoproj.io/workflow={name}",
-                "--all-containers=true",
-                "--prefix=true",
-                "--ignore-errors=true",
-                f"--max-log-requests={max_log_requests}",
-                "--pod-running-timeout=10m",
-            ],
-            check=False,
-        )
-
         last_state: tuple[str, bool, bool, str] | None = None
+        last_step_statuses: dict[str, str] = {}
         step(f"Watching Workflow {name} in namespace {namespace}")
         while True:
             payload = _get_workflow(namespace, name)
@@ -323,6 +456,11 @@ class ArgoOrchestrator:
                     f"Workflow {name} in namespace {namespace} was not found"
                 )
             state = _workflow_state(payload)
+            step_statuses = dict(_workflow_step_statuses(payload))
+
+            if not last_step_statuses and step_statuses:
+                detail("Selectable steps: " + ", ".join(step_statuses))
+
             if state != last_state:
                 status, finished, succeeded, message = state
                 if succeeded:
@@ -334,6 +472,88 @@ class ArgoOrchestrator:
                 if message:
                     detail(message)
                 last_state = state
-                if finished:
-                    return succeeded
+
+            for step_name, phase in step_statuses.items():
+                if last_step_statuses.get(step_name) == phase:
+                    continue
+                _emit_step_phase(step_name, phase)
+                last_step_statuses[step_name] = phase
+
+            if state[1]:
+                return state[2]
             subprocess.run(["sleep", str(poll_interval)], check=False)
+
+    def list_steps(self, namespace: str, name: str) -> list[str]:
+        workflow = _get_workflow(namespace, name)
+        if workflow is None:
+            raise CommandError(
+                f"Workflow {name} in namespace {namespace} was not found"
+            )
+        return _workflow_step_names(workflow)
+
+    def logs(
+        self,
+        namespace: str,
+        name: str,
+        *,
+        step_name: str | None = None,
+        all_logs: bool = False,
+    ) -> None:
+        workflow = _get_workflow(namespace, name)
+        if workflow is None:
+            raise CommandError(
+                f"Workflow {name} in namespace {namespace} was not found"
+            )
+
+        if all_logs:
+            if shutil.which("argo") is not None:
+                step(f"Following Workflow {name} logs in namespace {namespace}")
+                subprocess.run(
+                    ["argo", "logs", "-f", "-n", namespace, name], check=False
+                )
+                return
+
+            step(
+                f"Following Workflow {name} logs in namespace {namespace} with oc logs"
+            )
+            max_log_requests = _workflow_log_stream_limit(namespace, name)
+            subprocess.run(
+                [
+                    "oc",
+                    "logs",
+                    "-f",
+                    "-n",
+                    namespace,
+                    "-l",
+                    f"workflows.argoproj.io/workflow={name}",
+                    "--all-containers=true",
+                    "--prefix=true",
+                    "--ignore-errors=true",
+                    f"--max-log-requests={max_log_requests}",
+                    "--pod-running-timeout=10m",
+                ],
+                check=False,
+            )
+            return
+
+        if not step_name:
+            raise CommandError("step_name is required when all_logs is false")
+
+        available_steps = _workflow_step_names(workflow)
+        if step_name not in available_steps:
+            choices = ", ".join(available_steps) if available_steps else "none"
+            raise CommandError(
+                f"unknown step {step_name!r} for workflow {name}; available steps: {choices}"
+            )
+
+        pod_names = _step_pod_names(workflow, step_name)
+        if not pod_names:
+            raise CommandError(
+                f"workflow step {step_name!r} exists but has no pod logs yet"
+            )
+
+        for pod_name in pod_names:
+            step(
+                f"Following {step_name} logs from pod {pod_name} in namespace {namespace}"
+            )
+            _stream_pod_logs(namespace, pod_name)

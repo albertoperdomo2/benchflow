@@ -7,6 +7,7 @@ from .service import (
     follow_execution,
     get_execution,
     get_execution_backend,
+    list_execution_steps,
     list_benchflow_executions,
     load_run_plan_from_sources,
     normalize_execution_backend,
@@ -14,6 +15,7 @@ from .service import (
     render_matrix_execution_manifest,
     require_platform,
     run_matrix_supervisor,
+    stream_execution_logs,
     submit_execution_manifest,
     summarize_execution,
 )
@@ -27,6 +29,7 @@ __all__ = [
     "follow_execution",
     "get_execution",
     "get_execution_backend",
+    "list_execution_steps",
     "list_benchflow_executions",
     "load_run_plan_from_sources",
     "normalize_execution_backend",
@@ -34,6 +37,7 @@ __all__ = [
     "render_matrix_execution_manifest",
     "require_platform",
     "run_matrix_supervisor",
+    "stream_execution_logs",
     "submit_execution_manifest",
     "summarize_execution",
 ]

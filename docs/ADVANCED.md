@@ -159,6 +159,14 @@ Follow it later:
 bflow watch <execution-name> --namespace benchflow
 ```
 
+Inspect logs:
+
+```bash
+bflow logs <execution-name>
+bflow logs <execution-name> --step benchmark
+bflow logs <execution-name> --all
+```
+
 List running and finished experiments:
 
 ```bash

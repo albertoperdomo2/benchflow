@@ -16,9 +16,11 @@ from ..cluster import (
 from ..contracts import ExecutionContext, ValidationError
 from ..orchestration import (
     follow_execution,
+    list_execution_steps,
     load_run_plan_from_sources,
     require_platform,
     run_matrix_supervisor,
+    stream_execution_logs,
 )
 from ..install import BootstrapOptions, run_bootstrap
 from ..loaders import load_run_plan_data
@@ -105,6 +107,29 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
 def cmd_watch(args: argparse.Namespace) -> int:
     namespace = args.namespace or get_current_namespace()
     return 0 if follow_execution(namespace, args.execution_name) else 1
+
+
+def cmd_logs(args: argparse.Namespace) -> int:
+    namespace = args.namespace or get_current_namespace()
+    if args.all_logs and args.step:
+        raise ValidationError("use either --step or --all, not both")
+
+    if not args.all_logs and not args.step:
+        steps = list_execution_steps(namespace, args.execution_name)
+        if not steps:
+            detail("No selectable workflow steps were found yet")
+            return 0
+        for step_name in steps:
+            print(step_name)
+        return 0
+
+    stream_execution_logs(
+        namespace,
+        args.execution_name,
+        step_name=args.step,
+        all_logs=args.all_logs,
+    )
+    return 0
 
 
 def cmd_repo_clone(args: argparse.Namespace) -> int:
@@ -1343,8 +1368,8 @@ def task_run_experiment_matrix_command(**kwargs: object) -> int:
 
 @click.command(
     "watch",
-    help="Watch a BenchFlow execution and report its terminal state.",
-    short_help="Follow an execution until completion",
+    help="Watch workflow and step status progress until a BenchFlow execution finishes.",
+    short_help="Watch execution progress",
 )
 @click.argument("execution_name")
 @click.option(
@@ -1353,3 +1378,30 @@ def task_run_experiment_matrix_command(**kwargs: object) -> int:
 )
 def watch_command(**kwargs: object) -> int:
     return invoke_handler(cmd_watch, **kwargs)
+
+
+@click.command(
+    "logs",
+    help=(
+        "List selectable workflow steps or stream logs for one step or the full "
+        "execution."
+    ),
+    short_help="Inspect execution logs",
+)
+@click.argument("execution_name")
+@click.option(
+    "--namespace",
+    help="Namespace that contains the execution. Defaults to the current oc project.",
+)
+@click.option(
+    "--step",
+    help="Logical workflow step name to stream logs from.",
+)
+@click.option(
+    "--all",
+    "all_logs",
+    is_flag=True,
+    help="Stream logs for the full execution instead of one step.",
+)
+def logs_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_logs, **kwargs)
