@@ -61,20 +61,17 @@ Then bootstrap the cluster:
 
 ```bash
 bflow bootstrap
-bflow bootstrap --install-argo
 ```
 
 Today `bflow bootstrap` installs or configures:
 
 - NFD operator and `NodeFeatureDiscovery` instance
 - NVIDIA GPU Operator and `ClusterPolicy`
-- OpenShift Pipelines
-- optional Argo Workflows when requested
+- Argo Workflows
 - Grafana
 - BenchFlow RBAC
 - BenchFlow PVCs
-- packaged Tekton tasks and pipelines
-- repo-root Argo reusable templates and workflow templates when Argo is available
+- repo-root Argo reusable templates and workflow templates
 
 ## Profiles
 
@@ -107,8 +104,6 @@ kind: Experiment
 metadata:
   name: qwen3-06b
 spec:
-  execution:
-    backend: tekton
   model:
     name: Qwen/Qwen3-0.6B
   deployment_profile: llm-d-inference-scheduling
@@ -117,8 +112,7 @@ spec:
   namespace: benchflow
 ```
 
-`spec.execution.backend` defaults to `tekton`. Set it to `argo` to submit
-Argo Workflows instead.
+`spec.execution.backend` defaults to `argo`. BenchFlow currently supports Argo only.
 
 Validate it:
 
@@ -135,7 +129,7 @@ bflow experiment resolve experiments/smoke/qwen3-06b-llm-d-smoke.yaml --format j
 Render the execution manifest without submitting it:
 
 ```bash
-bflow experiment render-pipelinerun experiments/smoke/qwen3-06b-llm-d-smoke.yaml
+bflow experiment render-workflow experiments/smoke/qwen3-06b-llm-d-smoke.yaml
 ```
 
 Submit it:
@@ -204,7 +198,7 @@ bflow run-plan validate runplan.json
 Render the execution manifest from it:
 
 ```bash
-bflow run-plan render-pipelinerun runplan.json
+bflow run-plan render-workflow runplan.json
 ```
 
 Submit it:
@@ -337,7 +331,7 @@ bflow benchmark run --run-plan-file runplan.json --output-dir ./results
 Collect artifacts:
 
 ```bash
-bflow artifacts collect --run-plan-file runplan.json --pipeline-run-name <name> --artifacts-dir ./artifacts
+bflow artifacts collect --run-plan-file runplan.json --execution-name <name> --artifacts-dir ./artifacts
 ```
 
 Collect metrics:
@@ -415,13 +409,13 @@ bflow experiment resolve my-experiment.yaml --format json
 Render the execution manifest before submitting:
 
 ```bash
-bflow experiment render-pipelinerun my-experiment.yaml
+bflow experiment render-workflow my-experiment.yaml
 ```
 
 Or, for a resolved plan:
 
 ```bash
-bflow run-plan render-pipelinerun runplan.json
+bflow run-plan render-workflow runplan.json
 ```
 
 If a run is already in the cluster:

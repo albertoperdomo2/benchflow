@@ -19,5 +19,5 @@ spec:
                   value: "{{workflow.parameters.BENCHFLOW_IMAGE}}"
                 - name: RUN_PLANS
                   value: "{{workflow.parameters.RUN_PLANS}}"
-                - name: CHILD_PIPELINE_NAME
-                  value: "{{workflow.parameters.CHILD_PIPELINE_NAME}}"
+                - name: CHILD_WORKFLOW_NAME
+                  value: "{{workflow.parameters.CHILD_WORKFLOW_NAME}}"

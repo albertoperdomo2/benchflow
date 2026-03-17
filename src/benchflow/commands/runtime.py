@@ -83,10 +83,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         repo_root,
         BootstrapOptions(
             namespace=args.namespace or "benchflow",
-            install_tekton=not args.skip_tekton_install,
-            install_argo=args.install_argo,
             install_grafana=not args.skip_grafana_install,
-            tekton_channel=args.tekton_channel or "latest",
             models_storage_class=args.models_storage_class,
             models_storage_size=args.models_size or "250Gi",
             models_storage_access_mode=args.models_access_mode or "ReadWriteOnce",
@@ -98,15 +95,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
 
 def cmd_watch(args: argparse.Namespace) -> int:
     namespace = args.namespace or get_current_namespace()
-    return (
-        0
-        if follow_execution(
-            namespace,
-            args.execution_name,
-            backend=getattr(args, "backend", None),
-        )
-        else 1
-    )
+    return 0 if follow_execution(namespace, args.execution_name) else 1
 
 
 def cmd_repo_clone(args: argparse.Namespace) -> int:
@@ -238,7 +227,7 @@ def cmd_deploy_llmd(args: argparse.Namespace) -> int:
         manifests_dir=Path(args.manifests_dir).resolve()
         if args.manifests_dir
         else None,
-        pipeline_run_name=args.pipeline_run_name or "",
+        execution_name=args.execution_name or "",
         skip_if_exists=not args.no_skip_if_exists,
         verify=not args.no_verify,
         verify_timeout_seconds=args.verify_timeout_seconds,
@@ -326,13 +315,13 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
         f"MLflow: {'disabled' if args.no_mlflow else 'enabled'}, "
         f"output dir: {str(output_dir) if output_dir is not None else 'not requested'}"
     )
-    previous_pipeline_run_name = os.environ.get("PIPELINE_RUN_NAME")
+    previous_execution_name = os.environ.get("EXECUTION_NAME")
     run_id = ""
     start_time = ""
     end_time = ""
     try:
-        if args.pipeline_run_name:
-            os.environ["PIPELINE_RUN_NAME"] = args.pipeline_run_name
+        if args.execution_name:
+            os.environ["EXECUTION_NAME"] = args.execution_name
         try:
             run_id, start_time, end_time = run_benchmark(
                 plan=plan,
@@ -365,11 +354,11 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
                 )
             raise
     finally:
-        if args.pipeline_run_name:
-            if previous_pipeline_run_name is None:
-                os.environ.pop("PIPELINE_RUN_NAME", None)
+        if args.execution_name:
+            if previous_execution_name is None:
+                os.environ.pop("EXECUTION_NAME", None)
             else:
-                os.environ["PIPELINE_RUN_NAME"] = previous_pipeline_run_name
+                os.environ["EXECUTION_NAME"] = previous_execution_name
     if args.mlflow_run_id_output:
         Path(args.mlflow_run_id_output).resolve().write_text(run_id, encoding="utf-8")
     if args.benchmark_start_time_output:
@@ -454,7 +443,7 @@ def cmd_artifacts_collect(args: argparse.Namespace) -> int:
     artifact_dir = collect_artifacts(
         plan,
         artifacts_dir=Path(args.artifacts_dir).resolve(),
-        pipeline_run_name=args.pipeline_run_name or "",
+        execution_name=args.execution_name or "",
     )
     print(artifact_dir)
     return 0
@@ -559,7 +548,7 @@ def cmd_task_deploy_run_plan(args: argparse.Namespace) -> int:
             if args.workspace_dir
             else None,
             manifests_dir=manifests_dir,
-            pipeline_run_name=args.pipeline_run_name or "",
+            execution_name=args.execution_name or "",
             skip_if_exists=not args.no_skip_if_exists,
             verify=not args.no_verify,
             verify_timeout_seconds=args.verify_timeout_seconds,
@@ -712,7 +701,7 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
             detail(descriptor)
             manifest = render_execution_manifest(
                 plan,
-                execution_name=args.child_pipeline_name,
+                execution_name=args.child_workflow_name,
                 setup_mode="skip" if setup_hoisted else "auto",
                 teardown=False if setup_hoisted else True,
             )
@@ -754,7 +743,7 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
     "bootstrap",
     help=(
         "Bootstrap BenchFlow into a namespace and install NFD, the NVIDIA GPU "
-        "Operator, Tekton, optional Argo Workflows, Grafana, RBAC, and PVCs."
+        "Operator, Argo Workflows, Grafana, RBAC, and PVCs."
     ),
     short_help="Bootstrap BenchFlow and cluster dependencies",
 )
@@ -768,25 +757,9 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
     help="Target namespace. Defaults to benchflow.",
 )
 @click.option(
-    "--skip-tekton-install",
-    is_flag=True,
-    help="Do not install Tekton if it is missing.",
-)
-@click.option(
-    "--install-argo",
-    is_flag=True,
-    help="Install Argo Workflows if it is missing.",
-)
-@click.option(
     "--skip-grafana-install",
     is_flag=True,
     help="Do not install Grafana in the dedicated Grafana namespace.",
-)
-@click.option(
-    "--tekton-channel",
-    default="latest",
-    show_default=True,
-    help="OpenShift Pipelines operator channel.",
 )
 @click.option(
     "--models-storage-class",
@@ -1004,7 +977,7 @@ def deploy_group() -> None:
     help="Directory where rendered manifests should be written.",
 )
 @click.option(
-    "--pipeline-run-name",
+    "--execution-name",
     help="Owning execution name for log and label propagation.",
 )
 @click.option(
@@ -1200,7 +1173,7 @@ def benchmark_group() -> None:
     help="Extra MLflow tags for the benchmark run.",
 )
 @click.option(
-    "--pipeline-run-name",
+    "--execution-name",
     help="Owning execution name for MLflow tagging.",
 )
 @click.option(
@@ -1294,7 +1267,7 @@ def artifacts_group() -> None:
     help="Directory where collected artifacts should be written.",
 )
 @click.option(
-    "--pipeline-run-name",
+    "--execution-name",
     help="Execution name to collect artifacts from.",
 )
 def artifacts_collect_command(**kwargs: object) -> int:
@@ -1464,7 +1437,7 @@ def task_setup_run_plan_command(**kwargs: object) -> int:
     help="Directory where rendered manifests should be written.",
 )
 @click.option(
-    "--pipeline-run-name",
+    "--execution-name",
     default="",
     help="Owning execution name for label and log propagation.",
 )
@@ -1564,7 +1537,7 @@ def task_assert_status_command(**kwargs: object) -> int:
     help="JSON array of resolved RunPlan objects.",
 )
 @click.option(
-    "--child-pipeline-name",
+    "--child-workflow-name",
     default="benchflow-e2e",
     show_default=True,
     help="Execution definition name to use for the child executions.",
@@ -1582,11 +1555,6 @@ def task_run_experiment_matrix_command(**kwargs: object) -> int:
 @click.option(
     "--namespace",
     help="Namespace that contains the execution. Defaults to the current oc project.",
-)
-@click.option(
-    "--backend",
-    type=click.Choice(("tekton", "argo")),
-    help="Execution backend. Defaults to auto-detect by resource name.",
 )
 def watch_command(**kwargs: object) -> int:
     return invoke_handler(cmd_watch, **kwargs)

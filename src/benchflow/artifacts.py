@@ -63,7 +63,7 @@ def collect_artifacts(
     plan: ResolvedRunPlan,
     *,
     artifacts_dir: Path,
-    pipeline_run_name: str = "",
+    execution_name: str = "",
 ) -> Path:
     kubectl_cmd = require_any_command("oc", "kubectl")
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -71,8 +71,8 @@ def collect_artifacts(
         f"Collecting artifacts for release {plan.deployment.release_name} "
         f"in namespace {plan.deployment.namespace}"
     )
-    if pipeline_run_name:
-        detail(f"Execution: {pipeline_run_name}")
+    if execution_name:
+        detail(f"Execution: {execution_name}")
     detail(f"Artifacts directory: {artifacts_dir}")
     for relative in (
         "logs/pipeline",
@@ -85,40 +85,35 @@ def collect_artifacts(
 
     namespace = plan.deployment.namespace
 
-    pipeline_pods: list[str] = []
-    pipeline_count = 0
-    if pipeline_run_name:
+    execution_pods: list[str] = []
+    execution_pod_count = 0
+    if execution_name:
         detail("Collecting execution pod logs")
-        selectors = (
-            f"tekton.dev/pipelineRun={pipeline_run_name}",
-            f"workflows.argoproj.io/workflow={pipeline_run_name}",
+        seen_execution_pods: set[str] = set()
+        payload = run_json_command(
+            [
+                kubectl_cmd,
+                "get",
+                "pods",
+                "-n",
+                namespace,
+                "-l",
+                f"workflows.argoproj.io/workflow={execution_name}",
+                "-o",
+                "json",
+            ]
         )
-        seen_pipeline_pods: set[str] = set()
-        for selector in selectors:
-            payload = run_json_command(
-                [
-                    kubectl_cmd,
-                    "get",
-                    "pods",
-                    "-n",
-                    namespace,
-                    "-l",
-                    selector,
-                    "-o",
-                    "json",
-                ]
-            )
-            for item in payload.get("items", []):
-                pod_name = item.get("metadata", {}).get("name", "")
-                if pod_name:
-                    seen_pipeline_pods.add(pod_name)
-        pipeline_pods = sorted(seen_pipeline_pods)
-        for pod_name in pipeline_pods:
+        for item in payload.get("items", []):
+            pod_name = item.get("metadata", {}).get("name", "")
+            if pod_name:
+                seen_execution_pods.add(pod_name)
+        execution_pods = sorted(seen_execution_pods)
+        for pod_name in execution_pods:
             if _collect_pod_logs(
                 kubectl_cmd, namespace, pod_name, artifacts_dir / "logs" / "pipeline"
             ):
-                pipeline_count += 1
-        detail(f"Collected logs from {pipeline_count} execution pod(s)")
+                execution_pod_count += 1
+        detail(f"Collected logs from {execution_pod_count} execution pod(s)")
 
     payload = run_json_command(
         [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"]
@@ -128,7 +123,7 @@ def collect_artifacts(
     infra_count = 0
     for item in payload.get("items", []):
         pod_name = item.get("metadata", {}).get("name", "")
-        if not pod_name or pod_name.endswith("-pod") or pod_name in pipeline_pods:
+        if not pod_name or pod_name.endswith("-pod") or pod_name in execution_pods:
             continue
         pod_type = _pod_type(pod_name)
         if _collect_pod_logs(
@@ -198,8 +193,8 @@ def collect_artifacts(
     metadata = {
         "namespace": namespace,
         "release": plan.deployment.release_name,
-        "pipeline_run": pipeline_run_name,
-        "pipeline_pods": pipeline_count,
+        "execution_name": execution_name,
+        "execution_pods": execution_pod_count,
         "model_pods": model_count,
         "gaie_pods": gaie_count,
         "infra_pods": infra_count,

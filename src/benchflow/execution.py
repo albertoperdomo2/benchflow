@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .backends import ArgoBackend, ExecutionBackend, ExecutionSummary, TektonBackend
+from .backends import ArgoBackend, ExecutionBackend, ExecutionSummary
 from .cluster import CommandError
 from .loaders import load_run_plan_data, load_run_plan_file
 from .models import ResolvedRunPlan, ValidationError
@@ -13,7 +13,6 @@ DEFAULT_EXECUTION_NAME = "benchflow-e2e"
 DEFAULT_MATRIX_EXECUTION_NAME = "benchflow-matrix"
 
 _BACKENDS: dict[str, ExecutionBackend] = {
-    "tekton": TektonBackend(),
     "argo": ArgoBackend(),
 }
 
@@ -42,7 +41,7 @@ def require_platform(plan: ResolvedRunPlan, platform: str) -> None:
 
 
 def normalize_execution_backend(name: str | None) -> str:
-    backend = str(name or "tekton").strip().lower()
+    backend = str(name or "argo").strip().lower()
     if backend not in _BACKENDS:
         choices = ", ".join(sorted(_BACKENDS))
         raise ValidationError(
@@ -130,20 +129,12 @@ def list_benchflow_executions(
 
 
 def _detect_execution_backend(namespace: str, name: str) -> str:
-    matches: list[str] = []
-    for backend_name in _BACKENDS:
-        if get_execution_backend(backend_name).get(namespace, name) is not None:
-            matches.append(backend_name)
-    if not matches:
+    backend_name = "argo"
+    if get_execution_backend(backend_name).get(namespace, name) is None:
         raise CommandError(
             f"no BenchFlow execution named {name!r} found in {namespace}"
         )
-    if len(matches) > 1:
-        raise CommandError(
-            f"execution name {name!r} is ambiguous across backends in {namespace}: "
-            + ", ".join(matches)
-        )
-    return matches[0]
+    return backend_name
 
 
 def get_execution(
@@ -156,8 +147,7 @@ def get_execution(
     )
     payload = get_execution_backend(backend_name).get(namespace, name)
     if payload is None:
-        kind = "Workflow" if backend_name == "argo" else "PipelineRun"
-        raise CommandError(f"{kind} {name} in namespace {namespace} was not found")
+        raise CommandError(f"Workflow {name} in namespace {namespace} was not found")
     return payload
 
 
@@ -171,8 +161,7 @@ def summarize_execution(
     )
     payload = get_execution_backend(backend_name).get(namespace, name)
     if payload is None:
-        kind = "Workflow" if backend_name == "argo" else "PipelineRun"
-        raise CommandError(f"{kind} {name} in namespace {namespace} was not found")
+        raise CommandError(f"Workflow {name} in namespace {namespace} was not found")
     return get_execution_backend(backend_name).summarize(payload).to_dict()
 
 

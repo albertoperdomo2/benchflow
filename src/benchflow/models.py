@@ -104,15 +104,15 @@ class MlflowSpec:
 
 @dataclass(slots=True)
 class ExecutionSpec:
-    backend: str = "tekton"
+    backend: str = "argo"
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> "ExecutionSpec":
         raw = raw or {}
-        backend = str(raw.get("backend", "tekton") or "tekton").strip().lower()
-        if backend not in {"tekton", "argo"}:
+        backend = str(raw.get("backend", "argo") or "argo").strip().lower()
+        if backend != "argo":
             raise ValidationError(
-                f"unsupported execution backend: {backend!r}; expected tekton or argo"
+                f"unsupported execution backend: {backend!r}; expected argo"
             )
         return cls(backend=backend)
 

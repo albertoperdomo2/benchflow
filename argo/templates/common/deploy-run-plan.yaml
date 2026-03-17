@@ -25,7 +25,7 @@ spec:
           - /workspace/source
           - --manifests-dir
           - "/workspace/results/{{inputs.parameters.EXECUTION_NAME}}/rendered-manifests"
-          - --pipeline-run-name
+          - --execution-name
           - "{{inputs.parameters.EXECUTION_NAME}}"
         volumeMounts:
           - name: source

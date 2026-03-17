@@ -11,7 +11,7 @@ spec:
         parameters:
           - name: BENCHFLOW_IMAGE
           - name: RUN_PLANS
-          - name: CHILD_PIPELINE_NAME
+          - name: CHILD_WORKFLOW_NAME
       container:
         image: "{{inputs.parameters.BENCHFLOW_IMAGE}}"
         command:
@@ -21,5 +21,5 @@ spec:
           - run-experiment-matrix
           - --run-plans-json
           - "{{inputs.parameters.RUN_PLANS}}"
-          - --child-pipeline-name
-          - "{{inputs.parameters.CHILD_PIPELINE_NAME}}"
+          - --child-workflow-name
+          - "{{inputs.parameters.CHILD_WORKFLOW_NAME}}"

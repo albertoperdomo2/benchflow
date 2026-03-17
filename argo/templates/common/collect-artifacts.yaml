@@ -21,7 +21,7 @@ spec:
           bflow artifacts collect \
             --run-plan-json '{{inputs.parameters.RUN_PLAN}}' \
             --artifacts-dir '/workspace/results/{{inputs.parameters.EXECUTION_NAME}}' \
-            --pipeline-run-name '{{inputs.parameters.EXECUTION_NAME}}'
+            --execution-name '{{inputs.parameters.EXECUTION_NAME}}'
           exit 0
         volumeMounts:
           - name: results

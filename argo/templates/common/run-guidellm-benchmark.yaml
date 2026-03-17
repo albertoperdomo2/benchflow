@@ -93,7 +93,7 @@ spec:
           bflow benchmark run \
             --run-plan-json '{{inputs.parameters.RUN_PLAN}}' \
             --output-dir '/workspace/results/{{inputs.parameters.EXECUTION_NAME}}/benchmark' \
-            --pipeline-run-name '{{inputs.parameters.EXECUTION_NAME}}' \
+            --execution-name '{{inputs.parameters.EXECUTION_NAME}}' \
             --mlflow-run-id-output /workspace/workflow-state/mlflow-run-id.txt \
             --benchmark-start-time-output /workspace/workflow-state/benchmark-start-time.txt \
             --benchmark-end-time-output /workspace/workflow-state/benchmark-end-time.txt

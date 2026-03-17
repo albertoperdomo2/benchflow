@@ -35,10 +35,7 @@ CONNECTIVITY_MARKERS = (
 @dataclass
 class BootstrapOptions:
     namespace: str = "benchflow"
-    install_tekton: bool = True
-    install_argo: bool = False
     install_grafana: bool = True
-    tekton_channel: str = "latest"
     models_storage_access_mode: str = "ReadWriteOnce"
     models_storage_size: str = "250Gi"
     models_storage_class: str | None = None
@@ -47,8 +44,6 @@ class BootstrapOptions:
 
 
 class Installer:
-    pipelines_operator_namespace = "openshift-operators"
-    pipelines_runtime_namespace = "openshift-pipelines"
     argo_namespace = "argo"
     argo_release_version = "v3.7.10"
     nfd_namespace = "openshift-nfd"
@@ -87,9 +82,7 @@ class Installer:
         self.print_intro()
 
         self.install_accelerator_prerequisites()
-        self.install_tekton_if_needed()
         self.install_argo_if_needed()
-        self.configure_tekton_scc()
         self.install_grafana_if_needed()
         self.install_real_secrets()
         self.apply_namespaced_resources()
@@ -112,10 +105,8 @@ class Installer:
                     "GPU prerequisites",
                     "NFD operator + instance, GPU operator + ClusterPolicy",
                 ),
-                ("Install Tekton if missing", str(options.install_tekton).lower()),
-                ("Install Argo if missing", str(options.install_argo).lower()),
+                ("Install Argo Workflows", "true"),
                 ("Install Grafana if missing", str(options.install_grafana).lower()),
-                ("OpenShift Pipelines channel", options.tekton_channel),
                 (
                     "models-storage",
                     f"{options.models_storage_access_mode} {options.models_storage_size}"
@@ -161,10 +152,8 @@ class Installer:
                     "GPU prerequisites",
                     "NFD operator + instance, GPU operator + ClusterPolicy",
                 ),
-                ("Tekton install attempted", str(options.install_tekton).lower()),
-                ("Argo install attempted", str(options.install_argo).lower()),
+                ("Argo install attempted", "true"),
                 ("Grafana install attempted", str(options.install_grafana).lower()),
-                ("OpenShift Pipelines channel", options.tekton_channel),
                 (
                     "models-storage",
                     f"{options.models_storage_access_mode} {options.models_storage_size}"
@@ -462,16 +451,6 @@ class Installer:
         if storage_class is None:
             self.default_storage_class()
             return
-
-    def tekton_ready(self) -> bool:
-        return all(
-            self._resource_exists("get", "crd", name)
-            for name in (
-                "tasks.tekton.dev",
-                "pipelines.tekton.dev",
-                "pipelineruns.tekton.dev",
-            )
-        )
 
     def argo_ready(self) -> bool:
         return all(
@@ -907,108 +886,9 @@ class Installer:
         )
         success("NVIDIA GPU Operator and ClusterPolicy are present")
 
-    def install_tekton_if_needed(self) -> None:
-        if self.tekton_ready():
-            success("Tekton CRDs already present")
-            return
-
-        if not self.options.install_tekton:
-            raise CommandError(
-                "Tekton is not installed and --skip-tekton-install was requested"
-            )
-
-        step(
-            f"Installing OpenShift Pipelines operator in {self.pipelines_operator_namespace}"
-        )
-        self._apply_documents(
-            self._render_asset_documents(
-                "operators/tekton/subscription.yaml",
-                {"TEKTON_CHANNEL": self.options.tekton_channel},
-            ),
-            namespace=None,
-            description="applying OpenShift Pipelines subscription",
-        )
-
-        step("Waiting for the Tekton subscription to resolve")
-        tekton_csv = self._wait_for_subscription_current_csv(
-            subscription_name="openshift-pipelines-operator",
-            namespace=self.pipelines_operator_namespace,
-            timeout_seconds=600,
-        )
-        step(f"Waiting for CSV {tekton_csv} to succeed")
-        self._wait_for_csv_succeeded(
-            subscription_name="openshift-pipelines-operator",
-            namespace=self.pipelines_operator_namespace,
-            csv_name=tekton_csv,
-            timeout_seconds=600,
-            csv_prefix="openshift-pipelines-operator-rh.",
-            catalog_source="redhat-operators",
-        )
-
-        step("Waiting for Tekton CRDs")
-        self._wait_for_resource(
-            resource="crd/tasks.tekton.dev",
-            namespace=None,
-            timeout_seconds=600,
-            label="CRD tasks.tekton.dev",
-        )
-        self._wait_for_resource(
-            resource="crd/pipelines.tekton.dev",
-            namespace=None,
-            timeout_seconds=600,
-            label="CRD pipelines.tekton.dev",
-        )
-        self._wait_for_resource(
-            resource="crd/pipelineruns.tekton.dev",
-            namespace=None,
-            timeout_seconds=600,
-            label="CRD pipelineruns.tekton.dev",
-        )
-
-        step("Waiting for Tekton service accounts")
-        for sa_name in (
-            "serviceaccount/tekton-pipelines-controller",
-            "serviceaccount/tekton-events-controller",
-            "serviceaccount/tekton-pipelines-webhook",
-        ):
-            self._wait_for_resource(
-                resource=sa_name,
-                namespace=self.pipelines_runtime_namespace,
-                timeout_seconds=600,
-                label=f"{sa_name} in namespace {self.pipelines_runtime_namespace}",
-            )
-
-        self.configure_tekton_scc()
-
-        step("Waiting for Tekton controllers")
-        for deployment in (
-            "deployment/tekton-pipelines-controller",
-            "deployment/tekton-pipelines-webhook",
-        ):
-            self._wait_for_resource(
-                resource=deployment,
-                namespace=self.pipelines_runtime_namespace,
-                timeout_seconds=600,
-                label=f"{deployment} in namespace {self.pipelines_runtime_namespace}",
-            )
-            self._oc(
-                "wait",
-                "--for=condition=available",
-                "--timeout=10m",
-                deployment,
-                "-n",
-                self.pipelines_runtime_namespace,
-                retry=True,
-                description=f"waiting for {deployment} in {self.pipelines_runtime_namespace}",
-            )
-
     def install_argo_if_needed(self) -> None:
         if self.argo_ready():
             success("Argo Workflows CRDs already present")
-            return
-
-        if not self.options.install_argo:
-            detail("Skipping Argo install because --install-argo was not requested")
             return
 
         self.ensure_namespace(self.argo_namespace)
@@ -1059,45 +939,6 @@ class Installer:
             retry=True,
             description=f"waiting for deployment/workflow-controller in {self.argo_namespace}",
         )
-
-    def configure_tekton_scc(self) -> None:
-        if not self._resource_exists(
-            "get", "namespace", self.pipelines_runtime_namespace
-        ):
-            detail(
-                f"Skipping Tekton SCC configuration because {self.pipelines_runtime_namespace} does not exist yet"
-            )
-            return
-
-        step("Configuring Tekton SCCs")
-        for service_account in (
-            "tekton-pipelines-controller",
-            "tekton-events-controller",
-            "tekton-pipelines-webhook",
-        ):
-            result = self._oc(
-                "adm",
-                "policy",
-                "add-scc-to-user",
-                "privileged",
-                "-z",
-                service_account,
-                "-n",
-                self.pipelines_runtime_namespace,
-                retry=True,
-                description=f"granting privileged SCC to {service_account}",
-                check=False,
-            )
-            if result.returncode != 0:
-                warning(f"Could not grant privileged SCC to {service_account}")
-                if result.stderr:
-                    emit(
-                        result.stderr,
-                        end="" if result.stderr.endswith("\n") else "\n",
-                        stderr=True,
-                    )
-            else:
-                success(f"Granted privileged SCC to {service_account}")
 
     def install_grafana_if_needed(self) -> None:
         if not self.options.install_grafana:
@@ -1212,21 +1053,18 @@ class Installer:
         self.apply_runner_rbac()
         self.apply_cluster_monitoring_rbac()
         self.apply_workspace_pvcs()
-        self.apply_manifest_tree(self.repo_root / "tekton" / "tasks", "Tekton tasks")
+        if not self.argo_ready():
+            raise CommandError(
+                "Argo Workflows CRDs are not available after bootstrap; cannot apply Argo templates"
+            )
         self.apply_manifest_tree(
-            self.repo_root / "tekton" / "pipelines", "Tekton pipelines"
+            self.repo_root / "argo" / "templates",
+            "Argo reusable templates",
         )
-        if self.argo_ready():
-            self.apply_manifest_tree(
-                self.repo_root / "argo" / "templates",
-                "Argo reusable templates",
-            )
-            self.apply_manifest_tree(
-                self.repo_root / "argo" / "workflows",
-                "Argo workflow templates",
-            )
-        else:
-            detail("Skipping Argo templates because Argo Workflows is not installed")
+        self.apply_manifest_tree(
+            self.repo_root / "argo" / "workflows",
+            "Argo workflow templates",
+        )
 
     def discover_grafana_route_host(self) -> str | None:
         if not self._resource_exists("get", "route", "-n", self.grafana_namespace):

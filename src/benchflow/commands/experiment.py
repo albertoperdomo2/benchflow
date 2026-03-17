@@ -44,11 +44,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     namespace = _namespace_from_args(args)
-    entries = list_benchflow_executions(
-        namespace,
-        include_completed=True,
-        backend=getattr(args, "backend", None),
-    )
+    entries = list_benchflow_executions(namespace, include_completed=True)
     if args.format == "json":
         print(dump(entries, "json"))
         return 0
@@ -63,10 +59,10 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def _resolve_cancel_targets(
-    namespace: str, identifier: str, *, cancel_all: bool, backend: str | None = None
+    namespace: str, identifier: str, *, cancel_all: bool
 ) -> list[dict[str, object]]:
     try:
-        exact = summarize_execution(namespace, identifier, backend=backend)
+        exact = summarize_execution(namespace, identifier)
     except CommandError:
         exact = None
     else:
@@ -78,9 +74,7 @@ def _resolve_cancel_targets(
             raise CommandError(f"execution {identifier} is already finished")
         return [exact]
 
-    entries = list_benchflow_executions(
-        namespace, include_completed=False, backend=backend
-    )
+    entries = list_benchflow_executions(namespace, include_completed=False)
     matches = [entry for entry in entries if entry.get("experiment") == identifier]
     if not matches:
         raise CommandError(
@@ -101,7 +95,6 @@ def cmd_cancel(args: argparse.Namespace) -> int:
         namespace,
         args.identifier,
         cancel_all=args.all_matches,
-        backend=getattr(args, "backend", None),
     )
     step(
         f"Cancelling {len(targets)} BenchFlow execution"
@@ -110,7 +103,7 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     for target in targets:
         name = str(target["name"])
         detail(f"{name} (experiment={target['experiment']}, status={target['status']})")
-        cancel_execution(namespace, name, backend=str(target.get("backend") or ""))
+        cancel_execution(namespace, name)
         success(f"Cancellation requested for {name}")
     return 0
 
@@ -126,17 +119,17 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_render_pipelinerun(args: argparse.Namespace) -> int:
+def cmd_render_workflow(args: argparse.Namespace) -> int:
     plans = load_plans(args)
     if len(plans) == 1:
         manifest = render_execution_manifest(
             plans[0],
-            execution_name=args.pipeline_name,
+            execution_name=args.workflow_name,
         )
     else:
         manifest = render_matrix_execution_manifest(
             plans,
-            child_execution_name=args.pipeline_name,
+            child_execution_name=args.workflow_name,
         )
     print(dump_yaml(manifest))
     return 0
@@ -173,13 +166,13 @@ def _render_manifest_yaml(
     if len(plans) == 1:
         manifest = render_execution_manifest(
             plan,
-            execution_name=args.pipeline_name,
+            execution_name=args.workflow_name,
         )
         namespace = plan.deployment.namespace
     else:
         manifest = render_matrix_execution_manifest(
             plans,
-            child_execution_name=args.pipeline_name,
+            child_execution_name=args.workflow_name,
         )
         namespace = plan.deployment.namespace
     manifest_yaml = dump_yaml(manifest)
@@ -260,11 +253,6 @@ def experiment_group() -> None:
     show_default=True,
     help="Output format.",
 )
-@click.option(
-    "--backend",
-    type=click.Choice(("tekton", "argo")),
-    help="Execution backend filter. Defaults to all BenchFlow backends.",
-)
 def experiment_list(**kwargs: object) -> int:
     return invoke_handler(cmd_list, **kwargs)
 
@@ -287,11 +275,6 @@ def experiment_list(**kwargs: object) -> int:
     "all_matches",
     is_flag=True,
     help="Cancel all active executions that match the experiment name.",
-)
-@click.option(
-    "--backend",
-    type=click.Choice(("tekton", "argo")),
-    help="Execution backend. Defaults to auto-detect by resource name.",
 )
 def experiment_cancel(**kwargs: object) -> int:
     return invoke_handler(cmd_cancel, **kwargs)
@@ -329,7 +312,7 @@ def experiment_resolve(**kwargs: object) -> int:
 
 
 @experiment_group.command(
-    "render-pipelinerun",
+    "render-workflow",
     help=(
         "Render the execution manifest that would be submitted for an experiment. "
         "Matrix experiments render the supervisor execution."
@@ -338,13 +321,13 @@ def experiment_resolve(**kwargs: object) -> int:
 )
 @experiment_input_options
 @click.option(
-    "--pipeline-name",
+    "--workflow-name",
     default="benchflow-e2e",
     show_default=True,
     help="Execution definition name to reference in the rendered manifest.",
 )
-def experiment_render_pipelinerun(**kwargs: object) -> int:
-    return invoke_handler(cmd_render_pipelinerun, **kwargs)
+def experiment_render_workflow(**kwargs: object) -> int:
+    return invoke_handler(cmd_render_workflow, **kwargs)
 
 
 @experiment_group.command(
@@ -374,7 +357,7 @@ def experiment_render_deployment(**kwargs: object) -> int:
 )
 @experiment_input_options
 @click.option(
-    "--pipeline-name",
+    "--workflow-name",
     default="benchflow-e2e",
     show_default=True,
     help="Execution definition name to reference when rendering the manifest.",
@@ -400,7 +383,7 @@ def experiment_run(**kwargs: object) -> int:
 )
 @experiment_input_options
 @click.option(
-    "--pipeline-name",
+    "--workflow-name",
     default="benchflow-e2e",
     show_default=True,
     help="Execution definition name to reference when rendering the cleanup manifest.",

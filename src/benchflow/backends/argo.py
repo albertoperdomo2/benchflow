@@ -135,7 +135,7 @@ def render_matrix_workflow(
                         "name": "BENCHFLOW_IMAGE",
                         "value": "ghcr.io/albertoperdomo2/benchflow/benchflow:latest",
                     },
-                    {"name": "CHILD_PIPELINE_NAME", "value": child_workflow_name},
+                    {"name": "CHILD_WORKFLOW_NAME", "value": child_workflow_name},
                 ]
             },
         },

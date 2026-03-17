@@ -29,7 +29,7 @@ def discover_repo_root(start: Path | None = None) -> Path:
         if (
             (candidate / "pyproject.toml").exists()
             and (candidate / "profiles").exists()
-            and (candidate / "tekton").exists()
+            and (candidate / "argo").exists()
         ):
             return candidate
 

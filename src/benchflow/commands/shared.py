@@ -195,10 +195,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 or base_experiment.spec.mlflow.experiment,
                 tags=mlflow_tags,
             ),
-            execution=ExecutionSpec(
-                backend=getattr(args, "backend", None)
-                or base_experiment.spec.execution.backend
-            ),
+            execution=ExecutionSpec(backend=base_experiment.spec.execution.backend),
         ),
     )
 
@@ -354,11 +351,6 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
             metavar="KEY=VALUE",
             help="MLflow tag override. Repeat to set multiple tags.",
         ),
-        click.option(
-            "--backend",
-            type=click.Choice(("tekton", "argo")),
-            help="Execution backend used to run the experiment.",
-        ),
     ]
     for stage_name in ("download", "deploy", "benchmark", "collect", "cleanup"):
         decorators.append(
@@ -439,9 +431,6 @@ def format_experiment_list(entries: list[dict[str, object]]) -> str:
     platform_width = max(
         len("PLATFORM"), max(len(str(entry["platform"])) for entry in entries)
     )
-    backend_width = max(
-        len("BACKEND"), max(len(str(entry.get("backend", ""))) for entry in entries)
-    )
     mode_width = max(len("MODE"), max(len(str(entry["mode"])) for entry in entries))
     started_width = max(
         len("STARTED"), max(len(str(entry["start_time"])) for entry in entries)
@@ -450,13 +439,13 @@ def format_experiment_list(entries: list[dict[str, object]]) -> str:
     lines = [
         f"{'STATUS':<{status_width}}  {'RUN':<{name_width}}  "
         f"{'EXPERIMENT':<{experiment_width}}  {'PLATFORM':<{platform_width}}  "
-        f"{'BACKEND':<{backend_width}}  {'MODE':<{mode_width}}  {'STARTED':<{started_width}}",
+        f"{'MODE':<{mode_width}}  {'STARTED':<{started_width}}",
     ]
     for entry in entries:
         lines.append(
             f"{entry['status']:<{status_width}}  {entry['name']:<{name_width}}  "
             f"{entry['experiment']:<{experiment_width}}  {entry['platform']:<{platform_width}}  "
-            f"{str(entry.get('backend', '')):<{backend_width}}  {entry['mode']:<{mode_width}}  "
+            f"{entry['mode']:<{mode_width}}  "
             f"{entry['start_time']:<{started_width}}"
         )
     return "\n".join(lines)

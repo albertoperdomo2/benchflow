@@ -559,9 +559,9 @@ def run_benchmark_with_mlflow(
 
     # Run name for the whole sweep
     # Use the execution name if provided by the backend, otherwise generate one
-    pipeline_run_name = os.environ.get("PIPELINE_RUN_NAME", "")
-    if pipeline_run_name:
-        run_name = pipeline_run_name
+    execution_name = os.environ.get("EXECUTION_NAME", "")
+    if execution_name:
+        run_name = execution_name
     else:
         mode_suffix = "multiturn" if multiturn_mode else "sweep"
         run_name = f"{model.split('/')[-1]}_{mode_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -619,8 +619,8 @@ def run_benchmark_with_mlflow(
                 "vllm_version": vllm_version,
                 "guidellm_version": guidellm_version,
             }
-            if pipeline_run_name:
-                default_tags["pipeline_run"] = pipeline_run_name
+            if execution_name:
+                default_tags["execution_name"] = execution_name
             if tags:
                 default_tags.update(tags)
             mlflow.set_tags(default_tags)

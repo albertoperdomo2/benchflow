@@ -16,9 +16,9 @@ BenchFlow should stay narrow, explicit, and operationally clear. If a change mak
 - The user-facing entrypoint is `bflow`.
 - The bootstrap path is `bflow bootstrap`.
 - The default namespace is `benchflow`, unless explicitly overridden.
-- Tekton and Argo are execution backends, not the place for business logic.
+- Argo is the current execution backend. Keep business logic out of workflow definitions.
 - Python owns the control logic.
-- Tekton and Argo definitions should stay orchestration-focused and thin.
+- Argo definitions should stay orchestration-focused and thin.
 - The internal contract is the `RunPlan`.
 - Tasks and internal commands should consume the run plan, not a wide flat list of parameters.
 - Keep one real implementation path. Do not keep duplicate paths alive.
@@ -35,7 +35,7 @@ BenchFlow should stay narrow, explicit, and operationally clear. If a change mak
 ## Installation Principles
 
 - Installation should be as close to one-click as the cluster allows.
-- Tekton and Grafana are part of the default install story.
+- Argo Workflows and Grafana are part of the default install story.
 - MLflow is part of the product, not an optional afterthought.
 - Do not make users choose between multiple install modes unless there is a strong reason.
 - Prefer one clear cluster model over trying to support every environment shape.
