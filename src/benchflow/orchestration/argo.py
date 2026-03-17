@@ -230,6 +230,30 @@ def _workflow_pod_nodes(workflow: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _list_workflow_pods(workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    metadata = workflow.get("metadata", {}) or {}
+    namespace = str(metadata.get("namespace", "") or "").strip()
+    workflow_name = str(metadata.get("name", "") or "").strip()
+    if not namespace or not workflow_name:
+        return []
+
+    payload = run_json_command(
+        [
+            "oc",
+            "get",
+            "pod",
+            "-n",
+            namespace,
+            "-l",
+            f"workflows.argoproj.io/workflow={workflow_name}",
+            "-o",
+            "json",
+        ]
+    )
+    items = payload.get("items", [])
+    return items if isinstance(items, list) else []
+
+
 def _template_step_names(template: dict[str, Any]) -> list[str]:
     spec = template.get("spec", {}) or {}
     entrypoint_name = str(spec.get("entrypoint", "") or "").strip()
@@ -293,31 +317,47 @@ def _workflow_step_names(workflow: dict[str, Any]) -> list[str]:
 
 def _step_pod_names(workflow: dict[str, Any], step_name: str) -> list[str]:
     pod_names: list[str] = []
+    metadata = workflow.get("metadata", {}) or {}
+    workflow_name = str(metadata.get("name", "") or "").strip()
+
+    if workflow_name:
+        prefix = f"{workflow_name}-{step_name}-"
+        for pod in _list_workflow_pods(workflow):
+            pod_name = str(
+                (pod.get("metadata", {}) or {}).get("name", "") or ""
+            ).strip()
+            if pod_name.startswith(prefix) and pod_name not in pod_names:
+                pod_names.append(pod_name)
+
+    if pod_names:
+        return pod_names
+
     for node in _workflow_pod_nodes(workflow):
         if _workflow_step_name(node) != step_name:
             continue
-        pod_name = str(node.get("id", "") or "").strip()
+        pod_name = str(node.get("podName") or node.get("id") or "").strip()
         if pod_name and pod_name not in pod_names:
             pod_names.append(pod_name)
     return pod_names
 
 
-def _stream_pod_logs(namespace: str, pod_name: str) -> None:
-    subprocess.run(
-        [
-            "oc",
-            "logs",
-            "-f",
-            f"pod/{pod_name}",
-            "-n",
-            namespace,
-            "--all-containers=true",
-            "--prefix=true",
-            "--ignore-errors=true",
-            "--pod-running-timeout=10m",
-        ],
-        check=False,
-    )
+def _stream_pod_logs(namespace: str, pod_name: str, *, all_containers: bool) -> None:
+    command = [
+        "oc",
+        "logs",
+        "-f",
+        f"pod/{pod_name}",
+        "-n",
+        namespace,
+        "--prefix=true",
+        "--ignore-errors=true",
+        "--pod-running-timeout=10m",
+    ]
+    if all_containers:
+        command.append("--all-containers=true")
+    else:
+        command.extend(["-c", "main"])
+    subprocess.run(command, check=False)
 
 
 def _node_phase(node: dict[str, Any]) -> str:
@@ -498,6 +538,7 @@ class ArgoOrchestrator:
         *,
         step_name: str | None = None,
         all_logs: bool = False,
+        all_containers: bool = False,
     ) -> None:
         workflow = _get_workflow(namespace, name)
         if workflow is None:
@@ -556,4 +597,8 @@ class ArgoOrchestrator:
             step(
                 f"Following {step_name} logs from pod {pod_name} in namespace {namespace}"
             )
-            _stream_pod_logs(namespace, pod_name)
+            _stream_pod_logs(
+                namespace,
+                pod_name,
+                all_containers=all_containers,
+            )

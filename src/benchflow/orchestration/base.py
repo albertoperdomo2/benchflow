@@ -46,4 +46,5 @@ class ExecutionOrchestrator(Protocol):
         *,
         step_name: str | None = None,
         all_logs: bool = False,
+        all_containers: bool = False,
     ) -> None: ...

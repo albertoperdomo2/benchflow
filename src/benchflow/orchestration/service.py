@@ -209,6 +209,7 @@ def stream_execution_logs(
     backend: str | None = None,
     step_name: str | None = None,
     all_logs: bool = False,
+    all_containers: bool = False,
 ) -> None:
     backend_name = (
         normalize_execution_backend(backend)
@@ -220,6 +221,7 @@ def stream_execution_logs(
         name,
         step_name=step_name,
         all_logs=all_logs,
+        all_containers=all_containers,
     )
 
 

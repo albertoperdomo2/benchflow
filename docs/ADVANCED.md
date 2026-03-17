@@ -164,6 +164,7 @@ Inspect logs:
 ```bash
 bflow logs <execution-name>
 bflow logs <execution-name> --step benchmark
+bflow logs <execution-name> --step benchmark --all-containers
 bflow logs <execution-name> --all
 ```
 

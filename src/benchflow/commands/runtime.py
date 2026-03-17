@@ -128,6 +128,7 @@ def cmd_logs(args: argparse.Namespace) -> int:
         args.execution_name,
         step_name=args.step,
         all_logs=args.all_logs,
+        all_containers=args.all_containers,
     )
     return 0
 
@@ -1402,6 +1403,11 @@ def watch_command(**kwargs: object) -> int:
     "all_logs",
     is_flag=True,
     help="Stream logs for the full execution instead of one step.",
+)
+@click.option(
+    "--all-containers",
+    is_flag=True,
+    help="Include Argo init and wait container logs when streaming one workflow step.",
 )
 def logs_command(**kwargs: object) -> int:
     return invoke_handler(cmd_logs, **kwargs)
