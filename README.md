@@ -9,6 +9,9 @@ BenchFlow is a packaged control plane for running benchmark scenarios, not a loo
 > [!NOTE]
 > This project is experimental and for learning purposes mainly, but the implemented execution paths today are `llm-d` and `RHOAI`. Expect some parts to still be highly coupled.
 
+> [!WARNING]
+> BenchFlow does not yet implement a cluster-level lock for shared platform setup. Until that exists, let each benchmark job run end to end before launching another one that mutates the cluster, or use one matrix experiment so BenchFlow executes multiple combinations sequentially for you.
+
 ## Quickstart
 
 Install the CLI from the repository root:
