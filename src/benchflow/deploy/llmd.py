@@ -84,6 +84,33 @@ def _ensure_container(values: dict[str, Any]) -> dict[str, Any]:
     return containers[0]
 
 
+def _split_image_reference(image: str) -> tuple[str, str, str]:
+    trimmed = image.strip()
+    if not trimmed:
+        raise CommandError("scheduler image override is empty")
+    if "@" in trimmed:
+        raise CommandError(
+            "scheduler image override must use a tag, not a digest, because the "
+            "llm-d guide expects separate hub/name/tag values"
+        )
+    last_slash = trimmed.rfind("/")
+    last_colon = trimmed.rfind(":")
+    if last_colon <= last_slash:
+        raise CommandError(
+            "scheduler image override must be a fully qualified image reference "
+            "in the form <registry>/<path>/<name>:<tag>"
+        )
+    name_part = trimmed[:last_colon]
+    tag = trimmed[last_colon + 1 :]
+    hub, _, name = name_part.rpartition("/")
+    if not hub or not name or not tag:
+        raise CommandError(
+            "scheduler image override must be a fully qualified image reference "
+            "in the form <registry>/<path>/<name>:<tag>"
+        )
+    return hub, name, tag
+
+
 def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
     values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
     container = _ensure_container(values)
@@ -102,13 +129,16 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
     decode["parallelism"]["tensor"] = runtime.tensor_parallelism
 
     env = container.setdefault("env", [])
-    env = [entry for entry in env if entry.get("name") != "CUDA_VISIBLE_DEVICES"]
+    managed_env_names = {"CUDA_VISIBLE_DEVICES", *runtime.env.keys()}
+    env = [entry for entry in env if entry.get("name") not in managed_env_names]
     env.append(
         {
             "name": "CUDA_VISIBLE_DEVICES",
             "value": _cuda_visible_devices(runtime.tensor_parallelism),
         }
     )
+    for key, value in sorted(runtime.env.items()):
+        env.append({"name": key, "value": value})
     container["env"] = env
 
     container["image"] = runtime.image
@@ -137,6 +167,19 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
 
     values_file.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
     return values
+
+
+def _patch_scheduler_values(plan: ResolvedRunPlan, values_file: Path) -> None:
+    if not plan.deployment.scheduler_image:
+        return
+    values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
+    inference_extension = values.setdefault("inferenceExtension", {})
+    image = inference_extension.setdefault("image", {})
+    hub, name, tag = _split_image_reference(plan.deployment.scheduler_image)
+    image["hub"] = hub
+    image["name"] = name
+    image["tag"] = tag
+    values_file.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 
 
 def _apply_pipeline_labels(
@@ -363,12 +406,18 @@ def deploy_llmd(
 
     guide_dir = checkout_dir / "guides" / "inference-scheduling"
     values_file = guide_dir / "ms-inference-scheduling" / "values.yaml"
+    scheduler_values_file = guide_dir / "gaie-inference-scheduling" / "values.yaml"
     if not values_file.exists():
         raise CommandError(f"expected llm-d guide file not found: {values_file}")
+    if not scheduler_values_file.exists():
+        raise CommandError(
+            f"expected llm-d guide file not found: {scheduler_values_file}"
+        )
 
     step(f"Patching llm-d guide values for release {plan.deployment.release_name}")
     detail(f"Guide directory: {guide_dir}")
     values = _patch_values(plan, values_file)
+    _patch_scheduler_values(plan, scheduler_values_file)
     _apply_pipeline_labels(
         values,
         plan.deployment.release_name,

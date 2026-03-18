@@ -25,6 +25,12 @@ from ..models import (
     Metadata,
     MlflowSpec,
     ModelSpec,
+    OverrideImagesSpec,
+    OverrideLlmdSpec,
+    OverrideRhoaiSpec,
+    OverrideRuntimeSpec,
+    OverrideScaleSpec,
+    OverrideSpec,
     StageSpec,
     ValidationError,
     sanitize_name,
@@ -83,6 +89,28 @@ def parse_version_overrides(
     return parse_mapping(values, "--version-override")
 
 
+def parse_axis_strings(
+    values: tuple[str, ...] | list[str] | None, option_name: str
+) -> str | list[str] | None:
+    cleaned = [str(value).strip() for value in (values or []) if str(value).strip()]
+    if not cleaned:
+        return None
+    if len(cleaned) == 1:
+        return cleaned[0]
+    return cleaned
+
+
+def parse_axis_ints(
+    values: tuple[int, ...] | list[int] | None, option_name: str
+) -> int | list[int] | None:
+    if not values:
+        return None
+    parsed = [int(value) for value in values]
+    if len(parsed) == 1:
+        return parsed[0]
+    return parsed
+
+
 def experiment_from_args(args: argparse.Namespace) -> Experiment:
     base_experiment: Experiment | None = None
     if getattr(args, "experiment", None):
@@ -103,6 +131,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             stages=stages,
             mlflow=mlflow,
             execution=ExecutionSpec(),
+            overrides=OverrideSpec(),
         )
         base_experiment = Experiment(
             api_version="benchflow.io/v1alpha1",
@@ -167,6 +196,71 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
         if override is not None:
             setattr(stages, stage_name, override)
 
+    runtime_image = parse_axis_strings(
+        getattr(args, "runtime_image", None), "--runtime-image"
+    )
+    scheduler_image = parse_axis_strings(
+        getattr(args, "scheduler_image", None), "--scheduler-image"
+    )
+    replicas = parse_axis_ints(getattr(args, "replicas", None), "--replicas")
+    tensor_parallelism = parse_axis_ints(getattr(args, "tp", None), "--tp")
+    llmd_repo_ref = parse_axis_strings(
+        getattr(args, "llmd_repo_ref", None), "--llmd-repo-ref"
+    )
+    cli_env = parse_mapping(getattr(args, "env", None), "--env")
+    cli_vllm_args = [str(item) for item in (getattr(args, "vllm_arg", None) or [])]
+
+    overrides = OverrideSpec(
+        images=OverrideImagesSpec(
+            runtime=(
+                runtime_image
+                if runtime_image is not None
+                else base_experiment.spec.overrides.images.runtime
+            ),
+            scheduler=(
+                scheduler_image
+                if scheduler_image is not None
+                else base_experiment.spec.overrides.images.scheduler
+            ),
+        ),
+        scale=OverrideScaleSpec(
+            replicas=(
+                replicas
+                if replicas is not None
+                else base_experiment.spec.overrides.scale.replicas
+            ),
+            tensor_parallelism=(
+                tensor_parallelism
+                if tensor_parallelism is not None
+                else base_experiment.spec.overrides.scale.tensor_parallelism
+            ),
+        ),
+        runtime=OverrideRuntimeSpec(
+            vllm_args=[
+                *base_experiment.spec.overrides.runtime.vllm_args,
+                *cli_vllm_args,
+            ],
+            env={
+                **base_experiment.spec.overrides.runtime.env,
+                **cli_env,
+            },
+        ),
+        llm_d=OverrideLlmdSpec(
+            repo_ref=(
+                llmd_repo_ref
+                if llmd_repo_ref is not None
+                else base_experiment.spec.overrides.llm_d.repo_ref
+            )
+        ),
+        rhoai=OverrideRhoaiSpec(
+            enable_auth=(
+                getattr(args, "rhoai_auth", None)
+                if getattr(args, "rhoai_auth", None) is not None
+                else base_experiment.spec.overrides.rhoai.enable_auth
+            )
+        ),
+    )
+
     return Experiment(
         api_version=base_experiment.api_version,
         kind="Experiment",
@@ -196,6 +290,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 tags=mlflow_tags,
             ),
             execution=ExecutionSpec(backend=base_experiment.spec.execution.backend),
+            overrides=overrides,
         ),
     )
 
@@ -350,6 +445,53 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
             multiple=True,
             metavar="KEY=VALUE",
             help="MLflow tag override. Repeat to set multiple tags.",
+        ),
+        click.option(
+            "--runtime-image",
+            "runtime_image",
+            multiple=True,
+            help="Override the runtime image. Repeat to build a matrix axis.",
+        ),
+        click.option(
+            "--scheduler-image",
+            "scheduler_image",
+            multiple=True,
+            help="Override the scheduler image. Repeat to build a matrix axis.",
+        ),
+        click.option(
+            "--replicas",
+            type=int,
+            multiple=True,
+            help="Override the replica count. Repeat to build a matrix axis.",
+        ),
+        click.option(
+            "--tp",
+            type=int,
+            multiple=True,
+            help="Override tensor parallelism. Repeat to build a matrix axis.",
+        ),
+        click.option(
+            "--vllm-arg",
+            multiple=True,
+            help="Append one vLLM argument to the profile defaults. Repeat as needed.",
+        ),
+        click.option(
+            "--env",
+            multiple=True,
+            metavar="KEY=VALUE",
+            help="Runtime environment override. Repeat to set multiple variables.",
+        ),
+        click.option(
+            "--llmd-repo-ref",
+            multiple=True,
+            help="Override the llm-d repository ref. Repeat to build a matrix axis.",
+        ),
+        click.option(
+            "--rhoai-auth/--no-rhoai-auth",
+            "rhoai_auth",
+            default=None,
+            show_default=False,
+            help="Override RHOAI auth handling.",
         ),
     ]
     for stage_name in ("download", "deploy", "benchmark", "collect", "cleanup"):

@@ -10,6 +10,12 @@ from .models import (
     Metadata,
     MlflowSpec,
     ModelSpec,
+    OverrideImagesSpec,
+    OverrideLlmdSpec,
+    OverrideRhoaiSpec,
+    OverrideRuntimeSpec,
+    OverrideScaleSpec,
+    OverrideSpec,
     ResolvedRunPlan,
     StageSpec,
     ValidationError,
@@ -32,13 +38,48 @@ def profile_matrix_axes(
     )
 
 
+def _axis_values(value) -> list[object]:
+    if isinstance(value, list):
+        return list(value)
+    return [value]
+
+
+def _override_axes(
+    experiment: Experiment,
+) -> tuple[list[object], list[object], list[object], list[object], list[object]]:
+    overrides = experiment.spec.overrides
+    return (
+        _axis_values(overrides.images.runtime),
+        _axis_values(overrides.images.scheduler),
+        _axis_values(overrides.scale.replicas),
+        _axis_values(overrides.scale.tensor_parallelism),
+        _axis_values(overrides.llm_d.repo_ref),
+    )
+
+
 def is_matrix_experiment(experiment: Experiment) -> bool:
     deployment_profiles, benchmark_profiles, metrics_profiles = profile_matrix_axes(
         experiment
     )
+    (
+        runtime_images,
+        scheduler_images,
+        replicas_values,
+        tensor_parallelism_values,
+        repo_refs,
+    ) = _override_axes(experiment)
     return any(
         len(values) > 1
-        for values in (deployment_profiles, benchmark_profiles, metrics_profiles)
+        for values in (
+            deployment_profiles,
+            benchmark_profiles,
+            metrics_profiles,
+            runtime_images,
+            scheduler_images,
+            replicas_values,
+            tensor_parallelism_values,
+            repo_refs,
+        )
     )
 
 
@@ -46,17 +87,56 @@ def experiment_matrix_size(experiment: Experiment) -> int:
     deployment_profiles, benchmark_profiles, metrics_profiles = profile_matrix_axes(
         experiment
     )
-    return len(deployment_profiles) * len(benchmark_profiles) * len(metrics_profiles)
+    (
+        runtime_images,
+        scheduler_images,
+        replicas_values,
+        tensor_parallelism_values,
+        repo_refs,
+    ) = _override_axes(experiment)
+    return (
+        len(deployment_profiles)
+        * len(benchmark_profiles)
+        * len(metrics_profiles)
+        * len(runtime_images)
+        * len(scheduler_images)
+        * len(replicas_values)
+        * len(tensor_parallelism_values)
+        * len(repo_refs)
+    )
 
 
 def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
     deployment_profiles, benchmark_profiles, metrics_profiles = profile_matrix_axes(
         experiment
     )
+    (
+        runtime_images,
+        scheduler_images,
+        replicas_values,
+        tensor_parallelism_values,
+        repo_refs,
+    ) = _override_axes(experiment)
     expanded: list[Experiment] = []
 
-    for deployment_profile, benchmark_profile, metrics_profile in product(
-        deployment_profiles, benchmark_profiles, metrics_profiles
+    for (
+        deployment_profile,
+        benchmark_profile,
+        metrics_profile,
+        runtime_image,
+        scheduler_image,
+        replicas,
+        tensor_parallelism,
+        repo_ref,
+    ) in product(
+        deployment_profiles,
+        benchmark_profiles,
+        metrics_profiles,
+        runtime_images,
+        scheduler_images,
+        replicas_values,
+        tensor_parallelism_values,
+        repo_refs,
     ):
         expanded.append(
             Experiment(
@@ -89,6 +169,24 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                         tags=dict(experiment.spec.mlflow.tags),
                     ),
                     execution=ExecutionSpec(backend=experiment.spec.execution.backend),
+                    overrides=OverrideSpec(
+                        images=OverrideImagesSpec(
+                            runtime=runtime_image,
+                            scheduler=scheduler_image,
+                        ),
+                        scale=OverrideScaleSpec(
+                            replicas=replicas,
+                            tensor_parallelism=tensor_parallelism,
+                        ),
+                        runtime=OverrideRuntimeSpec(
+                            vllm_args=list(experiment.spec.overrides.runtime.vllm_args),
+                            env=dict(experiment.spec.overrides.runtime.env),
+                        ),
+                        llm_d=OverrideLlmdSpec(repo_ref=repo_ref),
+                        rhoai=OverrideRhoaiSpec(
+                            enable_auth=experiment.spec.overrides.rhoai.enable_auth
+                        ),
+                    ),
                 ),
             )
         )

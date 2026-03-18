@@ -127,6 +127,132 @@ spec:
   namespace: benchflow
 ```
 
+Full schema:
+
+```yaml
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen3-06b # --name
+  labels: # --label KEY=VALUE
+    team: perf
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B # --model
+    revision: main # --model-revision
+  deployment_profile: llm-d-inference-scheduling # --deployment-profile
+  benchmark_profile: guidellm-smoke # --benchmark-profile
+  metrics_profile: detailed # --metrics-profile
+  namespace: benchflow # --namespace
+  service_account: benchflow-runner # --service-account
+  ttl_seconds_after_finished: 3600 # --ttl-seconds-after-finished
+  stages:
+    download: true # --download / --no-download
+    deploy: true # --deploy / --no-deploy
+    benchmark: true # --benchmark / --no-benchmark
+    collect: true # --collect / --no-collect
+    cleanup: true # --cleanup / --no-cleanup
+  mlflow:
+    experiment: qwen-qwen3-06b-smoke # --mlflow-experiment
+    tags:
+      owner: perf # --mlflow-tag owner=perf
+  execution:
+    backend: argo # no CLI override, argo only today
+  overrides:
+    images:
+      runtime: ghcr.io/acme/vllm:dev # --runtime-image, string or list for matrix
+      scheduler: ghcr.io/acme/router:dev # --scheduler-image, string or list for matrix
+    scale:
+      replicas: 2 # --replicas, integer or list for matrix
+      tensor_parallelism: 4 # --tp, integer or list for matrix
+    runtime:
+      vllm_args: # --vllm-arg, repeat to append more arguments
+        - --max-num-seqs=256
+      env: # --env KEY=VALUE, repeat to set multiple variables
+        LOG_LEVEL: DEBUG
+    llm_d:
+      repo_ref: v0.4.1 # --llmd-repo-ref, string or list for matrix
+    rhoai:
+      enable_auth: false # --rhoai-auth / --no-rhoai-auth
+```
+
+Override semantics:
+
+- profile values remain the base
+- `images.runtime`, `images.scheduler`, `scale.replicas`, `scale.tensor_parallelism`, and `llm_d.repo_ref` replace the profile value
+- `runtime.vllm_args` appends to the profile vLLM args
+- `runtime.env` merges by key and override values win on collisions
+- list-valued profile refs and list-valued override axes produce a cartesian-product matrix
+
+Full `DeploymentProfile` schema:
+
+```yaml
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-inference-scheduling # no direct CLI override
+spec:
+  platform: llm-d # llm-d | rhoai | rhaiis
+  mode: inference-scheduling # platform-specific mode, no direct CLI override
+  runtime:
+    image: ghcr.io/llm-d/llm-d-cuda:v0.4.0 # overridden by spec.overrides.images.runtime or --runtime-image
+    replicas: 1 # overridden by spec.overrides.scale.replicas or --replicas
+    tensor_parallelism: 1 # overridden by spec.overrides.scale.tensor_parallelism or --tp
+    vllm_args:
+      - --max-model-len=8192 # appended to by spec.overrides.runtime.vllm_args or --vllm-arg
+    env:
+      VLLM_LOGGING_LEVEL: INFO # merged with spec.overrides.runtime.env or --env
+  model_storage:
+    pvc_name: models-storage # no CLI override
+    cache_dir: /models # no CLI override
+    mount_path: /model-cache # no CLI override
+  namespace: benchflow # overridden by Experiment spec.namespace or --namespace
+  repo_url: https://github.com/llm-d/llm-d.git # no CLI override
+  repo_ref: v0.4.0 # overridden by spec.overrides.llm_d.repo_ref or --llmd-repo-ref
+  gateway: istio # llm-d only, no CLI override
+  endpoint_path: /v1/models # no CLI override
+  scheduler_profile: "" # no CLI override
+  scheduler_image: "" # overridden by spec.overrides.images.scheduler or --scheduler-image
+  options:
+    enable_auth: false # rhoai only, overridden by spec.overrides.rhoai.enable_auth or --rhoai-auth
+```
+
+Full `BenchmarkProfile` schema:
+
+```yaml
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: smoke # no direct CLI override
+spec:
+  tool: guidellm # implemented value today
+  backend_type: openai_http # no CLI override
+  rate_type: concurrent # no CLI override
+  rates:
+    - 1 # no CLI override today
+  data: prompt_tokens=1000,output_tokens=1000 # no CLI override today
+  max_seconds: 600 # no CLI override today
+  max_requests: null # no CLI override today
+  env:
+    LOG_LEVEL: INFO # no CLI override today
+```
+
+Full `MetricsProfile` schema:
+
+```yaml
+apiVersion: benchflow.io/v1alpha1
+kind: MetricsProfile
+metadata:
+  name: detailed # no direct CLI override
+spec:
+  prometheus_url: https://thanos-querier.openshift-monitoring.svc:9091 # no CLI override
+  query_step: 15s # no CLI override
+  query_timeout: 30s # no CLI override
+  verify_tls: false # no CLI override
+  queries:
+    request_success_total: sum(rate(vllm:request_success_total[5m])) # no CLI override
+```
+
 `spec.execution.backend` defaults to `argo`. BenchFlow currently supports Argo only.
 
 Validate it:
@@ -198,6 +324,25 @@ bflow experiment run \
   --benchmark-profile guidellm-smoke \
   --metrics-profile detailed \
   --namespace benchflow
+```
+
+With overrides:
+
+```bash
+bflow experiment run \
+  --name qwen3-06b \
+  --model Qwen/Qwen3-0.6B \
+  --deployment-profile llm-d-inference-scheduling \
+  --benchmark-profile guidellm-smoke \
+  --metrics-profile detailed \
+  --namespace benchflow \
+  --runtime-image ghcr.io/acme/vllm:dev \
+  --scheduler-image ghcr.io/acme/router:dev \
+  --replicas 2 \
+  --tp 4 \
+  --vllm-arg --max-num-seqs=256 \
+  --env LOG_LEVEL=DEBUG \
+  --llmd-repo-ref v0.4.1
 ```
 
 Direct CLI flags are best for one-off runs. Files are better for repeatability.

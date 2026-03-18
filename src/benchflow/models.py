@@ -118,6 +118,43 @@ class ExecutionSpec:
 
 
 @dataclass(slots=True)
+class OverrideImagesSpec:
+    runtime: str | list[str] | None = None
+    scheduler: str | list[str] | None = None
+
+
+@dataclass(slots=True)
+class OverrideScaleSpec:
+    replicas: int | list[int] | None = None
+    tensor_parallelism: int | list[int] | None = None
+
+
+@dataclass(slots=True)
+class OverrideRuntimeSpec:
+    vllm_args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class OverrideLlmdSpec:
+    repo_ref: str | list[str] | None = None
+
+
+@dataclass(slots=True)
+class OverrideRhoaiSpec:
+    enable_auth: bool | None = None
+
+
+@dataclass(slots=True)
+class OverrideSpec:
+    images: OverrideImagesSpec = field(default_factory=OverrideImagesSpec)
+    scale: OverrideScaleSpec = field(default_factory=OverrideScaleSpec)
+    runtime: OverrideRuntimeSpec = field(default_factory=OverrideRuntimeSpec)
+    llm_d: OverrideLlmdSpec = field(default_factory=OverrideLlmdSpec)
+    rhoai: OverrideRhoaiSpec = field(default_factory=OverrideRhoaiSpec)
+
+
+@dataclass(slots=True)
 class ExperimentSpec:
     model: ModelSpec
     deployment_profile: list[str]
@@ -129,6 +166,7 @@ class ExperimentSpec:
     stages: StageSpec = field(default_factory=StageSpec)
     mlflow: MlflowSpec = field(default_factory=MlflowSpec)
     execution: ExecutionSpec = field(default_factory=ExecutionSpec)
+    overrides: OverrideSpec = field(default_factory=OverrideSpec)
 
 
 @dataclass(slots=True)
@@ -167,6 +205,7 @@ class DeploymentProfileSpec:
     gateway: str = "istio"
     endpoint_path: str = "/v1/models"
     scheduler_profile: str = ""
+    scheduler_image: str = ""
     options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -236,6 +275,7 @@ class ResolvedDeployment:
     repo_ref: str
     gateway: str
     scheduler_profile: str
+    scheduler_image: str
     options: dict[str, Any]
     target: TargetSpec
 

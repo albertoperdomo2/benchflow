@@ -30,6 +30,9 @@ spec:
 {% endif %}
         containers:
           - name: main
+{% if scheduler_image %}
+            image: {{ scheduler_image | tojson }}
+{% endif %}
 {% if precise_prefix_cache_enabled %}
             ports:
               - containerPort: 5557

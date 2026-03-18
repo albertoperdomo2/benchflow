@@ -7,6 +7,7 @@ from .models import (
     ProfileRefs,
     ResolvedDeployment,
     ResolvedRunPlan,
+    RuntimeSpec,
     TargetSpec,
     ValidationError,
     normalize_profile_refs,
@@ -41,6 +42,16 @@ def _target_for(
     )
 
 
+def _scalar_override(value, field_name: str):
+    if isinstance(value, list):
+        if len(value) != 1:
+            raise ValidationError(
+                f"{field_name} resolved to multiple values; expected a single combination"
+            )
+        return value[0]
+    return value
+
+
 def resolve_run_plan(
     experiment: Experiment, catalog: ProfileCatalog
 ) -> ResolvedRunPlan:
@@ -69,6 +80,66 @@ def resolve_run_plan(
 
     release_name = sanitize_name(experiment.metadata.name, max_length=42)
     namespace = deployment_profile.spec.namespace or experiment.spec.namespace
+    overrides = experiment.spec.overrides
+
+    runtime_image_override = _scalar_override(
+        overrides.images.runtime, "spec.overrides.images.runtime"
+    )
+    scheduler_image_override = _scalar_override(
+        overrides.images.scheduler, "spec.overrides.images.scheduler"
+    )
+    replicas_override = _scalar_override(
+        overrides.scale.replicas, "spec.overrides.scale.replicas"
+    )
+    tp_override = _scalar_override(
+        overrides.scale.tensor_parallelism, "spec.overrides.scale.tensor_parallelism"
+    )
+
+    runtime = RuntimeSpec(
+        image=str(runtime_image_override or deployment_profile.spec.runtime.image),
+        replicas=int(
+            replicas_override
+            if replicas_override is not None
+            else deployment_profile.spec.runtime.replicas
+        ),
+        tensor_parallelism=int(
+            tp_override
+            if tp_override is not None
+            else deployment_profile.spec.runtime.tensor_parallelism
+        ),
+        vllm_args=[
+            *deployment_profile.spec.runtime.vllm_args,
+            *experiment.spec.overrides.runtime.vllm_args,
+        ],
+        env={
+            **deployment_profile.spec.runtime.env,
+            **experiment.spec.overrides.runtime.env,
+        },
+    )
+
+    repo_ref = deployment_profile.spec.repo_ref
+    if deployment_profile.spec.platform == "llm-d":
+        repo_ref_override = _scalar_override(
+            overrides.llm_d.repo_ref, "spec.overrides.llm_d.repo_ref"
+        )
+        if repo_ref_override:
+            repo_ref = str(repo_ref_override)
+
+    scheduler_image = str(
+        scheduler_image_override or deployment_profile.spec.scheduler_image
+    )
+    if scheduler_image and deployment_profile.spec.platform not in {"llm-d", "rhoai"}:
+        raise ValidationError(
+            f"scheduler image override is not supported for platform "
+            f"{deployment_profile.spec.platform!r}"
+        )
+
+    options = dict(deployment_profile.spec.options)
+    if (
+        deployment_profile.spec.platform == "rhoai"
+        and overrides.rhoai.enable_auth is not None
+    ):
+        options["enable_auth"] = overrides.rhoai.enable_auth
 
     target = _target_for(
         platform=deployment_profile.spec.platform,
@@ -83,13 +154,14 @@ def resolve_run_plan(
         mode=deployment_profile.spec.mode,
         namespace=namespace,
         release_name=release_name,
-        runtime=deployment_profile.spec.runtime,
+        runtime=runtime,
         model_storage=deployment_profile.spec.model_storage,
         repo_url=deployment_profile.spec.repo_url,
-        repo_ref=deployment_profile.spec.repo_ref,
+        repo_ref=repo_ref,
         gateway=deployment_profile.spec.gateway,
         scheduler_profile=deployment_profile.spec.scheduler_profile,
-        options=deployment_profile.spec.options,
+        scheduler_image=scheduler_image,
+        options=options,
         target=target,
     )
 

@@ -18,6 +18,12 @@ from .models import (
     MetricsProfileSpec,
     MlflowSpec,
     ModelStorageSpec,
+    OverrideImagesSpec,
+    OverrideLlmdSpec,
+    OverrideRhoaiSpec,
+    OverrideRuntimeSpec,
+    OverrideScaleSpec,
+    OverrideSpec,
     ProfileRefs,
     ResolvedDeployment,
     ResolvedRunPlan,
@@ -31,6 +37,95 @@ from .models import (
     parse_metadata,
     parse_model_spec,
 )
+
+
+def _string_or_list(raw: Any, field_name: str) -> str | list[str] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        cleaned = raw.strip()
+        return cleaned or None
+    if isinstance(raw, list):
+        values = [str(item).strip() for item in raw if str(item).strip()]
+        if not values:
+            raise ValidationError(f"{field_name} must not be an empty list")
+        return values
+    raise ValidationError(
+        f"{field_name} must be a string or list of strings, got: {raw!r}"
+    )
+
+
+def _int_or_list(raw: Any, field_name: str) -> int | list[int] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        raise ValidationError(f"{field_name} must be an integer or list of integers")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, list):
+        try:
+            values = [int(item) for item in raw]
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                f"{field_name} must be a list of integers, got: {raw!r}"
+            ) from exc
+        if not values:
+            raise ValidationError(f"{field_name} must not be an empty list")
+        return values
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            f"{field_name} must be an integer or list of integers, got: {raw!r}"
+        ) from exc
+
+
+def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
+    raw = raw or {}
+    images = raw.get("images") or {}
+    scale = raw.get("scale") or {}
+    runtime = raw.get("runtime") or {}
+    llm_d = raw.get("llm_d") or {}
+    rhoai = raw.get("rhoai") or {}
+
+    return OverrideSpec(
+        images=OverrideImagesSpec(
+            runtime=_string_or_list(
+                images.get("runtime"), "spec.overrides.images.runtime"
+            ),
+            scheduler=_string_or_list(
+                images.get("scheduler"), "spec.overrides.images.scheduler"
+            ),
+        ),
+        scale=OverrideScaleSpec(
+            replicas=_int_or_list(
+                scale.get("replicas"), "spec.overrides.scale.replicas"
+            ),
+            tensor_parallelism=_int_or_list(
+                scale.get("tensor_parallelism"),
+                "spec.overrides.scale.tensor_parallelism",
+            ),
+        ),
+        runtime=OverrideRuntimeSpec(
+            vllm_args=[str(item) for item in (runtime.get("vllm_args") or [])],
+            env={
+                str(key): str(value)
+                for key, value in (runtime.get("env") or {}).items()
+            },
+        ),
+        llm_d=OverrideLlmdSpec(
+            repo_ref=_string_or_list(
+                llm_d.get("repo_ref"), "spec.overrides.llm_d.repo_ref"
+            )
+        ),
+        rhoai=OverrideRhoaiSpec(
+            enable_auth=(
+                _as_bool(rhoai.get("enable_auth"), False)
+                if "enable_auth" in rhoai
+                else None
+            )
+        ),
+    )
 
 
 def load_yaml_file(path: Path) -> dict[str, Any]:
@@ -87,6 +182,7 @@ def load_experiment(path: Path) -> Experiment:
         stages=StageSpec.from_dict(spec.get("stages")),
         mlflow=MlflowSpec.from_dict(spec.get("mlflow")),
         execution=ExecutionSpec.from_dict(spec.get("execution")),
+        overrides=_overrides_from_dict(spec.get("overrides")),
     )
 
     return Experiment(
@@ -115,6 +211,7 @@ def load_deployment_profile(path: Path) -> DeploymentProfile:
         gateway=str(spec.get("gateway", "istio")),
         endpoint_path=str(spec.get("endpoint_path", "/v1/models")),
         scheduler_profile=str(spec.get("scheduler_profile", "")),
+        scheduler_image=str(spec.get("scheduler_image", "")),
         options=dict(spec.get("options") or {}),
     )
     if not profile_spec.platform:
@@ -219,6 +316,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
         repo_ref=str(deployment_raw.get("repo_ref", "main")),
         gateway=str(deployment_raw.get("gateway", "istio")),
         scheduler_profile=str(deployment_raw.get("scheduler_profile", "")),
+        scheduler_image=str(deployment_raw.get("scheduler_image", "")),
         options=dict(deployment_raw.get("options") or {}),
         target=TargetSpec(
             discovery=str(

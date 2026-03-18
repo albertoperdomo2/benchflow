@@ -31,6 +31,7 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
         "repoRef": plan.deployment.repo_ref,
         "gateway": plan.deployment.gateway,
         "schedulerProfile": plan.deployment.scheduler_profile,
+        "schedulerImage": plan.deployment.scheduler_image,
         "modelArtifacts": {
             "name": plan.model.name,
             "uri": f"pvc://{plan.deployment.model_storage.pvc_name}{_model_path(plan)}",
@@ -77,6 +78,7 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
         "model_uri": f"pvc://{plan.deployment.model_storage.pvc_name}",
         "replicas": plan.deployment.runtime.replicas,
         "runtime_image": plan.deployment.runtime.image,
+        "scheduler_image": plan.deployment.scheduler_image,
         "runtime_args": _rhoai_vllm_args(plan),
         "runtime_env": _rhoai_runtime_env(plan),
         "gpu_count": str(plan.deployment.runtime.tensor_parallelism),
@@ -102,6 +104,10 @@ def render_rhaiis_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
         "--port=8080",
         f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
     ] + plan.deployment.runtime.vllm_args
+    env = [
+        {"name": key, "value": value}
+        for key, value in sorted(plan.deployment.runtime.env.items())
+    ]
 
     serving_runtime = {
         "apiVersion": "serving.kserve.io/v1alpha1",
@@ -118,6 +124,7 @@ def render_rhaiis_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
                     "image": plan.deployment.runtime.image,
                     "command": ["python", "-m", "vllm.entrypoints.openai.api_server"],
                     "args": args,
+                    "env": env,
                     "ports": [{"containerPort": 8080, "protocol": "TCP"}],
                 }
             ],
