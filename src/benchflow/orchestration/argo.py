@@ -3,12 +3,20 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import time
 from typing import Any
 
 from ..cluster import CommandError, require_command, run_command, run_json_command
 from ..contracts import ExecutionSummary, ResolvedRunPlan, ValidationError
 from ..ui import detail, step, success, warning
+
+_SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
+_ANSI_RESET = "\033[0m"
+_ANSI_DIM = "\033[2m"
+_ANSI_GREEN = "\033[32m"
+_ANSI_RED = "\033[31m"
+_ANSI_CYAN = "\033[36m"
 
 
 def _common_labels(plan: ResolvedRunPlan, *, backend: str) -> dict[str, str]:
@@ -163,6 +171,18 @@ def _workflow_state(workflow: dict[str, Any]) -> tuple[str, bool, bool, str]:
     return (phase or "Running", False, False, message)
 
 
+def _is_matrix_workflow(workflow: dict[str, Any]) -> bool:
+    labels = (workflow.get("metadata", {}) or {}).get("labels", {}) or {}
+    if str(labels.get("benchflow.io/platform", "") or "").strip() == "matrix":
+        return True
+    workflow_template_ref = (workflow.get("spec", {}) or {}).get(
+        "workflowTemplateRef", {}
+    ) or {}
+    return (
+        str(workflow_template_ref.get("name", "") or "").strip() == "benchflow-matrix"
+    )
+
+
 def _list_workflows(
     namespace: str, *, label_selector: str = ""
 ) -> list[dict[str, Any]]:
@@ -193,6 +213,19 @@ def _workflow_log_stream_limit(namespace: str, name: str) -> int:
         init_containers = spec.get("initContainers", []) or []
         stream_count += len(containers) + len(init_containers)
     return max(20, stream_count)
+
+
+def _workflow_parameter(workflow: dict[str, Any], name: str) -> str:
+    spec = workflow.get("spec", {}) or {}
+    arguments = spec.get("arguments", {}) or {}
+    parameters = arguments.get("parameters", []) or []
+    for item in parameters:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("name", "") or "").strip() != name:
+            continue
+        return str(item.get("value", "") or "")
+    return ""
 
 
 def _get_workflow_template(namespace: str, name: str) -> dict[str, Any] | None:
@@ -397,6 +430,76 @@ def _workflow_step_statuses(workflow: dict[str, Any]) -> list[tuple[str, str]]:
     ]
 
 
+def _matrix_total_children(workflow: dict[str, Any]) -> int:
+    raw = _workflow_parameter(workflow, "RUN_PLANS").strip()
+    if not raw:
+        return 0
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return 0
+    if not isinstance(payload, list):
+        return 0
+    return len(payload)
+
+
+def _candidate_matrix_children(
+    namespace: str, parent_workflow: dict[str, Any]
+) -> list[dict[str, Any]]:
+    parent_metadata = parent_workflow.get("metadata", {}) or {}
+    parent_name = str(parent_metadata.get("name", "") or "").strip()
+    parent_created_at = str(parent_metadata.get("creationTimestamp", "") or "").strip()
+    labels = parent_metadata.get("labels", {}) or {}
+    experiment = str(labels.get("benchflow.io/experiment", "") or "").strip()
+    if not experiment:
+        return []
+
+    children = _list_workflows(
+        namespace,
+        label_selector=(
+            f"benchflow.io/experiment={experiment},benchflow.io/execution-backend=argo"
+        ),
+    )
+    filtered: list[dict[str, Any]] = []
+    for child in children:
+        metadata = child.get("metadata", {}) or {}
+        name = str(metadata.get("name", "") or "").strip()
+        if not name or name == parent_name:
+            continue
+        child_labels = metadata.get("labels", {}) or {}
+        if str(child_labels.get("benchflow.io/platform", "") or "").strip() == "matrix":
+            continue
+        created_at = str(metadata.get("creationTimestamp", "") or "").strip()
+        if parent_created_at and created_at and created_at < parent_created_at:
+            continue
+        filtered.append(child)
+
+    filtered.sort(
+        key=lambda item: (
+            str((item.get("metadata", {}) or {}).get("creationTimestamp", "") or ""),
+            str((item.get("metadata", {}) or {}).get("name", "") or ""),
+        )
+    )
+    return filtered
+
+
+def _active_matrix_child(
+    namespace: str, parent_workflow: dict[str, Any]
+) -> tuple[int, int, dict[str, Any] | None]:
+    children = _candidate_matrix_children(namespace, parent_workflow)
+    total = _matrix_total_children(parent_workflow) or len(children)
+    if not children:
+        return (0, total, None)
+
+    completed = 0
+    for child in children:
+        state = _workflow_state(child)
+        if not state[1]:
+            return (completed + 1, total, child)
+        completed += 1
+    return (completed, total, children[-1])
+
+
 def _emit_step_phase(step_name: str, phase: str) -> None:
     message = f"{step_name}: {phase}"
     if phase == "Succeeded":
@@ -406,6 +509,74 @@ def _emit_step_phase(step_name: str, phase: str) -> None:
         warning(message)
         return
     detail(message)
+
+
+def _styled_token(text: str, style: str, *, interactive: bool) -> str:
+    if not interactive:
+        return text
+    return f"{style}{text}{_ANSI_RESET}"
+
+
+def _render_step_segment(
+    step_name: str, phase: str, *, interactive: bool, spinner_frame: str
+) -> str:
+    if phase == "Succeeded":
+        return _styled_token(f"✓ {step_name}", _ANSI_GREEN, interactive=interactive)
+    if phase in {"Failed", "Error"}:
+        return _styled_token(f"✗ {step_name}", _ANSI_RED, interactive=interactive)
+    if phase == "Running":
+        return _styled_token(
+            f"{spinner_frame} {step_name}", _ANSI_CYAN, interactive=interactive
+        )
+    if phase in {"Skipped", "Omitted"}:
+        return _styled_token(f"⊘ {step_name}", _ANSI_DIM, interactive=interactive)
+    return _styled_token(step_name, _ANSI_DIM, interactive=interactive)
+
+
+def _render_status_line(
+    step_statuses: list[tuple[str, str]], *, interactive: bool, spinner_frame: str
+) -> str:
+    return " › ".join(
+        _render_step_segment(
+            step_name,
+            phase,
+            interactive=interactive,
+            spinner_frame=spinner_frame,
+        )
+        for step_name, phase in step_statuses
+    )
+
+
+def _truncate_live_line(line: str) -> str:
+    if "\033[" in line:
+        return line
+    columns = shutil.get_terminal_size((120, 20)).columns
+    visible = len(line)
+    if visible <= columns:
+        return line
+    if columns <= 1:
+        return line
+    return line[: max(columns - 1, 0)]
+
+
+class _TerminalWatchUI:
+    def __init__(self, *, matrix: bool) -> None:
+        self.matrix = matrix
+        self.lines = 2 if matrix else 1
+        self._initialized = False
+
+    def update(self, lines: list[str]) -> None:
+        if len(lines) != self.lines:
+            raise ValueError(
+                f"expected {self.lines} rendered line(s), got {len(lines)}"
+            )
+        if self._initialized:
+            sys.stdout.write(f"\033[{self.lines}F")
+        for line in lines:
+            sys.stdout.write("\033[2K")
+            sys.stdout.write(f"  {_truncate_live_line(line)}\n")
+        sys.stdout.flush()
+        self._initialized = True
 
 
 class ArgoOrchestrator:
@@ -486,9 +657,12 @@ class ArgoOrchestrator:
 
     def follow(self, namespace: str, name: str, *, poll_interval: int = 5) -> bool:
         require_command("oc")
+        interactive = sys.stdout.isatty()
         last_state: tuple[str, bool, bool, str] | None = None
         last_step_statuses: dict[str, str] = {}
+        spinner_index = 0
         step(f"Watching Workflow {name} in namespace {namespace}")
+        watch_ui: _TerminalWatchUI | None = None
         while True:
             payload = _get_workflow(namespace, name)
             if payload is None:
@@ -496,12 +670,59 @@ class ArgoOrchestrator:
                     f"Workflow {name} in namespace {namespace} was not found"
                 )
             state = _workflow_state(payload)
-            step_statuses = dict(_workflow_step_statuses(payload))
+            step_status_pairs = _workflow_step_statuses(payload)
+            step_statuses = dict(step_status_pairs)
+            matrix_mode = _is_matrix_workflow(payload)
+            if interactive and watch_ui is None:
+                watch_ui = _TerminalWatchUI(matrix=matrix_mode)
 
-            if not last_step_statuses and step_statuses:
+            if not interactive and not last_step_statuses and step_statuses:
                 detail("Selectable steps: " + ", ".join(step_statuses))
 
-            if state != last_state:
+            if interactive:
+                spinner_frame = _SPINNER_FRAMES[spinner_index % len(_SPINNER_FRAMES)]
+                spinner_index += 1
+                if matrix_mode:
+                    child_index, child_total, child_workflow = _active_matrix_child(
+                        namespace, payload
+                    )
+                    if child_workflow is None:
+                        matrix_header = "Matrix workflow · waiting for active child"
+                        rendered_pairs = step_status_pairs
+                    else:
+                        child_name = str(
+                            (child_workflow.get("metadata", {}) or {}).get("name", "")
+                            or ""
+                        ).strip()
+                        matrix_header = (
+                            f"Matrix workflow · active child {child_index}/{child_total}: "
+                            f"{child_name}"
+                        )
+                        rendered_pairs = _workflow_step_statuses(child_workflow)
+                    if watch_ui is not None:
+                        watch_ui.update(
+                            [
+                                matrix_header,
+                                _render_status_line(
+                                    rendered_pairs,
+                                    interactive=True,
+                                    spinner_frame=spinner_frame,
+                                ),
+                            ]
+                        )
+                else:
+                    if watch_ui is not None:
+                        watch_ui.update(
+                            [
+                                _render_status_line(
+                                    step_status_pairs,
+                                    interactive=True,
+                                    spinner_frame=spinner_frame,
+                                )
+                            ]
+                        )
+
+            if not interactive and state != last_state:
                 status, finished, succeeded, message = state
                 if succeeded:
                     success(f"{name}: {status}")
@@ -513,13 +734,22 @@ class ArgoOrchestrator:
                     detail(message)
                 last_state = state
 
-            for step_name, phase in step_statuses.items():
-                if last_step_statuses.get(step_name) == phase:
-                    continue
-                _emit_step_phase(step_name, phase)
-                last_step_statuses[step_name] = phase
+            if not interactive:
+                for step_name, phase in step_statuses.items():
+                    if last_step_statuses.get(step_name) == phase:
+                        continue
+                    _emit_step_phase(step_name, phase)
+                    last_step_statuses[step_name] = phase
 
             if state[1]:
+                if interactive:
+                    status, _, succeeded, message = state
+                    if succeeded:
+                        success(f"{name}: {status}")
+                    else:
+                        warning(f"{name}: {status}")
+                    if message:
+                        detail(message)
                 return state[2]
             time.sleep(poll_interval)
 
