@@ -191,7 +191,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         ),
         namespace,
     )
-    print(name)
+    print(f"workflow/{name}")
 
     if args.follow:
         backend = (
