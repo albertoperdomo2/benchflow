@@ -1,11 +1,31 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
-from ..benchmark import benchmark_version_from_plan, generate_report, run_benchmark
+from ..benchmark import (
+    BenchmarkRunFailed,
+    benchmark_version_from_plan,
+    generate_report,
+    run_benchmark,
+)
 from ..contracts import BenchmarkOutcome, ResolvedRunPlan
+from ..remote_jobs import (
+    REMOTE_BENCHMARK_DIR,
+    RemoteJobFailed,
+    copy_remote_directory,
+    remote_run_plan_json,
+    run_remote_job,
+)
 from ..ui import detail, step, success
+
+
+def _read_optional_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8").strip()
 
 
 def run_plan_benchmark(
@@ -18,6 +38,103 @@ def run_plan_benchmark(
     extra_tags: dict[str, str] | None = None,
     execution_name: str = "",
 ) -> BenchmarkOutcome:
+    if plan.target_cluster.enabled():
+        step(
+            f"Running {plan.benchmark.tool} benchmark against {target_url} "
+            "via a remote target-cluster Job"
+        )
+        detail(
+            "Rates: "
+            + ",".join(str(rate) for rate in plan.benchmark.rates)
+            + f", rate type: {plan.benchmark.rate_type}, backend: {plan.benchmark.backend_type}"
+        )
+        detail(f"Benchmark data: {plan.benchmark.data}")
+        detail(
+            f"MLflow: {'enabled' if enable_mlflow else 'disabled'}, "
+            f"output dir: {str(output_dir) if output_dir is not None else 'not requested'}"
+        )
+
+        staging_dir = (
+            Path(output_dir).resolve()
+            if output_dir is not None
+            else Path(tempfile.mkdtemp(prefix="benchflow-remote-benchmark-"))
+        )
+        args = [
+            "benchmark",
+            "run",
+            "--run-plan-json",
+            remote_run_plan_json(plan),
+            "--output-dir",
+            REMOTE_BENCHMARK_DIR,
+            "--mlflow-run-id-output",
+            f"{REMOTE_BENCHMARK_DIR}/.mlflow-run-id",
+            "--benchmark-start-time-output",
+            f"{REMOTE_BENCHMARK_DIR}/.benchmark-start-time",
+            "--benchmark-end-time-output",
+            f"{REMOTE_BENCHMARK_DIR}/.benchmark-end-time",
+        ]
+        if target_url:
+            args.extend(["--target-url", target_url])
+        if mlflow_tracking_uri:
+            args.extend(["--mlflow-tracking-uri", mlflow_tracking_uri])
+        if not enable_mlflow:
+            args.append("--no-mlflow")
+        if execution_name:
+            args.extend(["--execution-name", execution_name])
+        for key, value in sorted((extra_tags or {}).items()):
+            args.extend(["--tag", f"{key}={value}"])
+
+        try:
+            try:
+                remote = run_remote_job(
+                    plan,
+                    job_kind="benchmark",
+                    args=args,
+                    timeout_seconds=max(plan.benchmark.max_seconds + 900, 3600),
+                )
+            except RemoteJobFailed as exc:
+                if exc.pod_name:
+                    try:
+                        copy_remote_directory(
+                            plan,
+                            pod_name=exc.pod_name,
+                            remote_path=REMOTE_BENCHMARK_DIR,
+                            local_dir=staging_dir,
+                        )
+                    except Exception as copy_exc:  # noqa: BLE001
+                        detail(
+                            "Failed to copy remote benchmark outputs after failure: "
+                            f"{copy_exc}"
+                        )
+                raise BenchmarkRunFailed(
+                    str(exc),
+                    run_id=_read_optional_text(staging_dir / ".mlflow-run-id"),
+                    start_time=_read_optional_text(
+                        staging_dir / ".benchmark-start-time"
+                    ),
+                    end_time=_read_optional_text(staging_dir / ".benchmark-end-time"),
+                ) from exc
+
+            copy_remote_directory(
+                plan,
+                pod_name=remote.pod_name,
+                remote_path=REMOTE_BENCHMARK_DIR,
+                local_dir=staging_dir,
+            )
+            outcome = BenchmarkOutcome(
+                run_id=_read_optional_text(staging_dir / ".mlflow-run-id"),
+                start_time=_read_optional_text(staging_dir / ".benchmark-start-time"),
+                end_time=_read_optional_text(staging_dir / ".benchmark-end-time"),
+            )
+            success(
+                f"Benchmark finished. Start: {outcome.start_time}, end: {outcome.end_time}, "
+                f"MLflow run: {outcome.run_id or 'not created'}"
+            )
+            return outcome
+        finally:
+            if output_dir is None:
+                shutil.rmtree(staging_dir, ignore_errors=True)
+
     step(f"Running {plan.benchmark.tool} benchmark against {target_url}")
     detail(
         "Rates: "

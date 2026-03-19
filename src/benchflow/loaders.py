@@ -9,6 +9,7 @@ import yaml
 from .models import (
     BenchmarkProfile,
     BenchmarkProfileSpec,
+    ClusterTargetSpec,
     DeploymentProfile,
     DeploymentProfileSpec,
     ExecutionSpec,
@@ -129,6 +130,14 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
     )
 
 
+def _target_cluster_from_dict(raw: dict[str, Any] | None) -> ClusterTargetSpec:
+    raw = raw or {}
+    return ClusterTargetSpec(
+        kubeconfig=str(raw.get("kubeconfig", "") or ""),
+        kubeconfig_secret=str(raw.get("kubeconfig_secret", "") or ""),
+    )
+
+
 def load_yaml_file(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
@@ -183,6 +192,7 @@ def load_experiment(path: Path) -> Experiment:
         stages=StageSpec.from_dict(spec.get("stages")),
         mlflow=MlflowSpec.from_dict(spec.get("mlflow")),
         execution=ExecutionSpec.from_dict(spec.get("execution")),
+        target_cluster=_target_cluster_from_dict(spec.get("target_cluster")),
         overrides=_overrides_from_dict(spec.get("overrides")),
     )
 
@@ -371,6 +381,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
         metadata=metadata,
         profiles=profiles,
         execution=ExecutionSpec.from_dict(raw.get("execution")),
+        target_cluster=_target_cluster_from_dict(raw.get("target_cluster")),
         model=model,
         deployment=deployment,
         benchmark=benchmark,

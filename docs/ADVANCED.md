@@ -88,6 +88,80 @@ Today `bflow bootstrap` installs or configures:
 - BenchFlow PVCs
 - repo-root Tekton tasks and pipelines
 
+To bootstrap a remote target cluster without Tekton or Grafana:
+
+```bash
+bflow bootstrap \
+  --target-kubeconfig ~/.kube/target-cluster \
+  --no-install-tekton \
+  --skip-grafana-install
+```
+
+## Cluster Topologies
+
+BenchFlow supports two operating modes.
+
+### Same-cluster
+
+Tekton, BenchFlow, and the actual benchmarked workloads all live in the same
+cluster.
+
+```bash
+bflow bootstrap
+bflow experiment run my-experiment.yaml
+```
+
+This is the default and simplest path.
+
+### Management cluster targeting a remote cluster
+
+Tekton runs in the management cluster, but setup, deploy, benchmark, metrics,
+and cleanup affect a different target cluster. The target cluster does not need
+Tekton.
+
+1. Bootstrap the management cluster normally:
+
+```bash
+bflow bootstrap
+```
+
+2. Bootstrap the target cluster without Tekton or Grafana:
+
+```bash
+bflow bootstrap \
+  --target-kubeconfig ~/.kube/target-cluster \
+  --no-install-tekton \
+  --skip-grafana-install
+```
+
+3. Store the target kubeconfig in the management cluster:
+
+```bash
+bflow target kubeconfig-secret create \
+  --name target-cluster-kubeconfig \
+  --kubeconfig ~/.kube/target-cluster \
+  --namespace benchflow
+```
+
+4. Launch the experiment from the management cluster:
+
+```bash
+bflow experiment run my-experiment.yaml \
+  --target-kubeconfig-secret target-cluster-kubeconfig
+```
+
+Or embed the Secret reference in the Experiment itself:
+
+```yaml
+spec:
+  target_cluster:
+    kubeconfig_secret: target-cluster-kubeconfig
+```
+
+Use `--target-kubeconfig` only for direct local BenchFlow commands such as
+target-cluster bootstrap. Tekton `PipelineRun`s cannot mount your local
+filesystem, so in-cluster executions must use `kubeconfig_secret`.
+
 ## Profiles
 
 Profiles are packaged with the tool and are resolved by name.
@@ -144,6 +218,9 @@ spec:
   metrics_profile: detailed # --metrics-profile
   namespace: benchflow # --namespace
   service_account: benchflow-runner # --service-account
+  target_cluster:
+    kubeconfig_secret: target-cluster-kubeconfig # --target-kubeconfig-secret
+    kubeconfig: /absolute/path/to/kubeconfig # --target-kubeconfig, local CLI only
   ttl_seconds_after_finished: 3600 # --ttl-seconds-after-finished
   stages:
     download: true # --download / --no-download
@@ -182,6 +259,16 @@ Override semantics:
 - `runtime.vllm_args` appends to the profile vLLM args
 - `runtime.env` merges by key and override values win on collisions
 - list-valued `model.name`, profile refs, and override axes produce a cartesian-product matrix
+
+Target-cluster semantics:
+
+- omit `spec.target_cluster` for the normal same-cluster path
+- use `spec.target_cluster.kubeconfig_secret` for Tekton executions that must act on a remote target cluster
+- use `--target-kubeconfig` only for direct local BenchFlow commands; Tekton `PipelineRun`s cannot see your local filesystem
+- create the management-cluster Secret with `bflow target kubeconfig-secret create`
+- the control cluster runs Tekton, but target clusters do not need Tekton
+- setup, deploy, teardown, and cleanup run from the control cluster against the target kubeconfig
+- download, wait-for-endpoint, benchmark, artifact collection, and metrics collection run as plain Kubernetes `Job`s in the target cluster and copy results back when needed
 
 Full `DeploymentProfile` schema:
 

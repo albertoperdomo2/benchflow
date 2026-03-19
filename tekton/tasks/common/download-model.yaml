@@ -23,6 +23,10 @@ spec:
     - name: models-storage
       persistentVolumeClaim:
         claimName: $(params.MODELS_STORAGE_PVC)
+  workspaces:
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
   steps:
     - name: download-model
       image: $(params.IMAGE)
@@ -48,6 +52,8 @@ spec:
           value: /tmp/benchflow-hf/huggingface/xet
         - name: TRANSFORMERS_CACHE
           value: /tmp/benchflow-hf/huggingface/transformers
+        - name: BENCHFLOW_REMOTE_IMAGE
+          value: $(params.IMAGE)
       command:
         - bflow
       args:

@@ -21,6 +21,7 @@ from .commands.runtime import (
     repo_group,
     setup_group,
     task_group,
+    target_group,
     teardown_group,
     undeploy_group,
     wait_group,
@@ -79,6 +80,7 @@ def completion_command(shell: str) -> int:
 
 
 cli.add_command(bootstrap_command)
+cli.add_command(target_group)
 cli.add_command(experiment_group)
 cli.add_command(run_plan_group)
 cli.add_command(repo_group)

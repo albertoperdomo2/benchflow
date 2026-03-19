@@ -22,6 +22,9 @@ spec:
   workspaces:
     - name: state-storage
       description: Workspace where setup-state.json will be written
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
   steps:
     - name: setup
       image: $(params.IMAGE)

@@ -22,9 +22,15 @@ spec:
   workspaces:
     - name: artifacts
       description: Workspace to save collected artifacts
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
   steps:
     - name: collect
       image: $(params.IMAGE)
+      env:
+        - name: BENCHFLOW_REMOTE_IMAGE
+          value: $(params.IMAGE)
       command:
         - bflow
       args:

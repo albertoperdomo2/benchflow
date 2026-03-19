@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import subprocess
 import time
@@ -36,7 +37,9 @@ CONNECTIVITY_MARKERS = (
 class BootstrapOptions:
     namespace: str = "benchflow"
     install_grafana: bool = True
+    install_tekton: bool = True
     tekton_channel: str = "latest"
+    target_kubeconfig: str | None = None
     models_storage_access_mode: str = "ReadWriteOnce"
     models_storage_size: str = "250Gi"
     models_storage_class: str | None = None
@@ -83,8 +86,9 @@ class Installer:
         self.print_intro()
 
         self.install_accelerator_prerequisites()
-        self.install_tekton_if_needed()
-        self.configure_tekton_scc()
+        if self.options.install_tekton:
+            self.install_tekton_if_needed()
+            self.configure_tekton_scc()
         self.install_grafana_if_needed()
         self.install_real_secrets()
         self.apply_namespaced_resources()
@@ -106,9 +110,13 @@ class Installer:
                     "GPU prerequisites",
                     "NFD operator + instance, GPU operator + ClusterPolicy",
                 ),
-                ("Install Tekton if missing", "true"),
+                ("Install Tekton if missing", str(options.install_tekton).lower()),
                 ("Install Grafana if missing", str(options.install_grafana).lower()),
                 ("OpenShift Pipelines channel", options.tekton_channel),
+                (
+                    "Target kubeconfig",
+                    options.target_kubeconfig or "current cluster context",
+                ),
                 (
                     "models-storage",
                     f"{options.models_storage_access_mode} {options.models_storage_size}"
@@ -153,9 +161,13 @@ class Installer:
                     "GPU prerequisites",
                     "NFD operator + instance, GPU operator + ClusterPolicy",
                 ),
-                ("Tekton install attempted", "true"),
+                ("Tekton install attempted", str(options.install_tekton).lower()),
                 ("Grafana install attempted", str(options.install_grafana).lower()),
                 ("OpenShift Pipelines channel", options.tekton_channel),
+                (
+                    "Target kubeconfig",
+                    options.target_kubeconfig or "current cluster context",
+                ),
                 (
                     "models-storage",
                     f"{options.models_storage_access_mode} {options.models_storage_size}"
@@ -213,6 +225,14 @@ class Installer:
             result = subprocess.run(
                 argv,
                 cwd=str(self.repo_root),
+                env={
+                    **os.environ,
+                    **(
+                        {"KUBECONFIG": self.options.target_kubeconfig}
+                        if self.options.target_kubeconfig
+                        else {}
+                    ),
+                },
                 input=input_text,
                 text=True,
                 capture_output=True,
@@ -1131,10 +1151,13 @@ class Installer:
         self.apply_runner_rbac()
         self.apply_cluster_monitoring_rbac()
         self.apply_workspace_pvcs()
-        self.apply_manifest_tree(self.repo_root / "tekton" / "tasks", "Tekton tasks")
-        self.apply_manifest_tree(
-            self.repo_root / "tekton" / "pipelines", "Tekton pipelines"
-        )
+        if self.options.install_tekton:
+            self.apply_manifest_tree(
+                self.repo_root / "tekton" / "tasks", "Tekton tasks"
+            )
+            self.apply_manifest_tree(
+                self.repo_root / "tekton" / "pipelines", "Tekton pipelines"
+            )
 
     def discover_grafana_route_host(self) -> str | None:
         if not self._resource_exists("get", "route", "-n", self.grafana_namespace):

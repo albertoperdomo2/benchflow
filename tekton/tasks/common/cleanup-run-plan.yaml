@@ -23,6 +23,9 @@ spec:
     - name: state-storage
       description: Workspace that may contain setup-state.json
       optional: true
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
   steps:
     - name: cleanup
       image: $(params.IMAGE)

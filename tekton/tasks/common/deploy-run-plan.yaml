@@ -26,6 +26,9 @@ spec:
     - name: manifests-storage
       description: Workspace for storing rendered manifests
       optional: true
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
   steps:
     - name: deploy
       image: $(params.IMAGE)

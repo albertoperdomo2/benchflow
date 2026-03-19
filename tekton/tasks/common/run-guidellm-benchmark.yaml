@@ -23,6 +23,9 @@ spec:
     - name: results
       description: Workspace for benchmark outputs
       optional: true
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
   results:
     - name: mlflow-run-id
       description: MLflow run ID for metrics correlation
@@ -102,6 +105,8 @@ spec:
           value: "/tmp/benchflow-guidellm/huggingface/xet"
         - name: TRANSFORMERS_CACHE
           value: "/tmp/benchflow-guidellm/huggingface/transformers"
+        - name: BENCHFLOW_REMOTE_IMAGE
+          value: $(params.IMAGE)
       command:
         - bflow
       args:

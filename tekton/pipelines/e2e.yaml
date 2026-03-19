@@ -28,6 +28,8 @@ spec:
   workspaces:
     - name: results
     - name: source
+    - name: target-kubeconfig
+      optional: true
   tasks:
     - name: resolve-run-plan
       taskRef:
@@ -57,6 +59,8 @@ spec:
         - name: state-storage
           workspace: results
           subPath: $(context.pipelineRun.name)/platform-state
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
 
     - name: download-model
       runAfter: [setup-run-plan]
@@ -73,6 +77,9 @@ spec:
           value: $(params.RUN_PLAN)
         - name: MODELS_STORAGE_PVC
           value: $(params.MODELS_STORAGE_PVC)
+      workspaces:
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
 
     - name: deploy
       runAfter: [download-model]
@@ -95,6 +102,8 @@ spec:
         - name: manifests-storage
           workspace: results
           subPath: $(context.pipelineRun.name)/rendered-manifests
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
 
     - name: wait-for-endpoint
       runAfter: [deploy]
@@ -109,6 +118,9 @@ spec:
           value: $(params.BENCHFLOW_IMAGE)
         - name: RUN_PLAN
           value: $(params.RUN_PLAN)
+      workspaces:
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
 
     - name: benchmark
       runAfter: [wait-for-endpoint]
@@ -131,6 +143,8 @@ spec:
         - name: results
           workspace: results
           subPath: $(context.pipelineRun.name)/benchmark
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
 
     - name: collect-artifacts
       runAfter: [benchmark]
@@ -152,6 +166,8 @@ spec:
         - name: artifacts
           workspace: results
           subPath: $(context.pipelineRun.name)
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
 
     - name: collect-metrics
       runAfter: [collect-artifacts]
@@ -178,6 +194,8 @@ spec:
         - name: artifacts
           workspace: results
           subPath: $(context.pipelineRun.name)
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
 
     - name: upload-to-mlflow
       runAfter: [collect-metrics]
@@ -224,6 +242,8 @@ spec:
         - name: state-storage
           workspace: results
           subPath: $(context.pipelineRun.name)/platform-state
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
     - name: assert-benchmark-status
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"

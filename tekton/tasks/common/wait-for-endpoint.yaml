@@ -15,9 +15,16 @@ spec:
       default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
     - name: RUN_PLAN
       type: string
+  workspaces:
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
   steps:
     - name: wait-for-ready
       image: $(params.IMAGE)
+      env:
+        - name: BENCHFLOW_REMOTE_IMAGE
+          value: $(params.IMAGE)
       command:
         - bflow
       args:

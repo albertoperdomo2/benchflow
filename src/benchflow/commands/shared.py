@@ -19,6 +19,7 @@ from ..loaders import (
 )
 from ..matrix import require_single_experiment_plan, resolve_experiment_matrix
 from ..models import (
+    ClusterTargetSpec,
     ExecutionSpec,
     Experiment,
     ExperimentSpec,
@@ -136,6 +137,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             stages=stages,
             mlflow=mlflow,
             execution=ExecutionSpec(),
+            target_cluster=ClusterTargetSpec(),
             overrides=OverrideSpec(),
         )
         base_experiment = Experiment(
@@ -215,6 +217,10 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
     )
     cli_env = parse_mapping(getattr(args, "env", None), "--env")
     cli_vllm_args = [str(item) for item in (getattr(args, "vllm_arg", None) or [])]
+    target_kubeconfig = getattr(args, "target_kubeconfig", None)
+    if target_kubeconfig:
+        target_kubeconfig = str(Path(target_kubeconfig).resolve())
+    target_kubeconfig_secret = getattr(args, "target_kubeconfig_secret", None)
 
     overrides = OverrideSpec(
         images=OverrideImagesSpec(
@@ -292,6 +298,18 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 tags=mlflow_tags,
             ),
             execution=ExecutionSpec(backend=base_experiment.spec.execution.backend),
+            target_cluster=ClusterTargetSpec(
+                kubeconfig=(
+                    target_kubeconfig
+                    if target_kubeconfig is not None
+                    else base_experiment.spec.target_cluster.kubeconfig
+                ),
+                kubeconfig_secret=(
+                    str(target_kubeconfig_secret)
+                    if target_kubeconfig_secret is not None
+                    else base_experiment.spec.target_cluster.kubeconfig_secret
+                ),
+            ),
             overrides=overrides,
         ),
     )
@@ -432,6 +450,15 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
         click.option(
             "--service-account",
             help="Service account used by the execution.",
+        ),
+        click.option(
+            "--target-kubeconfig",
+            type=click.Path(dir_okay=False, path_type=Path),
+            help="Path to a kubeconfig used for target-cluster operations.",
+        ),
+        click.option(
+            "--target-kubeconfig-secret",
+            help="Secret that contains a kubeconfig for in-cluster target-cluster operations.",
         ),
         click.option(
             "--ttl-seconds-after-finished",

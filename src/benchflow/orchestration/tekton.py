@@ -17,6 +17,7 @@ _ANSI_DIM = "\033[2m"
 _ANSI_GREEN = "\033[32m"
 _ANSI_RED = "\033[31m"
 _ANSI_CYAN = "\033[36m"
+_TARGET_KUBECONFIG_PATH = "/workspace/target-kubeconfig/kubeconfig"
 
 
 def _common_labels(plan: ResolvedRunPlan, *, backend: str) -> dict[str, str]:
@@ -29,6 +30,15 @@ def _common_labels(plan: ResolvedRunPlan, *, backend: str) -> dict[str, str]:
     }
 
 
+def _serialized_run_plan(plan: ResolvedRunPlan) -> str:
+    payload = plan.to_dict()
+    target_cluster = dict(payload.get("target_cluster") or {})
+    if plan.target_cluster.kubeconfig_secret:
+        target_cluster["kubeconfig"] = _TARGET_KUBECONFIG_PATH
+    payload["target_cluster"] = target_cluster
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
 def render_pipelinerun(
     plan: ResolvedRunPlan,
     *,
@@ -36,7 +46,26 @@ def render_pipelinerun(
     setup_mode: str,
     teardown: bool,
 ) -> dict[str, Any]:
-    run_plan_json = json.dumps(plan.to_dict(), separators=(",", ":"), sort_keys=True)
+    if plan.target_cluster.kubeconfig and not plan.target_cluster.kubeconfig_secret:
+        raise ValidationError(
+            "Tekton execution requires target_cluster.kubeconfig_secret for remote target clusters; "
+            "--target-kubeconfig only works with direct local BenchFlow commands"
+        )
+    run_plan_json = _serialized_run_plan(plan)
+    workspaces: list[dict[str, Any]] = [
+        {
+            "name": "results",
+            "persistentVolumeClaim": {"claimName": "benchmark-results"},
+        },
+        {"name": "source", "emptyDir": {}},
+    ]
+    if plan.target_cluster.kubeconfig_secret:
+        workspaces.append(
+            {
+                "name": "target-kubeconfig",
+                "secret": {"secretName": plan.target_cluster.kubeconfig_secret},
+            }
+        )
     return {
         "apiVersion": "tekton.dev/v1",
         "kind": "PipelineRun",
@@ -57,13 +86,7 @@ def render_pipelinerun(
                 {"name": "SETUP_MODE", "value": setup_mode},
                 {"name": "TEARDOWN", "value": str(teardown).lower()},
             ],
-            "workspaces": [
-                {
-                    "name": "results",
-                    "persistentVolumeClaim": {"claimName": "benchmark-results"},
-                },
-                {"name": "source", "emptyDir": {}},
-            ],
+            "workspaces": workspaces,
         },
     }
 

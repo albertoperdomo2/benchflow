@@ -199,6 +199,7 @@ def resolve_run_plan(
             metrics=metrics_profile.metadata.name,
         ),
         execution=experiment.spec.execution,
+        target_cluster=experiment.spec.target_cluster,
         model=experiment.spec.model.__class__(name=model_name),
         deployment=deployment,
         benchmark=benchmark_profile.spec,

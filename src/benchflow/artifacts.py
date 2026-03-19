@@ -59,11 +59,68 @@ def _collect_pod_logs(
     return has_logs
 
 
+def _ensure_artifact_layout(artifacts_dir: Path) -> None:
+    for relative in (
+        "logs/pipeline",
+        "logs/model",
+        "logs/gaie",
+        "logs/infra",
+        "manifests",
+    ):
+        (artifacts_dir / relative).mkdir(parents=True, exist_ok=True)
+
+
+def collect_execution_logs(
+    plan: ResolvedRunPlan,
+    *,
+    artifacts_dir: Path,
+    execution_name: str,
+) -> int:
+    if not execution_name:
+        return 0
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_artifact_layout(artifacts_dir)
+
+    namespace = plan.deployment.namespace
+    detail("Collecting execution pod logs")
+    seen_execution_pods: set[str] = set()
+    payload = run_json_command(
+        [
+            kubectl_cmd,
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            f"tekton.dev/pipelineRun={execution_name}",
+            "-o",
+            "json",
+        ]
+    )
+    for item in payload.get("items", []):
+        pod_name = item.get("metadata", {}).get("name", "")
+        if pod_name:
+            seen_execution_pods.add(pod_name)
+
+    execution_pod_count = 0
+    for pod_name in sorted(seen_execution_pods):
+        if _collect_pod_logs(
+            kubectl_cmd, namespace, pod_name, artifacts_dir / "logs" / "pipeline"
+        ):
+            execution_pod_count += 1
+    detail(f"Collected logs from {execution_pod_count} execution pod(s)")
+    return execution_pod_count
+
+
 def collect_artifacts(
     plan: ResolvedRunPlan,
     *,
     artifacts_dir: Path,
     execution_name: str = "",
+    include_execution_logs: bool = True,
+    include_workload: bool = True,
+    include_manifests: bool = True,
 ) -> Path:
     kubectl_cmd = require_any_command("oc", "kubectl")
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -74,20 +131,13 @@ def collect_artifacts(
     if execution_name:
         detail(f"Execution: {execution_name}")
     detail(f"Artifacts directory: {artifacts_dir}")
-    for relative in (
-        "logs/pipeline",
-        "logs/model",
-        "logs/gaie",
-        "logs/infra",
-        "manifests",
-    ):
-        (artifacts_dir / relative).mkdir(parents=True, exist_ok=True)
+    _ensure_artifact_layout(artifacts_dir)
 
     namespace = plan.deployment.namespace
 
-    execution_pods: list[str] = []
     execution_pod_count = 0
-    if execution_name:
+    execution_pods: list[str] = []
+    if include_execution_logs and execution_name:
         detail("Collecting execution pod logs")
         seen_execution_pods: set[str] = set()
         payload = run_json_command(
@@ -115,80 +165,82 @@ def collect_artifacts(
                 execution_pod_count += 1
         detail(f"Collected logs from {execution_pod_count} execution pod(s)")
 
-    payload = run_json_command(
-        [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"]
-    )
     model_count = 0
     gaie_count = 0
     infra_count = 0
-    for item in payload.get("items", []):
-        pod_name = item.get("metadata", {}).get("name", "")
-        if not pod_name or pod_name.endswith("-pod") or pod_name in execution_pods:
-            continue
-        pod_type = _pod_type(pod_name)
-        if _collect_pod_logs(
-            kubectl_cmd, namespace, pod_name, artifacts_dir / "logs" / pod_type
-        ):
-            if pod_type == "model":
-                model_count += 1
-            elif pod_type == "gaie":
-                gaie_count += 1
-            else:
-                infra_count += 1
-    detail(
-        f"Collected workload logs from {model_count} model pod(s), "
-        f"{gaie_count} gaie pod(s), and {infra_count} infra pod(s)"
-    )
+    if include_workload:
+        payload = run_json_command(
+            [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"]
+        )
+        for item in payload.get("items", []):
+            pod_name = item.get("metadata", {}).get("name", "")
+            if not pod_name or pod_name.endswith("-pod") or pod_name in execution_pods:
+                continue
+            pod_type = _pod_type(pod_name)
+            if _collect_pod_logs(
+                kubectl_cmd, namespace, pod_name, artifacts_dir / "logs" / pod_type
+            ):
+                if pod_type == "model":
+                    model_count += 1
+                elif pod_type == "gaie":
+                    gaie_count += 1
+                else:
+                    infra_count += 1
+        detail(
+            f"Collected workload logs from {model_count} model pod(s), "
+            f"{gaie_count} gaie pod(s), and {infra_count} infra pod(s)"
+        )
 
     manifest_root = artifacts_dir / "manifests"
     manifest_count = 0
-    detail("Collecting Kubernetes manifests for deployed resources")
-    for resource_type in (
-        "deployments",
-        "pods",
-        "services",
-        "configmaps",
-        "gateways",
-        "inferencepool",
-        "llminferenceservices",
-        "httproutes",
-    ):
-        get_result = run_command(
-            [kubectl_cmd, "get", resource_type, "-n", namespace, "-o", "json"],
-            capture_output=True,
-            check=False,
-        )
-        if get_result.returncode != 0:
-            continue
-        payload = json.loads(get_result.stdout or "{}")
-        items = payload.get("items", [])
-        if not items:
-            continue
-        resource_dir = manifest_root / resource_type
-        resource_dir.mkdir(parents=True, exist_ok=True)
-        for item in items:
-            name = item.get("metadata", {}).get("name")
-            if not name:
-                continue
-            result = run_command(
-                [
-                    kubectl_cmd,
-                    "get",
-                    resource_type,
-                    name,
-                    "-n",
-                    namespace,
-                    "-o",
-                    "yaml",
-                ],
+    if include_manifests:
+        detail("Collecting Kubernetes manifests for deployed resources")
+        for resource_type in (
+            "deployments",
+            "pods",
+            "services",
+            "configmaps",
+            "gateways",
+            "inferencepool",
+            "llminferenceservices",
+            "httproutes",
+        ):
+            get_result = run_command(
+                [kubectl_cmd, "get", resource_type, "-n", namespace, "-o", "json"],
                 capture_output=True,
                 check=False,
             )
-            if result.returncode == 0 and result.stdout.strip():
-                (resource_dir / f"{name}.yaml").write_text(
-                    result.stdout, encoding="utf-8"
+            if get_result.returncode != 0:
+                continue
+            payload = json.loads(get_result.stdout or "{}")
+            items = payload.get("items", [])
+            if not items:
+                continue
+            resource_dir = manifest_root / resource_type
+            resource_dir.mkdir(parents=True, exist_ok=True)
+            for item in items:
+                name = item.get("metadata", {}).get("name")
+                if not name:
+                    continue
+                result = run_command(
+                    [
+                        kubectl_cmd,
+                        "get",
+                        resource_type,
+                        name,
+                        "-n",
+                        namespace,
+                        "-o",
+                        "yaml",
+                    ],
+                    capture_output=True,
+                    check=False,
                 )
-                manifest_count += 1
+                if result.returncode == 0 and result.stdout.strip():
+                    (resource_dir / f"{name}.yaml").write_text(
+                        result.stdout, encoding="utf-8"
+                    )
+                    manifest_count += 1
 
     metadata = {
         "namespace": namespace,

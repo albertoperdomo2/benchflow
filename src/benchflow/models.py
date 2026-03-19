@@ -140,6 +140,15 @@ class ExecutionSpec:
 
 
 @dataclass(slots=True)
+class ClusterTargetSpec:
+    kubeconfig: str = ""
+    kubeconfig_secret: str = ""
+
+    def enabled(self) -> bool:
+        return bool(self.kubeconfig or self.kubeconfig_secret)
+
+
+@dataclass(slots=True)
 class OverrideImagesSpec:
     runtime: str | list[str] | None = None
     scheduler: str | list[str] | None = None
@@ -188,6 +197,7 @@ class ExperimentSpec:
     stages: StageSpec = field(default_factory=StageSpec)
     mlflow: MlflowSpec = field(default_factory=MlflowSpec)
     execution: ExecutionSpec = field(default_factory=ExecutionSpec)
+    target_cluster: ClusterTargetSpec = field(default_factory=ClusterTargetSpec)
     overrides: OverrideSpec = field(default_factory=OverrideSpec)
 
 
@@ -316,6 +326,7 @@ class ResolvedRunPlan:
     metadata: Metadata
     profiles: ProfileRefs
     execution: ExecutionSpec
+    target_cluster: ClusterTargetSpec
     model: ModelSpec
     deployment: ResolvedDeployment
     benchmark: BenchmarkProfileSpec
