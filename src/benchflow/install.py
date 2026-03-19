@@ -1041,7 +1041,7 @@ class Installer:
     def install_grafana_if_needed(self) -> None:
         if not self.options.install_grafana:
             detail(
-                "Skipping Grafana install because --skip-grafana-install was requested"
+                "Skipping Grafana install because install_grafana=false for this bootstrap run"
             )
             return
         success(

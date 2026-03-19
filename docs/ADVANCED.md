@@ -88,14 +88,18 @@ Today `bflow bootstrap` installs or configures:
 - BenchFlow PVCs
 - repo-root Tekton tasks and pipelines
 
-To bootstrap a remote target cluster without Tekton or Grafana:
+To bootstrap a remote target cluster:
 
 ```bash
 bflow bootstrap \
-  --target-kubeconfig ~/.kube/target-cluster \
-  --no-install-tekton \
-  --skip-grafana-install
+  --target-kubeconfig ~/.kube/target-cluster
 ```
+
+When `--target-kubeconfig` is set, BenchFlow defaults to a runtime-only target
+bootstrap:
+
+- Tekton is not installed unless `--install-tekton` is passed
+- Grafana is not installed unless `--install-grafana` is passed
 
 ## Cluster Topologies
 
@@ -125,13 +129,11 @@ Tekton.
 bflow bootstrap
 ```
 
-2. Bootstrap the target cluster without Tekton or Grafana:
+2. Bootstrap the target cluster:
 
 ```bash
 bflow bootstrap \
-  --target-kubeconfig ~/.kube/target-cluster \
-  --no-install-tekton \
-  --skip-grafana-install
+  --target-kubeconfig ~/.kube/target-cluster
 ```
 
 3. Store the target kubeconfig in the management cluster:

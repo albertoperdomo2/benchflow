@@ -94,17 +94,26 @@ def _teardown_requested(value: str | None, default: bool = True) -> bool:
 
 def cmd_bootstrap(args: argparse.Namespace) -> int:
     repo_root = repo_root_from(args)
+    target_kubeconfig = (
+        str(Path(args.target_kubeconfig).resolve()) if args.target_kubeconfig else None
+    )
+    install_tekton = (
+        args.install_tekton
+        if args.install_tekton is not None
+        else not bool(target_kubeconfig)
+    )
+    install_grafana = (
+        args.install_grafana
+        if args.install_grafana is not None
+        else not bool(target_kubeconfig)
+    )
     return run_bootstrap(
         repo_root,
         BootstrapOptions(
             namespace=args.namespace or "benchflow",
-            install_grafana=not args.skip_grafana_install,
-            install_tekton=args.install_tekton,
-            target_kubeconfig=(
-                str(Path(args.target_kubeconfig).resolve())
-                if args.target_kubeconfig
-                else None
-            ),
+            install_grafana=install_grafana,
+            install_tekton=install_tekton,
+            target_kubeconfig=target_kubeconfig,
             models_storage_class=args.models_storage_class,
             models_storage_size=args.models_size or "250Gi",
             models_storage_access_mode=args.models_access_mode or "ReadWriteOnce",
@@ -664,20 +673,28 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
     help="Target namespace. Defaults to benchflow.",
 )
 @click.option(
-    "--skip-grafana-install",
-    is_flag=True,
-    help="Do not install Grafana in the dedicated Grafana namespace.",
+    "--install-grafana/--no-install-grafana",
+    default=None,
+    help=(
+        "Install Grafana in the dedicated Grafana namespace. Defaults to enabled "
+        "for same-cluster bootstrap and disabled when --target-kubeconfig is set."
+    ),
 )
 @click.option(
     "--install-tekton/--no-install-tekton",
-    default=True,
-    show_default=True,
-    help="Install and reconcile Tekton resources on the target cluster.",
+    default=None,
+    help=(
+        "Install and reconcile Tekton resources on the target cluster. Defaults "
+        "to enabled for same-cluster bootstrap and disabled when --target-kubeconfig is set."
+    ),
 )
 @click.option(
     "--target-kubeconfig",
     type=click.Path(dir_okay=False, path_type=Path),
-    help="Kubeconfig used to bootstrap a remote target cluster instead of the current one.",
+    help=(
+        "Kubeconfig used to bootstrap a remote target cluster instead of the current one. "
+        "This implies runtime-only bootstrap unless --install-tekton or --install-grafana is set."
+    ),
 )
 @click.option(
     "--models-storage-class",
