@@ -235,7 +235,7 @@ spec:
     tags:
       owner: perf # --mlflow-tag owner=perf
   execution:
-    timeout: 1h # --timeout
+    timeout: 3h # --timeout
   overrides:
     images:
       runtime: ghcr.io/acme/vllm:dev # --runtime-image, string or list for matrix
@@ -341,7 +341,7 @@ spec:
     request_success_total: sum(rate(vllm:request_success_total[5m])) # no CLI override
 ```
 
-`spec.execution.timeout` defaults to `1h`. BenchFlow uses Tekton implicitly.
+`spec.execution.timeout` defaults to `3h`. BenchFlow uses Tekton implicitly.
 
 Validate it:
 

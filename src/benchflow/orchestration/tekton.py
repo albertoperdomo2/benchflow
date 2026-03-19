@@ -84,7 +84,6 @@ def render_pipelinerun(
                     "name": "MODELS_STORAGE_PVC",
                     "value": plan.deployment.model_storage.pvc_name,
                 },
-                {"name": "EXECUTION_TIMEOUT", "value": plan.execution.timeout},
                 *(
                     [{"name": "BENCHFLOW_IMAGE", "value": benchflow_image}]
                     if benchflow_image

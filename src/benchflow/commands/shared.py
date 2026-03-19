@@ -473,7 +473,7 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
         ),
         click.option(
             "--timeout",
-            help="Execution timeout for the main PipelineRun, for example 1h or 30m.",
+            help="Execution timeout for the main PipelineRun, for example 3h or 30m.",
         ),
         click.option(
             "--mlflow-experiment",

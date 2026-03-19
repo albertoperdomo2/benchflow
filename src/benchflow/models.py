@@ -127,12 +127,12 @@ class MlflowSpec:
 @dataclass(slots=True)
 class ExecutionSpec:
     backend: str = "tekton"
-    timeout: str = "1h"
+    timeout: str = "3h"
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> "ExecutionSpec":
         raw = raw or {}
-        timeout = str(raw.get("timeout", "1h") or "1h").strip()
+        timeout = str(raw.get("timeout", "3h") or "3h").strip()
         if not timeout:
             raise ValidationError("execution.timeout must not be empty")
         return cls(timeout=timeout)
