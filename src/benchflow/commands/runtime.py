@@ -4,6 +4,7 @@ import argparse
 import base64
 import json
 import os
+import re
 from pathlib import Path
 
 import click
@@ -93,11 +94,84 @@ def _teardown_requested(value: str | None, default: bool = True) -> bool:
     raise ValidationError(f"invalid teardown value: {value!r}")
 
 
+_DNS_SUBDOMAIN_RE = re.compile(r"^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$")
+
+
+def _normalize_cluster_name(cluster_name: str) -> str:
+    normalized = str(cluster_name).strip()
+    if not normalized:
+        raise ValidationError("cluster name must not be empty")
+    if len(normalized) > 253 or not _DNS_SUBDOMAIN_RE.fullmatch(normalized):
+        raise ValidationError(
+            "cluster name must be a valid lowercase DNS subdomain, for example psap-llmd-h200"
+        )
+    return normalized
+
+
+def _apply_target_kubeconfig_secret(
+    *,
+    namespace: str,
+    secret_name: str,
+    kubeconfig_path: Path,
+    cluster_name: str | None = None,
+) -> None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    labels = {
+        "app.kubernetes.io/name": "benchflow",
+        "benchflow.io/secret-kind": "target-kubeconfig",
+    }
+    if cluster_name:
+        labels["benchflow.io/cluster-name"] = cluster_name
+
+    namespace_payload = {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": namespace},
+    }
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text=json.dumps(namespace_payload),
+    )
+
+    payload = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": secret_name,
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "type": "Opaque",
+        "data": {
+            "kubeconfig": base64.b64encode(kubeconfig_path.read_bytes()).decode("ascii")
+        },
+    }
+    run_command(
+        [kubectl_cmd, "apply", "-n", namespace, "-f", "-"],
+        input_text=json.dumps(payload),
+    )
+
+
 def cmd_bootstrap(args: argparse.Namespace) -> int:
     repo_root = repo_root_from(args)
+    namespace = args.namespace or "benchflow"
     target_kubeconfig = (
         str(Path(args.target_kubeconfig).resolve()) if args.target_kubeconfig else None
     )
+    cluster_name = (
+        _normalize_cluster_name(args.cluster_name) if args.cluster_name else None
+    )
+    if cluster_name and not target_kubeconfig:
+        raise ValidationError(
+            "--cluster-name requires --target-kubeconfig during bootstrap"
+        )
+    if target_kubeconfig and cluster_name:
+        _apply_target_kubeconfig_secret(
+            namespace=namespace,
+            secret_name=cluster_name,
+            kubeconfig_path=Path(target_kubeconfig),
+            cluster_name=cluster_name,
+        )
     install_tekton = (
         args.install_tekton
         if args.install_tekton is not None
@@ -111,7 +185,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     return run_bootstrap(
         repo_root,
         BootstrapOptions(
-            namespace=args.namespace or "benchflow",
+            namespace=namespace,
             install_grafana=install_grafana,
             install_tekton=install_tekton,
             target_kubeconfig=target_kubeconfig,
@@ -130,34 +204,40 @@ def cmd_target_kubeconfig_secret_create(args: argparse.Namespace) -> int:
     if not kubeconfig_path.is_file():
         raise ValidationError(f"kubeconfig file not found: {kubeconfig_path}")
 
-    kubectl_cmd = require_any_command("oc", "kubectl")
     secret_name = str(args.name).strip()
     key_name = str(args.key or "kubeconfig").strip()
     if not secret_name:
         raise ValidationError("secret name must not be empty")
     if not key_name:
         raise ValidationError("secret key must not be empty")
-
-    payload = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": secret_name,
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/name": "benchflow",
-                "benchflow.io/secret-kind": "target-kubeconfig",
+    if key_name != "kubeconfig":
+        kubectl_cmd = require_any_command("oc", "kubectl")
+        payload = {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "name": secret_name,
+                "namespace": namespace,
+                "labels": {
+                    "app.kubernetes.io/name": "benchflow",
+                    "benchflow.io/secret-kind": "target-kubeconfig",
+                },
             },
-        },
-        "type": "Opaque",
-        "data": {
-            key_name: base64.b64encode(kubeconfig_path.read_bytes()).decode("ascii")
-        },
-    }
-    run_command(
-        [kubectl_cmd, "apply", "-n", namespace, "-f", "-"],
-        input_text=json.dumps(payload),
-    )
+            "type": "Opaque",
+            "data": {
+                key_name: base64.b64encode(kubeconfig_path.read_bytes()).decode("ascii")
+            },
+        }
+        run_command(
+            [kubectl_cmd, "apply", "-n", namespace, "-f", "-"],
+            input_text=json.dumps(payload),
+        )
+    else:
+        _apply_target_kubeconfig_secret(
+            namespace=namespace,
+            secret_name=secret_name,
+            kubeconfig_path=kubeconfig_path,
+        )
     print(secret_name)
     return 0
 
@@ -699,6 +779,13 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
     help=(
         "Kubeconfig used to bootstrap a remote target cluster instead of the current one. "
         "This implies runtime-only bootstrap unless --install-tekton or --install-grafana is set."
+    ),
+)
+@click.option(
+    "--cluster-name",
+    help=(
+        "Name of the remote cluster. When used with --target-kubeconfig, bootstrap also "
+        "creates a management-cluster kubeconfig Secret with this name."
     ),
 )
 @click.option(

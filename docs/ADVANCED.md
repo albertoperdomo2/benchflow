@@ -92,7 +92,8 @@ To bootstrap a remote target cluster:
 
 ```bash
 bflow bootstrap \
-  --target-kubeconfig ~/.kube/target-cluster
+  --target-kubeconfig ~/.kube/target-cluster \
+  --cluster-name target-cluster
 ```
 
 When `--target-kubeconfig` is set, BenchFlow defaults to a runtime-only target
@@ -100,6 +101,8 @@ bootstrap:
 
 - Tekton is not installed unless `--install-tekton` is passed
 - Grafana is not installed unless `--install-grafana` is passed
+- when `--cluster-name` is also set, BenchFlow creates a management-cluster
+  kubeconfig Secret with the same name
 
 ## Cluster Topologies
 
@@ -133,23 +136,26 @@ bflow bootstrap
 
 ```bash
 bflow bootstrap \
-  --target-kubeconfig ~/.kube/target-cluster
+  --target-kubeconfig ~/.kube/target-cluster \
+  --cluster-name target-cluster
 ```
 
-3. Store the target kubeconfig in the management cluster:
-
-```bash
-bflow target kubeconfig-secret create \
-  --name target-cluster-kubeconfig \
-  --kubeconfig ~/.kube/target-cluster \
-  --namespace benchflow
-```
-
-4. Launch the experiment from the management cluster:
+3. Launch the experiment from the management cluster:
 
 ```bash
 bflow experiment run my-experiment.yaml \
-  --target-kubeconfig-secret target-cluster-kubeconfig
+  --cluster-name target-cluster
+```
+
+This is equivalent to resolving `--target-kubeconfig-secret target-cluster`.
+The explicit Secret command is still available if you want to manage the Secret
+yourself:
+
+```bash
+bflow target kubeconfig-secret create \
+  --name target-cluster \
+  --kubeconfig ~/.kube/target-cluster \
+  --namespace benchflow
 ```
 
 Or embed the Secret reference in the Experiment itself:
@@ -157,7 +163,7 @@ Or embed the Secret reference in the Experiment itself:
 ```yaml
 spec:
   target_cluster:
-    kubeconfig_secret: target-cluster-kubeconfig
+    kubeconfig_secret: target-cluster
 ```
 
 Use `--target-kubeconfig` only for direct local BenchFlow commands such as

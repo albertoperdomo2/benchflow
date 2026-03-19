@@ -221,6 +221,15 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
     if target_kubeconfig:
         target_kubeconfig = str(Path(target_kubeconfig).resolve())
     target_kubeconfig_secret = getattr(args, "target_kubeconfig_secret", None)
+    cluster_name = getattr(args, "cluster_name", None)
+    if cluster_name:
+        if target_kubeconfig is not None or target_kubeconfig_secret is not None:
+            raise ValidationError(
+                "--cluster-name cannot be combined with --target-kubeconfig or --target-kubeconfig-secret"
+            )
+        target_kubeconfig_secret = str(cluster_name).strip()
+        if not target_kubeconfig_secret:
+            raise ValidationError("cluster name must not be empty")
 
     overrides = OverrideSpec(
         images=OverrideImagesSpec(
@@ -465,6 +474,13 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
         click.option(
             "--target-kubeconfig-secret",
             help="Secret that contains a kubeconfig for in-cluster target-cluster operations.",
+        ),
+        click.option(
+            "--cluster-name",
+            help=(
+                "Remote cluster name. BenchFlow resolves this to a management-cluster "
+                "kubeconfig Secret with the same name."
+            ),
         ),
         click.option(
             "--ttl-seconds-after-finished",
