@@ -297,7 +297,13 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 or base_experiment.spec.mlflow.experiment,
                 tags=mlflow_tags,
             ),
-            execution=ExecutionSpec(backend=base_experiment.spec.execution.backend),
+            execution=ExecutionSpec(
+                timeout=(
+                    str(getattr(args, "timeout", None))
+                    if getattr(args, "timeout", None) is not None
+                    else base_experiment.spec.execution.timeout
+                ),
+            ),
             target_cluster=ClusterTargetSpec(
                 kubeconfig=(
                     target_kubeconfig
@@ -464,6 +470,10 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
             "--ttl-seconds-after-finished",
             type=int,
             help="TTL for finished executions.",
+        ),
+        click.option(
+            "--timeout",
+            help="Execution timeout for the main PipelineRun, for example 1h or 30m.",
         ),
         click.option(
             "--mlflow-experiment",

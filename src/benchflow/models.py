@@ -127,16 +127,15 @@ class MlflowSpec:
 @dataclass(slots=True)
 class ExecutionSpec:
     backend: str = "tekton"
+    timeout: str = "1h"
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> "ExecutionSpec":
         raw = raw or {}
-        backend = str(raw.get("backend", "tekton") or "tekton").strip().lower()
-        if backend != "tekton":
-            raise ValidationError(
-                f"unsupported execution backend: {backend!r}; expected tekton"
-            )
-        return cls(backend=backend)
+        timeout = str(raw.get("timeout", "1h") or "1h").strip()
+        if not timeout:
+            raise ValidationError("execution.timeout must not be empty")
+        return cls(timeout=timeout)
 
 
 @dataclass(slots=True)

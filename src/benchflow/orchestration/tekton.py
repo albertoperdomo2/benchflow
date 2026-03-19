@@ -77,12 +77,14 @@ def render_pipelinerun(
             "pipelineRef": {"name": pipeline_name},
             "taskRunTemplate": {"serviceAccountName": plan.service_account},
             "ttlSecondsAfterFinished": plan.ttl_seconds_after_finished,
+            "timeouts": {"pipeline": plan.execution.timeout},
             "params": [
                 {"name": "RUN_PLAN", "value": run_plan_json},
                 {
                     "name": "MODELS_STORAGE_PVC",
                     "value": plan.deployment.model_storage.pvc_name,
                 },
+                {"name": "EXECUTION_TIMEOUT", "value": plan.execution.timeout},
                 *(
                     [{"name": "BENCHFLOW_IMAGE", "value": benchflow_image}]
                     if benchflow_image

@@ -25,6 +25,9 @@ spec:
     - name: TEARDOWN
       type: string
       default: "true"
+    - name: EXECUTION_TIMEOUT
+      type: string
+      default: "1h"
   workspaces:
     - name: results
     - name: source
@@ -131,7 +134,7 @@ spec:
           values: ["true"]
       taskRef:
         name: run-guidellm-benchmark
-      timeout: "2h"
+      timeout: $(params.EXECUTION_TIMEOUT)
       params:
         - name: IMAGE
           value: $(params.BENCHFLOW_IMAGE)
