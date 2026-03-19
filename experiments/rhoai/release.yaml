@@ -1,0 +1,17 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: openai-gpt-oss-120b
+spec:
+  model:
+    name: openai/gpt-oss-120b
+  deployment_profile:
+    - rhoai-kserve
+    - rhoai-precise-prefix-cache
+  benchmark_profile:
+    - guidellm-concurrent-1k-1k
+    # - guidellm-concurrent-heavy-heterogeneous
+  metrics_profile: detailed
+  namespace: benchflow
+  execution:
+    timeout: 8h

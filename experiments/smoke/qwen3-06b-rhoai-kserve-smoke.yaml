@@ -7,5 +7,5 @@ spec:
     name: Qwen/Qwen3-0.6B
   deployment_profile: rhoai-kserve
   benchmark_profile: guidellm-smoke
-  metrics_profile: detailed
+  metrics_profile: default
   namespace: benchflow

@@ -5,7 +5,9 @@ metadata:
 spec:
   model:
     name: Qwen/Qwen3-0.6B
-  deployment_profile: llm-d-inference-scheduling
+  deployment_profile:
+    - rhoai-kserve
+    - rhoai-precise-prefix-cache
   benchmark_profile: guidellm-smoke
   metrics_profile: default
   namespace: benchflow

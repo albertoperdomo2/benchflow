@@ -10,8 +10,8 @@ spec:
     pvc_name: models-storage
     cache_dir: /models
   runtime:
-    replicas: 2
-    tensor_parallelism: 1
+    replicas: 4
+    tensor_parallelism: 2
     vllm_args:
       - --max-model-len=8192
       - --gpu-memory-utilization=0.92
