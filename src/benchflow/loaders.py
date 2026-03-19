@@ -33,6 +33,7 @@ from .models import (
     ValidationError,
     _require,
     _as_bool,
+    normalize_model_names,
     normalize_profile_refs,
     parse_metadata,
     parse_model_spec,
@@ -289,6 +290,10 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
 
     metadata = parse_metadata(raw)
     model = parse_model_spec(raw.get("model") or {})
+    model_names = normalize_model_names(model.name, "model.name")
+    if len(model_names) != 1:
+        raise ValidationError("RunPlan model.name must contain exactly one value")
+    model = model.__class__(name=model_names[0])
 
     profiles_raw = raw.get("profiles") or {}
     profiles = ProfileRefs(

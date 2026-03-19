@@ -19,6 +19,7 @@ from .models import (
     ResolvedRunPlan,
     StageSpec,
     ValidationError,
+    normalize_model_names,
     normalize_profile_refs,
 )
 from .plans import resolve_run_plan
@@ -57,7 +58,12 @@ def _override_axes(
     )
 
 
+def _model_axis(experiment: Experiment) -> list[str]:
+    return normalize_model_names(experiment.spec.model.name, "spec.model.name")
+
+
 def is_matrix_experiment(experiment: Experiment) -> bool:
+    model_names = _model_axis(experiment)
     deployment_profiles, benchmark_profiles, metrics_profiles = profile_matrix_axes(
         experiment
     )
@@ -71,6 +77,7 @@ def is_matrix_experiment(experiment: Experiment) -> bool:
     return any(
         len(values) > 1
         for values in (
+            model_names,
             deployment_profiles,
             benchmark_profiles,
             metrics_profiles,
@@ -84,6 +91,7 @@ def is_matrix_experiment(experiment: Experiment) -> bool:
 
 
 def experiment_matrix_size(experiment: Experiment) -> int:
+    model_names = _model_axis(experiment)
     deployment_profiles, benchmark_profiles, metrics_profiles = profile_matrix_axes(
         experiment
     )
@@ -95,7 +103,8 @@ def experiment_matrix_size(experiment: Experiment) -> int:
         repo_refs,
     ) = _override_axes(experiment)
     return (
-        len(deployment_profiles)
+        len(model_names)
+        * len(deployment_profiles)
         * len(benchmark_profiles)
         * len(metrics_profiles)
         * len(runtime_images)
@@ -107,6 +116,7 @@ def experiment_matrix_size(experiment: Experiment) -> int:
 
 
 def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
+    model_names = _model_axis(experiment)
     deployment_profiles, benchmark_profiles, metrics_profiles = profile_matrix_axes(
         experiment
     )
@@ -120,6 +130,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
     expanded: list[Experiment] = []
 
     for (
+        model_name,
         deployment_profile,
         benchmark_profile,
         metrics_profile,
@@ -129,6 +140,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
         tensor_parallelism,
         repo_ref,
     ) in product(
+        model_names,
         deployment_profiles,
         benchmark_profiles,
         metrics_profiles,
@@ -147,10 +159,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                     labels=dict(experiment.metadata.labels),
                 ),
                 spec=ExperimentSpec(
-                    model=ModelSpec(
-                        name=experiment.spec.model.name,
-                        revision=experiment.spec.model.revision,
-                    ),
+                    model=ModelSpec(name=model_name),
                     deployment_profile=[deployment_profile],
                     benchmark_profile=[benchmark_profile],
                     metrics_profile=[metrics_profile],

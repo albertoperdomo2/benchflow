@@ -154,8 +154,6 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
         "--served-model-name",
         plan.model.name,
     ]
-    if plan.model.revision and plan.model.revision != "main":
-        args.extend(["--revision", plan.model.revision])
     args.extend(runtime.vllm_args)
     container["args"] = args
 

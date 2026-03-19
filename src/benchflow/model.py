@@ -66,14 +66,10 @@ def download_model(
 
         cache_dir = _configure_huggingface_runtime()
         detail(f"Hugging Face cache directory: {cache_dir}")
-        step(
-            f"Downloading {plan.model.name}"
-            + (f" at revision {plan.model.revision}" if plan.model.revision else "")
-        )
+        step(f"Downloading {plan.model.name}")
 
         snapshot_download(
             repo_id=plan.model.name,
-            revision=plan.model.revision,
             local_dir=str(target_dir),
             cache_dir=str(cache_dir),
             token=os.environ.get("HF_TOKEN"),

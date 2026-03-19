@@ -138,8 +138,7 @@ metadata:
     team: perf
 spec:
   model:
-    name: Qwen/Qwen3-0.6B # --model
-    revision: main # --model-revision
+    name: Qwen/Qwen3-0.6B # --model, string or list for matrix
   deployment_profile: llm-d-inference-scheduling # --deployment-profile
   benchmark_profile: guidellm-smoke # --benchmark-profile
   metrics_profile: detailed # --metrics-profile
@@ -182,7 +181,7 @@ Override semantics:
 - `images.runtime`, `images.scheduler`, `scale.replicas`, `scale.tensor_parallelism`, and `llm_d.repo_ref` replace the profile value
 - `runtime.vllm_args` appends to the profile vLLM args
 - `runtime.env` merges by key and override values win on collisions
-- list-valued profile refs and list-valued override axes produce a cartesian-product matrix
+- list-valued `model.name`, profile refs, and override axes produce a cartesian-product matrix
 
 Full `DeploymentProfile` schema:
 
@@ -343,6 +342,18 @@ bflow experiment run \
   --vllm-arg --max-num-seqs=256 \
   --env LOG_LEVEL=DEBUG \
   --llmd-repo-ref v0.4.1
+```
+
+Model matrix:
+
+```bash
+bflow experiment run \
+  --name model-matrix \
+  --model Qwen/Qwen3-0.6B \
+  --model meta-llama/Llama-3.1-8B \
+  --deployment-profile llm-d-inference-scheduling \
+  --benchmark-profile guidellm-smoke \
+  --metrics-profile detailed
 ```
 
 Direct CLI flags are best for one-off runs. Files are better for repeatability.

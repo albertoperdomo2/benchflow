@@ -10,6 +10,7 @@ from .models import (
     RuntimeSpec,
     TargetSpec,
     ValidationError,
+    normalize_model_names,
     normalize_profile_refs,
     sanitize_name,
 )
@@ -77,6 +78,10 @@ def resolve_run_plan(
     deployment_profile = catalog.require_deployment(deployment_profile_names[0])
     benchmark_profile = catalog.require_benchmark(benchmark_profile_names[0])
     metrics_profile = catalog.require_metrics(metrics_profile_names[0])
+    model_names = normalize_model_names(experiment.spec.model.name, "spec.model.name")
+    if len(model_names) != 1:
+        raise ValidationError("resolve_run_plan requires exactly one model name")
+    model_name = model_names[0]
 
     release_name = sanitize_name(experiment.metadata.name, max_length=42)
     namespace = deployment_profile.spec.namespace or experiment.spec.namespace
@@ -172,7 +177,7 @@ def resolve_run_plan(
     tags.setdefault("metrics_profile", metrics_profile.metadata.name)
 
     model_name_fragment = (
-        experiment.spec.model.name.lower().replace("/", "-").replace(".", "").strip("-")
+        model_name.lower().replace("/", "-").replace(".", "").strip("-")
     )
     default_experiment_name = (
         f"{model_name_fragment}-{benchmark_profile.metadata.name}"
@@ -194,7 +199,7 @@ def resolve_run_plan(
             metrics=metrics_profile.metadata.name,
         ),
         execution=experiment.spec.execution,
-        model=experiment.spec.model,
+        model=experiment.spec.model.__class__(name=model_name),
         deployment=deployment,
         benchmark=benchmark_profile.spec,
         metrics=metrics_profile.spec,

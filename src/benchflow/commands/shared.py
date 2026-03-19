@@ -33,6 +33,7 @@ from ..models import (
     OverrideSpec,
     StageSpec,
     ValidationError,
+    normalize_model_names,
     sanitize_name,
 )
 from ..plans import resolve_run_plan
@@ -100,6 +101,10 @@ def parse_axis_strings(
     return cleaned
 
 
+def _first_model_name(value: str | list[str]) -> str:
+    return normalize_model_names(value, "spec.model.name")[0]
+
+
 def parse_axis_ints(
     values: tuple[int, ...] | list[int] | None, option_name: str
 ) -> int | list[int] | None:
@@ -146,7 +151,8 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
     mlflow_tags = dict(base_experiment.spec.mlflow.tags)
     mlflow_tags.update(parse_mapping(getattr(args, "mlflow_tag", None), "--mlflow-tag"))
 
-    model_name = getattr(args, "model", None) or base_experiment.spec.model.name
+    cli_model = parse_axis_strings(getattr(args, "model", None), "--model")
+    model_name = cli_model if cli_model is not None else base_experiment.spec.model.name
     if not model_name:
         raise ValidationError(
             "missing required input: provide an experiment file or --model"
@@ -181,7 +187,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
     name = (
         getattr(args, "name", None)
         or base_experiment.metadata.name
-        or sanitize_name(model_name)
+        or sanitize_name(_first_model_name(model_name))
     )
 
     stages = StageSpec(
@@ -266,11 +272,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
         kind="Experiment",
         metadata=Metadata(name=name, labels=labels),
         spec=ExperimentSpec(
-            model=ModelSpec(
-                name=model_name,
-                revision=getattr(args, "model_revision", None)
-                or base_experiment.spec.model.revision,
-            ),
+            model=ModelSpec(name=model_name),
             deployment_profile=deployment_profile,
             benchmark_profile=benchmark_profile,
             metrics_profile=metrics_profile,
@@ -409,9 +411,9 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
         ),
         click.option(
             "--model",
-            help="Model identifier, for example Qwen/Qwen3-0.6B.",
+            multiple=True,
+            help="Model identifier. Repeat to build a matrix axis.",
         ),
-        click.option("--model-revision", help="Model revision or tag."),
         click.option(
             "--deployment-profile",
             shell_complete=complete_profile_names("deployment"),

@@ -50,6 +50,22 @@ def normalize_profile_refs(value: str | list[str], field_name: str) -> list[str]
     )
 
 
+def normalize_model_names(value: str | list[str], field_name: str) -> list[str]:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValidationError(f"missing required field: {field_name}")
+        return [cleaned]
+    if isinstance(value, list):
+        cleaned_values = [str(item).strip() for item in value if str(item).strip()]
+        if not cleaned_values:
+            raise ValidationError(f"missing required field: {field_name}")
+        return cleaned_values
+    raise ValidationError(
+        f"{field_name} must be a string or a list of strings, got: {value!r}"
+    )
+
+
 @dataclass(slots=True)
 class Metadata:
     name: str
@@ -58,16 +74,22 @@ class Metadata:
 
 @dataclass(slots=True)
 class ModelSpec:
-    name: str
-    revision: str = "main"
+    name: str | list[str]
+
+    def resolved_name(self) -> str:
+        if isinstance(self.name, list):
+            if len(self.name) != 1:
+                raise ValidationError("resolved model name requires exactly one value")
+            return self.name[0]
+        return self.name
 
     @property
     def pvc_directory_name(self) -> str:
-        return self.name.replace("/", "-")
+        return self.resolved_name().replace("/", "-")
 
     @property
     def resource_name(self) -> str:
-        return sanitize_name(self.name)
+        return sanitize_name(self.resolved_name())
 
 
 @dataclass(slots=True)
@@ -319,7 +341,8 @@ def parse_metadata(raw: dict[str, Any]) -> Metadata:
 
 
 def parse_model_spec(raw: dict[str, Any]) -> ModelSpec:
-    return ModelSpec(
-        name=str(_require(raw.get("name"), "spec.model.name")),
-        revision=str(raw.get("revision", "main")),
-    )
+    name = raw.get("name")
+    if isinstance(name, str):
+        cleaned = str(_require(name, "spec.model.name")).strip()
+        return ModelSpec(name=cleaned)
+    return ModelSpec(name=normalize_model_names(name, "spec.model.name"))
