@@ -254,7 +254,7 @@ def load_benchmark_profile(path: Path) -> BenchmarkProfile:
         rates=rates,
         data=str(spec.get("data", "prompt_tokens=1000,output_tokens=1000")),
         max_seconds=int(spec.get("max_seconds", 600)),
-        max_requests=int(spec["max_requests"])
+        max_requests=str(spec["max_requests"]).strip()
         if spec.get("max_requests") is not None
         else None,
         env=env,
@@ -352,7 +352,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
         rates=[int(item) for item in (benchmark_raw.get("rates") or [])],
         data=str(benchmark_raw.get("data", "prompt_tokens=1000,output_tokens=1000")),
         max_seconds=int(benchmark_raw.get("max_seconds", 600)),
-        max_requests=int(benchmark_raw["max_requests"])
+        max_requests=str(benchmark_raw["max_requests"]).strip()
         if benchmark_raw.get("max_requests") is not None
         else None,
         env={

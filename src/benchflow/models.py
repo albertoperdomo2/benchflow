@@ -255,7 +255,7 @@ class BenchmarkProfileSpec:
     rates: list[int] = field(default_factory=list)
     data: str = "prompt_tokens=1000,output_tokens=1000"
     max_seconds: int = 600
-    max_requests: int | None = None
+    max_requests: str | None = None
     env: dict[str, str] = field(default_factory=dict)
 
 
