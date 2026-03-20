@@ -10,7 +10,7 @@ BenchFlow is a packaged control plane for running benchmark scenarios, not a loo
 > This project is experimental and for learning purposes mainly, but the implemented execution paths today are `llm-d` and `RHOAI`. Expect some parts to still be highly coupled.
 
 > [!WARNING]
-> BenchFlow does not yet implement a cluster-level lock for shared platform setup. Until that exists, let each benchmark job run end to end before launching another one that mutates the cluster, or use one matrix experiment so BenchFlow executes multiple combinations sequentially for you.
+> BenchFlow does not yet implement a cluster-level lock for shared platform setup. Until that exists, let each benchmark job run end to end before launching another one that mutates the cluster, or use one matrix experiment so BenchFlow can queue and run multiple combinations through Kueue with controlled parallelism.
 
 ## Quickstart
 
@@ -42,6 +42,6 @@ Then follow the execution:
 bflow watch <execution-name> --namespace benchflow
 ```
 
-BenchFlow also supports matrix experiments by turning one or more profile fields into lists; the cluster then runs the cartesian product sequentially in the cluster.
+BenchFlow also supports matrix experiments by turning one or more profile fields into lists; the cluster then runs the cartesian product through child executions that Kueue can admit in parallel when target-cluster GPU capacity allows it. Once the parent has submitted child executions, canceling the parent is only best-effort; already queued or running children may need individual cancellation.
 
 For the full command surface, RunPlan PipelineRun flow, matrix execution, and lower-level runtime commands, see [docs/ADVANCED.md](docs/ADVANCED.md).

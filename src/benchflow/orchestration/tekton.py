@@ -223,7 +223,7 @@ def render_matrix_pipelinerun(
                 "benchflow.io/platform": "matrix",
                 "benchflow.io/mode": "matrix",
                 "benchflow.io/execution-backend": "tekton",
-                **execution_labels_for_matrix(plans),
+                **execution_labels_for_matrix(plans, skip_reservation=True),
             },
         },
         "spec": {

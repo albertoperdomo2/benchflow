@@ -230,6 +230,7 @@ Important limitation:
 - this Kueue admission path only gates GPU capacity and start order
 - it does not replace a cluster-level lock for shared platform mutations
 - concurrent runs can still race on setup and teardown of shared platform state
+- matrix parent cancellation is best-effort once child executions have already been submitted; queued or running children may need to be cancelled individually
 - until BenchFlow has an explicit cluster lock, treat Kueue as capacity admission, not full mutation safety
 
 ## Profiles
@@ -329,6 +330,7 @@ Override semantics:
 - `runtime.vllm_args` appends to the profile vLLM args
 - `runtime.env` merges by key and override values win on collisions
 - list-valued `model.name`, profile refs, and override axes produce a cartesian-product matrix
+- matrix children are submitted as independent child executions; Kueue can admit them in parallel when target-cluster GPU capacity allows it
 
 Target-cluster semantics:
 

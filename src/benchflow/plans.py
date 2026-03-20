@@ -15,6 +15,22 @@ from .models import (
     sanitize_name,
 )
 
+_MATRIX_CHILD_INDEX_LABEL = "benchflow.io/matrix-child-index"
+
+
+def _release_name_for(experiment: Experiment) -> str:
+    child_index = str(
+        (experiment.metadata.labels or {}).get(_MATRIX_CHILD_INDEX_LABEL) or ""
+    ).strip()
+    if not child_index:
+        return sanitize_name(experiment.metadata.name, max_length=42)
+    suffix = f"m{child_index}"
+    prefix = sanitize_name(
+        experiment.metadata.name,
+        max_length=max(1, 42 - len(suffix) - 1),
+    )
+    return f"{prefix}-{suffix}"
+
 
 def _target_for(
     platform: str, release_name: str, namespace: str, gateway: str, path: str
@@ -83,7 +99,7 @@ def resolve_run_plan(
         raise ValidationError("resolve_run_plan requires exactly one model name")
     model_name = model_names[0]
 
-    release_name = sanitize_name(experiment.metadata.name, max_length=42)
+    release_name = _release_name_for(experiment)
     namespace = deployment_profile.spec.namespace or experiment.spec.namespace
     overrides = experiment.spec.overrides
 

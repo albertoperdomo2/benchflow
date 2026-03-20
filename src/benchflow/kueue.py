@@ -144,11 +144,17 @@ def execution_labels_for_plan(
     return labels
 
 
-def execution_labels_for_matrix(plans: list[ResolvedRunPlan]) -> dict[str, str]:
+def execution_labels_for_matrix(
+    plans: list[ResolvedRunPlan],
+    *,
+    skip_reservation: bool = False,
+) -> dict[str, str]:
     labels = {
         CLUSTER_QUEUE_LABEL: cluster_name_from_plans(plans),
-        REQUESTED_GPUS_LABEL: str(requested_gpus_for_matrix(plans)),
-        KUEUE_SKIP_RESERVATION_LABEL: "false",
+        REQUESTED_GPUS_LABEL: str(
+            0 if skip_reservation else requested_gpus_for_matrix(plans)
+        ),
+        KUEUE_SKIP_RESERVATION_LABEL: str(skip_reservation).lower(),
     }
     secret_name = target_kubeconfig_secret_from_plans(plans)
     if secret_name:

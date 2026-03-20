@@ -334,6 +334,7 @@ def run_matrix_supervisor(
     setup_hoisted = False
     setup_state_dir: tempfile.TemporaryDirectory[str] | None = None
     setup_state_path: Path | None = None
+    submitted: dict[str, str] = {}
 
     matrix_platform = (
         plans[0].deployment.platform
@@ -368,17 +369,43 @@ def run_matrix_supervisor(
                 execution_name=child_execution_name,
                 setup_mode="skip" if setup_hoisted else "auto",
                 teardown=False if setup_hoisted else True,
-                skip_kueue_reservation=True,
+                skip_kueue_reservation=False,
                 benchflow_image=benchflow_image,
             )
             name = submit_execution_manifest(manifest, plan.deployment.namespace)
-            detail(f"Created execution {name} in namespace {plan.deployment.namespace}")
-            succeeded = follow_execution(plan.deployment.namespace, name)
-            if succeeded:
-                success(f"[{index}/{total}] {name} succeeded")
-                continue
-            warning(f"[{index}/{total}] {name} failed")
-            failures.append(name)
+            submitted[name] = descriptor
+            detail(f"Queued execution {name} in namespace {plan.deployment.namespace}")
+
+        if submitted:
+            step(f"Watching {len(submitted)} child execution(s)")
+        last_states: dict[str, tuple[str, bool, str]] = {}
+        pending = set(submitted)
+        while pending:
+            for name in list(pending):
+                summary = summarize_execution(plans[0].deployment.namespace, name)
+                state = (
+                    str(summary.get("status") or ""),
+                    bool(summary.get("finished")),
+                    str(summary.get("message") or ""),
+                )
+                if last_states.get(name) != state:
+                    status_text = state[0]
+                    message_text = state[2]
+                    if message_text:
+                        detail(f"{name}: {status_text} ({message_text})")
+                    else:
+                        detail(f"{name}: {status_text}")
+                    last_states[name] = state
+                if not summary.get("finished"):
+                    continue
+                pending.remove(name)
+                if summary.get("succeeded"):
+                    success(f"{name} succeeded")
+                    continue
+                warning(f"{name} failed")
+                failures.append(name)
+            if pending:
+                time.sleep(5)
     finally:
         if setup_hoisted:
             step(f"Tearing down hoisted {plans[0].deployment.platform} platform setup")

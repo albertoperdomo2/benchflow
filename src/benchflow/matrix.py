@@ -25,6 +25,8 @@ from .models import (
 )
 from .plans import resolve_run_plan
 
+MATRIX_CHILD_INDEX_LABEL = "benchflow.io/matrix-child-index"
+
 
 def profile_matrix_axes(
     experiment: Experiment,
@@ -129,8 +131,21 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
         repo_refs,
     ) = _override_axes(experiment)
     expanded: list[Experiment] = []
+    combinations = list(
+        product(
+            model_names,
+            deployment_profiles,
+            benchmark_profiles,
+            metrics_profiles,
+            runtime_images,
+            scheduler_images,
+            replicas_values,
+            tensor_parallelism_values,
+            repo_refs,
+        )
+    )
 
-    for (
+    for index, (
         model_name,
         deployment_profile,
         benchmark_profile,
@@ -140,24 +155,17 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
         replicas,
         tensor_parallelism,
         repo_ref,
-    ) in product(
-        model_names,
-        deployment_profiles,
-        benchmark_profiles,
-        metrics_profiles,
-        runtime_images,
-        scheduler_images,
-        replicas_values,
-        tensor_parallelism_values,
-        repo_refs,
-    ):
+    ) in enumerate(combinations, start=1):
+        labels = dict(experiment.metadata.labels)
+        if len(combinations) > 1:
+            labels[MATRIX_CHILD_INDEX_LABEL] = str(index)
         expanded.append(
             Experiment(
                 api_version=experiment.api_version,
                 kind=experiment.kind,
                 metadata=Metadata(
                     name=experiment.metadata.name,
-                    labels=dict(experiment.metadata.labels),
+                    labels=labels,
                 ),
                 spec=ExperimentSpec(
                     model=ModelSpec(name=model_name),
