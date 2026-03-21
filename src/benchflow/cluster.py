@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 
+TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION = "benchflow.io/host-aliases"
+
+
 class CommandError(RuntimeError):
     """Raised when a required external command fails."""
 
@@ -170,6 +173,43 @@ def create_manifest(manifest_yaml: str, namespace: str) -> dict[str, Any]:
         capture_output=True,
     )
     return json.loads(result.stdout)
+
+
+def load_target_kubeconfig_host_aliases(
+    namespace: str, secret_name: str
+) -> dict[str, str]:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    result = run_command(
+        [kubectl_cmd, "get", "secret", secret_name, "-n", namespace, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return {}
+    payload = json.loads(result.stdout or "{}")
+    raw = str(
+        payload.get("metadata", {})
+        .get("annotations", {})
+        .get(TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION, "")
+        or ""
+    ).strip()
+    if not raw:
+        return {}
+    try:
+        aliases = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CommandError(
+            f"target kubeconfig Secret {secret_name} in namespace {namespace} has invalid host alias metadata"
+        ) from exc
+    if not isinstance(aliases, dict):
+        raise CommandError(
+            f"target kubeconfig Secret {secret_name} in namespace {namespace} has invalid host alias metadata"
+        )
+    return {
+        str(hostname).strip(): str(ip_address).strip()
+        for hostname, ip_address in aliases.items()
+        if str(hostname).strip() and str(ip_address).strip()
+    }
 
 
 def get_current_namespace() -> str:

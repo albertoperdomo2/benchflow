@@ -133,9 +133,17 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
 
 def _target_cluster_from_dict(raw: dict[str, Any] | None) -> ClusterTargetSpec:
     raw = raw or {}
+    host_aliases_raw = raw.get("host_aliases") or {}
+    if not isinstance(host_aliases_raw, dict):
+        raise ValidationError("target_cluster.host_aliases must be a mapping")
     return ClusterTargetSpec(
         kubeconfig=str(raw.get("kubeconfig", "") or ""),
         kubeconfig_secret=str(raw.get("kubeconfig_secret", "") or ""),
+        host_aliases={
+            str(hostname).strip(): str(ip_address).strip()
+            for hostname, ip_address in host_aliases_raw.items()
+            if str(hostname).strip() and str(ip_address).strip()
+        },
     )
 
 

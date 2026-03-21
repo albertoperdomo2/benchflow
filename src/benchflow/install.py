@@ -12,7 +12,12 @@ from typing import Any
 import yaml
 
 from .assets import asset_text, render_yaml_documents
-from .cluster import CommandError, discover_repo_root, require_command
+from .cluster import (
+    CommandError,
+    TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION,
+    discover_repo_root,
+    require_command,
+)
 from .kueue import (
     DEFAULT_CONTROLLER_IMAGE,
     KUEUE_NAMESPACE,
@@ -428,6 +433,7 @@ class Installer:
         return {
             "BENCHFLOW_NAMESPACE": self.options.namespace,
             "BENCHFLOW_IMAGE": self.options.benchflow_image,
+            "BENCHFLOW_CONTROLLER_HOST_ALIASES": self._controller_host_aliases(),
             "GRAFANA_NAMESPACE": self.grafana_namespace,
             "GRAFANA_SERVICE_ACCOUNT": self.grafana_datasource_service_account,
             "GRAFANA_DATASOURCE_TOKEN_SECRET": self.grafana_datasource_token_secret,
@@ -435,6 +441,49 @@ class Installer:
             "NFD_NAMESPACE": self.nfd_namespace,
             "GPU_OPERATOR_NAMESPACE": self.gpu_operator_namespace,
         }
+
+    def _controller_host_aliases(self) -> list[dict[str, Any]]:
+        if not self._resource_exists("get", "namespace", self.options.namespace):
+            return []
+        try:
+            payload = self._oc_json(
+                "get",
+                "secrets",
+                "-n",
+                self.options.namespace,
+                "-l",
+                "benchflow.io/secret-kind=target-kubeconfig",
+                retry=True,
+                description="reading target kubeconfig Secrets",
+            )
+        except CommandError:
+            return []
+
+        by_ip: dict[str, set[str]] = {}
+        for item in payload.get("items", []) or []:
+            annotations = item.get("metadata", {}).get("annotations", {}) or {}
+            raw = str(
+                annotations.get(TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION, "") or ""
+            ).strip()
+            if not raw:
+                continue
+            try:
+                host_aliases = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(host_aliases, dict):
+                continue
+            for hostname, ip_address in host_aliases.items():
+                cleaned_hostname = str(hostname).strip()
+                cleaned_ip = str(ip_address).strip()
+                if not cleaned_hostname or not cleaned_ip:
+                    continue
+                by_ip.setdefault(cleaned_ip, set()).add(cleaned_hostname)
+
+        return [
+            {"ip": ip_address, "hostnames": sorted(hostnames)}
+            for ip_address, hostnames in sorted(by_ip.items())
+        ]
 
     def _wait_for_resource(
         self, *, resource: str, namespace: str | None, timeout_seconds: int, label: str

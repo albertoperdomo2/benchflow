@@ -161,6 +161,10 @@ bootstrap:
 - when `--cluster-name` is also set, BenchFlow also registers a Kueue queue for
   that target cluster in the management cluster, sized from the target
   cluster's discovered GPU capacity
+- if the target cluster API needs a static host entry, pass one or more
+  `--host-alias hostname=ip-address` values; BenchFlow stores them on the named
+  target-cluster Secret and injects them into management-cluster controller and
+  Tekton pods automatically
 
 If you are developing BenchFlow itself, pass `--benchflow-image ghcr.io/...`
 to `bflow bootstrap` so the management-cluster remote-capacity controller uses
@@ -202,6 +206,16 @@ bflow bootstrap \
   --cluster-name target-cluster
 ```
 
+If the target cluster API hostname is not resolvable from management-cluster
+pods, register a static host entry once during bootstrap:
+
+```bash
+bflow bootstrap \
+  --target-kubeconfig ~/.kube/target-cluster \
+  --cluster-name target-cluster \
+  --host-alias api.target.example.com=192.0.2.10
+```
+
 3. Launch the experiment from the management cluster:
 
 ```bash
@@ -217,6 +231,7 @@ yourself:
 bflow target kubeconfig-secret create \
   --name target-cluster \
   --kubeconfig ~/.kube/target-cluster \
+  --host-alias api.target.example.com=192.0.2.10 \
   --namespace benchflow
 ```
 

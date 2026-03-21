@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import os
 import re
@@ -14,6 +15,7 @@ from ..benchmark import (
     benchmark_version_from_plan,
 )
 from ..cluster import (
+    TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION,
     get_current_namespace,
     require_any_command,
     run_command,
@@ -119,12 +121,34 @@ def _normalize_cluster_name(cluster_name: str) -> str:
     return normalized
 
 
+def _parse_host_aliases(values: tuple[str, ...] | list[str] | None) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for raw in values or ():
+        item = str(raw).strip()
+        if not item:
+            continue
+        hostname, separator, ip_address = item.partition("=")
+        hostname = hostname.strip()
+        ip_address = ip_address.strip()
+        if not separator or not hostname or not ip_address:
+            raise ValidationError("host alias must be in the form hostname=ip-address")
+        try:
+            ipaddress.ip_address(ip_address)
+        except ValueError as exc:
+            raise ValidationError(
+                f"invalid IP address for host alias {hostname!r}: {ip_address!r}"
+            ) from exc
+        aliases[hostname] = ip_address
+    return aliases
+
+
 def _apply_target_kubeconfig_secret(
     *,
     namespace: str,
     secret_name: str,
     kubeconfig_path: Path,
     cluster_name: str | None = None,
+    host_aliases: dict[str, str] | None = None,
 ) -> None:
     kubectl_cmd = require_any_command("oc", "kubectl")
     labels = {
@@ -151,6 +175,15 @@ def _apply_target_kubeconfig_secret(
             "name": secret_name,
             "namespace": namespace,
             "labels": labels,
+            "annotations": (
+                {
+                    TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION: json.dumps(
+                        host_aliases or {}, separators=(",", ":"), sort_keys=True
+                    )
+                }
+                if host_aliases
+                else {}
+            ),
         },
         "type": "Opaque",
         "data": {
@@ -172,6 +205,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     target_kubeconfig = (
         str(Path(args.target_kubeconfig).resolve()) if args.target_kubeconfig else None
     )
+    host_aliases = _parse_host_aliases(getattr(args, "host_alias", None))
     single_cluster = bool(args.single_cluster)
     cluster_name = (
         _normalize_cluster_name(args.cluster_name) if args.cluster_name else None
@@ -188,12 +222,17 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         raise ValidationError(
             "--cluster-name requires --target-kubeconfig during bootstrap"
         )
+    if host_aliases and not (target_kubeconfig and cluster_name):
+        raise ValidationError(
+            "--host-alias requires --target-kubeconfig together with --cluster-name"
+        )
     if target_kubeconfig and cluster_name:
         _apply_target_kubeconfig_secret(
             namespace=namespace,
             secret_name=cluster_name,
             kubeconfig_path=Path(target_kubeconfig),
             cluster_name=cluster_name,
+            host_aliases=host_aliases,
         )
     remote_target = bool(target_kubeconfig)
     install_tekton = (
@@ -266,6 +305,7 @@ def cmd_target_kubeconfig_secret_create(args: argparse.Namespace) -> int:
 
     secret_name = str(args.name).strip()
     key_name = str(args.key or "kubeconfig").strip()
+    host_aliases = _parse_host_aliases(getattr(args, "host_alias", None))
     if not secret_name:
         raise ValidationError("secret name must not be empty")
     if not key_name:
@@ -282,6 +322,15 @@ def cmd_target_kubeconfig_secret_create(args: argparse.Namespace) -> int:
                     "app.kubernetes.io/name": "benchflow",
                     "benchflow.io/secret-kind": "target-kubeconfig",
                 },
+                "annotations": (
+                    {
+                        TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION: json.dumps(
+                            host_aliases, separators=(",", ":"), sort_keys=True
+                        )
+                    }
+                    if host_aliases
+                    else {}
+                ),
             },
             "type": "Opaque",
             "data": {
@@ -297,6 +346,7 @@ def cmd_target_kubeconfig_secret_create(args: argparse.Namespace) -> int:
             namespace=namespace,
             secret_name=secret_name,
             kubeconfig_path=kubeconfig_path,
+            host_aliases=host_aliases,
         )
     print(secret_name)
     return 0
@@ -885,6 +935,14 @@ def cmd_task_remote_capacity_controller(args: argparse.Namespace) -> int:
     ),
 )
 @click.option(
+    "--host-alias",
+    multiple=True,
+    help=(
+        "Optional management-cluster host alias for this target cluster, in the form "
+        "hostname=ip-address. Repeat for multiple entries."
+    ),
+)
+@click.option(
     "--benchflow-image",
     default=DEFAULT_CONTROLLER_IMAGE,
     show_default=True,
@@ -960,6 +1018,14 @@ def target_kubeconfig_secret_group() -> None:
     default="kubeconfig",
     show_default=True,
     help="Secret data key that stores the kubeconfig content.",
+)
+@click.option(
+    "--host-alias",
+    multiple=True,
+    help=(
+        "Optional management-cluster host alias for this target cluster, in the form "
+        "hostname=ip-address. Repeat for multiple entries."
+    ),
 )
 def target_kubeconfig_secret_create_command(**kwargs: object) -> int:
     return invoke_handler(cmd_target_kubeconfig_secret_create, **kwargs)

@@ -43,6 +43,20 @@ def _serialized_run_plan(plan: ResolvedRunPlan) -> str:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
+def _pod_host_aliases(host_aliases: dict[str, str]) -> list[dict[str, Any]]:
+    by_ip: dict[str, list[str]] = {}
+    for hostname, ip_address in sorted(host_aliases.items()):
+        cleaned_hostname = str(hostname).strip()
+        cleaned_ip = str(ip_address).strip()
+        if not cleaned_hostname or not cleaned_ip:
+            continue
+        by_ip.setdefault(cleaned_ip, []).append(cleaned_hostname)
+    return [
+        {"ip": ip_address, "hostnames": hostnames}
+        for ip_address, hostnames in by_ip.items()
+    ]
+
+
 def _parse_duration_seconds(value: str) -> int:
     cleaned = str(value).strip().lower()
     if not cleaned:
@@ -129,6 +143,10 @@ def render_pipelinerun(
             "name": "target-kubeconfig",
             "secret": {"secretName": plan.target_cluster.kubeconfig_secret},
         }
+    task_run_template: dict[str, Any] = {"serviceAccountName": plan.service_account}
+    host_aliases = _pod_host_aliases(plan.target_cluster.host_aliases)
+    if host_aliases:
+        task_run_template["podTemplate"] = {"hostAliases": host_aliases}
     return {
         "apiVersion": "tekton.dev/v1",
         "kind": "PipelineRun",
@@ -143,7 +161,7 @@ def render_pipelinerun(
         },
         "spec": {
             "pipelineRef": {"name": pipeline_name},
-            "taskRunTemplate": {"serviceAccountName": plan.service_account},
+            "taskRunTemplate": task_run_template,
             "ttlSecondsAfterFinished": plan.ttl_seconds_after_finished,
             "timeouts": {"pipeline": plan.execution.timeout},
             "params": [
@@ -211,6 +229,12 @@ def render_matrix_pipelinerun(
             "name": "target-kubeconfig",
             "secret": {"secretName": kubeconfig_secret},
         }
+    task_run_template: dict[str, Any] = {
+        "serviceAccountName": next(iter(service_accounts))
+    }
+    host_aliases = _pod_host_aliases(first_plan.target_cluster.host_aliases)
+    if host_aliases:
+        task_run_template["podTemplate"] = {"hostAliases": host_aliases}
 
     return {
         "apiVersion": "tekton.dev/v1",
@@ -228,7 +252,7 @@ def render_matrix_pipelinerun(
         },
         "spec": {
             "pipelineRef": {"name": pipeline_name},
-            "taskRunTemplate": {"serviceAccountName": next(iter(service_accounts))},
+            "taskRunTemplate": task_run_template,
             "ttlSecondsAfterFinished": next(iter(ttl_values)),
             "timeouts": {"pipeline": _matrix_timeout(plans)},
             "params": [

@@ -141,6 +141,7 @@ class ExecutionSpec:
 class ClusterTargetSpec:
     kubeconfig: str = ""
     kubeconfig_secret: str = ""
+    host_aliases: dict[str, str] = field(default_factory=dict)
 
     def enabled(self) -> bool:
         return bool(self.kubeconfig or self.kubeconfig_secret)

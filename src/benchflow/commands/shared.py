@@ -8,7 +8,7 @@ from typing import Callable
 import click
 import yaml
 
-from ..cluster import discover_repo_root
+from ..cluster import discover_repo_root, load_target_kubeconfig_host_aliases
 from ..orchestration import load_run_plan_from_sources
 from ..loaders import (
     ProfileCatalog,
@@ -230,6 +230,23 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
         if not target_kubeconfig_secret:
             raise ValidationError("cluster name must not be empty")
 
+    namespace = getattr(args, "namespace", None) or base_experiment.spec.namespace
+    resolved_target_kubeconfig = (
+        target_kubeconfig
+        if target_kubeconfig is not None
+        else base_experiment.spec.target_cluster.kubeconfig
+    )
+    resolved_target_kubeconfig_secret = (
+        str(target_kubeconfig_secret)
+        if target_kubeconfig_secret is not None
+        else base_experiment.spec.target_cluster.kubeconfig_secret
+    )
+    target_host_aliases = dict(base_experiment.spec.target_cluster.host_aliases)
+    if resolved_target_kubeconfig_secret:
+        target_host_aliases = load_target_kubeconfig_host_aliases(
+            namespace, resolved_target_kubeconfig_secret
+        )
+
     overrides = OverrideSpec(
         images=OverrideImagesSpec(
             runtime=(
@@ -290,8 +307,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             deployment_profile=deployment_profile,
             benchmark_profile=benchmark_profile,
             metrics_profile=metrics_profile,
-            namespace=getattr(args, "namespace", None)
-            or base_experiment.spec.namespace,
+            namespace=namespace,
             service_account=getattr(args, "service_account", None)
             or base_experiment.spec.service_account,
             ttl_seconds_after_finished=(
@@ -313,16 +329,9 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 ),
             ),
             target_cluster=ClusterTargetSpec(
-                kubeconfig=(
-                    target_kubeconfig
-                    if target_kubeconfig is not None
-                    else base_experiment.spec.target_cluster.kubeconfig
-                ),
-                kubeconfig_secret=(
-                    str(target_kubeconfig_secret)
-                    if target_kubeconfig_secret is not None
-                    else base_experiment.spec.target_cluster.kubeconfig_secret
-                ),
+                kubeconfig=resolved_target_kubeconfig,
+                kubeconfig_secret=resolved_target_kubeconfig_secret,
+                host_aliases=target_host_aliases,
             ),
             overrides=overrides,
         ),

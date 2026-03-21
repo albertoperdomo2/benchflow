@@ -192,6 +192,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                     target_cluster=ClusterTargetSpec(
                         kubeconfig=experiment.spec.target_cluster.kubeconfig,
                         kubeconfig_secret=experiment.spec.target_cluster.kubeconfig_secret,
+                        host_aliases=dict(experiment.spec.target_cluster.host_aliases),
                     ),
                     overrides=OverrideSpec(
                         images=OverrideImagesSpec(
