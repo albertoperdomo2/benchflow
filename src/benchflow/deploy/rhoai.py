@@ -149,9 +149,7 @@ def _verify_public_route_auth(plan: ResolvedRunPlan, timeout_seconds: int) -> No
 
         anonymous, accepted, enforced = snapshot
         if anonymous and accepted and enforced:
-            success(
-                f"RHOAI route AuthPolicy {authpolicy_name} allows anonymous access"
-            )
+            success(f"RHOAI route AuthPolicy {authpolicy_name} allows anonymous access")
             return
         time.sleep(5)
 
@@ -199,7 +197,9 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
         if ready and url:
             success(f"RHOAI deployment {release_name} is ready and published at {url}")
             if _auth_disabled(plan):
-                _verify_public_route_auth(plan, timeout_seconds=min(timeout_seconds, 300))
+                _verify_public_route_auth(
+                    plan, timeout_seconds=min(timeout_seconds, 300)
+                )
             return
         time.sleep(10)
 
