@@ -364,7 +364,9 @@ Override semantics:
 - benchmark `requirements` can raise the effective deployment runtime settings for a given child `RunPlan`
 - today `requirements.min_max_model_len` raises the effective `--max-model-len` for that resolved run when the benchmark needs a larger context window than the deployment default
 - list-valued `model.name`, profile refs, and override axes produce a cartesian-product matrix
-- matrix children are submitted as independent child executions; Kueue can admit them in parallel when target-cluster GPU capacity allows it
+- matrix children are submitted as independent child executions
+- `rhoai` child executions can be admitted in parallel when target-cluster GPU capacity allows it
+- `llm-d` child executions are submitted sequentially because the upstream GAIE deployment still creates shared namespaced resources that collide across parallel child deployments
 
 Target-cluster semantics:
 
@@ -627,7 +629,8 @@ Current behavior:
 - each combination becomes one normal child `RunPlan`
 - each child `RunPlan` becomes one normal child execution
 - `bflow experiment run` submits one supervisor execution
-- the supervisor runs the child combinations sequentially in the cluster
+- `rhoai` child executions are submitted together and Kueue can admit them in parallel
+- `llm-d` child executions are submitted sequentially to avoid upstream GAIE resource-name collisions during parallel deployment
 - each child benchmark still creates its own MLflow run
 - if every child combination uses `llm-d` and keeps cleanup enabled, the
   supervisor sets up llm-d once and tears it down once at the end

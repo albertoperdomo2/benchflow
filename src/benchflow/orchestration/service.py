@@ -335,6 +335,7 @@ def run_matrix_supervisor(
     setup_state_dir: tempfile.TemporaryDirectory[str] | None = None
     setup_state_path: Path | None = None
     submitted: dict[str, str] = {}
+    submit_children_in_parallel = False
 
     matrix_platform = (
         plans[0].deployment.platform
@@ -354,32 +355,19 @@ def run_matrix_supervisor(
             plans[0],
             context=ExecutionContext(state_path=setup_state_path),
         )
+    submit_children_in_parallel = matrix_platform == "rhoai"
 
-    try:
-        for index, plan in enumerate(plans, start=1):
-            descriptor = (
-                f"deployment={plan.profiles.deployment}, "
-                f"benchmark={plan.profiles.benchmark}, "
-                f"metrics={plan.profiles.metrics}"
-            )
-            step(f"[{index}/{total}] Submitting child execution")
-            detail(descriptor)
-            manifest = render_execution_manifest(
-                plan,
-                execution_name=child_execution_name,
-                setup_mode="skip" if setup_hoisted else "auto",
-                teardown=False if setup_hoisted else True,
-                skip_kueue_reservation=False,
-                benchflow_image=benchflow_image,
-            )
-            name = submit_execution_manifest(manifest, plan.deployment.namespace)
-            submitted[name] = descriptor
-            detail(f"Queued execution {name} in namespace {plan.deployment.namespace}")
-
-        if submitted:
-            step(f"Watching {len(submitted)} child execution(s)")
+    def wait_for_children(child_names: list[str]) -> None:
+        if not child_names:
+            return
+        step_label = (
+            f"Watching {len(child_names)} child execution(s)"
+            if len(child_names) > 1
+            else f"Watching child execution {child_names[0]}"
+        )
+        step(step_label)
         last_states: dict[str, tuple[str, bool, str]] = {}
-        pending = set(submitted)
+        pending = set(child_names)
         while pending:
             for name in list(pending):
                 summary = summarize_execution(plans[0].deployment.namespace, name)
@@ -406,6 +394,32 @@ def run_matrix_supervisor(
                 failures.append(name)
             if pending:
                 time.sleep(5)
+
+    try:
+        for index, plan in enumerate(plans, start=1):
+            descriptor = (
+                f"deployment={plan.profiles.deployment}, "
+                f"benchmark={plan.profiles.benchmark}, "
+                f"metrics={plan.profiles.metrics}"
+            )
+            step(f"[{index}/{total}] Submitting child execution")
+            detail(descriptor)
+            manifest = render_execution_manifest(
+                plan,
+                execution_name=child_execution_name,
+                setup_mode="skip" if setup_hoisted else "auto",
+                teardown=False if setup_hoisted else True,
+                skip_kueue_reservation=False,
+                benchflow_image=benchflow_image,
+            )
+            name = submit_execution_manifest(manifest, plan.deployment.namespace)
+            submitted[name] = descriptor
+            detail(f"Queued execution {name} in namespace {plan.deployment.namespace}")
+            if not submit_children_in_parallel:
+                wait_for_children([name])
+
+        if submit_children_in_parallel:
+            wait_for_children(list(submitted))
     finally:
         if setup_hoisted:
             step(f"Tearing down hoisted {plans[0].deployment.platform} platform setup")
