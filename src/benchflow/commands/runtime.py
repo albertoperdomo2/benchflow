@@ -1342,6 +1342,8 @@ def benchmark_group() -> None:
 )
 @click.option(
     "--mlflow-tracking-uri",
+    default=lambda: os.environ.get("MLFLOW_TRACKING_URI"),
+    show_default="env MLFLOW_TRACKING_URI",
     help="Override the MLflow tracking URI for the benchmark run.",
 )
 @click.option(
@@ -1406,6 +1408,8 @@ def benchmark_run_command(**kwargs: object) -> int:
 )
 @click.option(
     "--mlflow-tracking-uri",
+    default=lambda: os.environ.get("MLFLOW_TRACKING_URI"),
+    show_default="env MLFLOW_TRACKING_URI",
     help="MLflow tracking URI for report enrichment.",
 )
 @click.option(

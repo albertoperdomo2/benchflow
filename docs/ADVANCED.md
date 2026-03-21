@@ -4,6 +4,23 @@ This document is the full operational guide for BenchFlow as it exists today.
 The implemented execution paths are `llm-d` and `rhoai`. `rhaiis` remains future
 work and should be treated as an unsupported placeholder.
 
+## Table of Contents
+
+- [Mental Model](#mental-model)
+- [Bootstrap](#bootstrap)
+- [Cluster Topologies](#cluster-topologies)
+- [Profiles](#profiles)
+- [Experiments](#experiments)
+- [Direct CLI Experiments](#direct-cli-experiments)
+- [RunPlan Workflow](#runplan-workflow)
+- [Matrix Experiments](#matrix-experiments)
+- [Dynamic MLflow Defaults](#dynamic-mlflow-defaults)
+- [Runtime Commands](#runtime-commands)
+- [Monitoring and Results](#monitoring-and-results)
+- [Comparison Reports](#comparison-reports)
+- [Current Assumptions](#current-assumptions)
+- [Troubleshooting](#troubleshooting)
+
 ## Mental Model
 
 BenchFlow has two public configuration layers.
@@ -719,6 +736,115 @@ Today the live path is:
 
 The archive dashboard and Infinity datasource were intentionally removed. The
 current supported Grafana path is the live Prometheus-backed dashboard only.
+
+## Comparison Reports
+
+Use `bflow benchmark report` to generate a comparison report from existing
+MLflow runs.
+
+You can either pass `--mlflow-tracking-uri` explicitly or let BenchFlow and the
+MLflow client read the standard environment variables:
+
+```bash
+export MLFLOW_TRACKING_URI=https://mlflow.example.com
+export MLFLOW_TRACKING_USERNAME=my-user
+export MLFLOW_TRACKING_PASSWORD=my-password
+export MLFLOW_TRACKING_INSECURE_TLS=true
+```
+
+With those environment variables set, you can omit `--mlflow-tracking-uri`:
+
+```bash
+bflow benchmark report \
+  --mlflow-run-ids 3f0c1f...,91ab22...,c72de9...
+```
+
+Minimal MLflow comparison:
+
+```bash
+bflow benchmark report \
+  --mlflow-run-ids 3f0c1f...,91ab22...,c72de9... \
+  --mlflow-tracking-uri https://mlflow.example.com
+```
+
+This path:
+
+- fetches the referenced MLflow runs
+- downloads their benchmark artifacts
+- validates that the runs can be compared together
+- generates one HTML comparison report
+- prints the final report path to stdout
+
+Filter to a subset of versions:
+
+```bash
+bflow benchmark report \
+  --mlflow-run-ids 3f0c1f...,91ab22...,c72de9... \
+  --mlflow-tracking-uri https://mlflow.example.com \
+  --versions llm-d-v0.4.0,RHOAI-3.3
+```
+
+`--versions` filters the compared runs by base version labels. This is useful
+when the same MLflow experiment contains multiple product versions and you only
+want a specific subset in the final report.
+
+Rename versions in the report:
+
+```bash
+bflow benchmark report \
+  --mlflow-run-ids 3f0c1f...,91ab22...,c72de9... \
+  --mlflow-tracking-uri https://mlflow.example.com \
+  --version-override llm-d-v0.4.0=llm-d-0.4 \
+  --version-override RHOAI-3.3=rhoai-33
+```
+
+`--version-override` is applied after the runs are fetched and filtered. Repeat
+it to rename multiple version labels in the generated charts.
+
+Include extra CSV data in the same report:
+
+```bash
+bflow benchmark report \
+  --mlflow-run-ids 3f0c1f...,91ab22... \
+  --mlflow-tracking-uri https://mlflow.example.com \
+  --additional-csv ./local-baseline.csv \
+  --additional-csv ./historical.csv
+```
+
+BenchFlow merges the MLflow runs with the additional CSV inputs and generates a
+single combined comparison report.
+
+Write the report under a specific directory:
+
+```bash
+bflow benchmark report \
+  --mlflow-run-ids 3f0c1f...,91ab22... \
+  --mlflow-tracking-uri https://mlflow.example.com \
+  --output-dir ./reports
+```
+
+Useful notes:
+
+- `--mlflow-run-ids` is the key input for MLflow-backed comparison reports
+- `--mlflow-tracking-uri` should point to the MLflow server that owns those run IDs
+- if `--mlflow-tracking-uri` is omitted, BenchFlow falls back to `MLFLOW_TRACKING_URI`
+- MLflow authentication can come from `MLFLOW_TRACKING_USERNAME` and `MLFLOW_TRACKING_PASSWORD`
+- set `MLFLOW_TRACKING_INSECURE_TLS=true` when you need MLflow access without TLS verification
+- `--versions` narrows the compared version set
+- `--version-override` renames version labels in the final report
+- `--additional-csv` lets you mix MLflow runs with local CSV inputs
+- the command prints the resulting HTML report path when it succeeds
+
+Typical workflow:
+
+```bash
+bflow benchmark report \
+  --mlflow-run-ids RUN_ID_1,RUN_ID_2,RUN_ID_3 \
+  --mlflow-tracking-uri https://mlflow.example.com \
+  --versions llm-d-v0.4.0,RHOAI-3.3 \
+  --version-override llm-d-v0.4.0=llm-d-0.4 \
+  --output-dir ./reports
+```
 
 ## Current Assumptions
 
