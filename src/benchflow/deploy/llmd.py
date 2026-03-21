@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import tempfile
@@ -24,6 +25,15 @@ from ..ui import detail, step, success
 def _release_exists(namespace: str, release_name: str) -> bool:
     helm_json = run_json_command(["helm", "list", "-n", namespace, "-o", "json"])
     return any(entry.get("name") == f"ms-{release_name}" for entry in helm_json)
+
+
+def _gaie_service_account_name(release_name: str) -> str:
+    return f"gaie-{release_name}-epp"
+
+
+def _gaie_rbac_name(release_name: str) -> str:
+    suffix = hashlib.sha1(release_name.encode("utf-8")).hexdigest()[:10]
+    return f"benchflow-gaie-epp-rbac-{suffix}"
 
 
 def _environment_name(plan: ResolvedRunPlan) -> str:
@@ -263,6 +273,70 @@ def _create_httproute(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
     )
 
 
+def _ensure_gaie_rbac(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    namespace = plan.deployment.namespace
+    release_name = plan.deployment.release_name
+    resource_name = _gaie_rbac_name(release_name)
+    service_account_name = _gaie_service_account_name(release_name)
+    document = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "Role",
+        "metadata": {
+            "name": resource_name,
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                "benchflow.io/platform": "llm-d",
+                "benchflow.io/release": release_name,
+                "benchflow.io/managed-by": "benchflow",
+            },
+        },
+        "rules": [
+            {
+                "apiGroups": ["inference.networking.x-k8s.io"],
+                "resources": ["inferencemodelrewrites"],
+                "verbs": ["get", "list", "watch"],
+            }
+        ],
+    }
+    binding = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {
+            "name": resource_name,
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                "benchflow.io/platform": "llm-d",
+                "benchflow.io/release": release_name,
+                "benchflow.io/managed-by": "benchflow",
+            },
+        },
+        "subjects": [
+            {
+                "kind": "ServiceAccount",
+                "name": service_account_name,
+                "namespace": namespace,
+            }
+        ],
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": resource_name,
+        },
+    }
+    step(f"Applying supplemental GAIE RBAC for {service_account_name}")
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text="---\n".join(
+            [
+                yaml.safe_dump(document, sort_keys=False),
+                yaml.safe_dump(binding, sort_keys=False),
+            ]
+        ),
+    )
+
+
 def _pods_ready(
     namespace: str, selector: str, kubectl_cmd: str
 ) -> tuple[bool, int, int]:
@@ -380,6 +454,7 @@ def deploy_llmd(
     if skip_if_exists and _release_exists(
         plan.deployment.namespace, plan.deployment.release_name
     ):
+        _ensure_gaie_rbac(plan, kubectl_cmd)
         success(
             f"Skipping deploy; Helm release ms-{plan.deployment.release_name} already exists"
         )
@@ -460,6 +535,7 @@ def deploy_llmd(
         cwd=guide_dir,
         env=env,
     )
+    _ensure_gaie_rbac(plan, kubectl_cmd)
     step(f"Applying HTTPRoute llm-d-{plan.deployment.release_name}")
     _create_httproute(plan, kubectl_cmd)
     success(

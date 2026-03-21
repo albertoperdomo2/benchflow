@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 
 from ..cluster import (
@@ -15,6 +16,11 @@ from ..models import ResolvedRunPlan
 def _release_names(plan: ResolvedRunPlan) -> list[str]:
     release = plan.deployment.release_name
     return [f"ms-{release}", f"gaie-{release}", f"infra-{release}"]
+
+
+def _gaie_rbac_name(release_name: str) -> str:
+    suffix = hashlib.sha1(release_name.encode("utf-8")).hexdigest()[:10]
+    return f"benchflow-gaie-epp-rbac-{suffix}"
 
 
 def cleanup_llmd(
@@ -45,6 +51,29 @@ def cleanup_llmd(
             "delete",
             "httproute",
             f"llm-d-{plan.deployment.release_name}",
+            "-n",
+            namespace,
+            "--ignore-not-found=true",
+        ],
+    )
+    resource_name = _gaie_rbac_name(plan.deployment.release_name)
+    run_command(
+        [
+            kubectl_cmd,
+            "delete",
+            "rolebinding",
+            resource_name,
+            "-n",
+            namespace,
+            "--ignore-not-found=true",
+        ],
+    )
+    run_command(
+        [
+            kubectl_cmd,
+            "delete",
+            "role",
+            resource_name,
             "-n",
             namespace,
             "--ignore-not-found=true",
