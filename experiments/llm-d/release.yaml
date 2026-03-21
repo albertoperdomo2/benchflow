@@ -1,15 +1,15 @@
 apiVersion: benchflow.io/v1alpha1
 kind: Experiment
 metadata:
-  name: rhoai-release
+  name: llm-d-release
 spec:
   model:
     name:
       - RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic
       - openai/gpt-oss-120b
   deployment_profile:
-    - rhoai-kserve
-    - rhoai-precise-prefix-cache
+    - llm-d-inference-scheduling
+    - llm-d-precise-prefix-cache
   benchmark_profile:
     - guidellm-concurrent-1k-1k
     - guidellm-concurrent-heavy-heterogeneous
