@@ -49,6 +49,118 @@ def _status_snapshot(payload: dict[str, object]) -> tuple[bool, str, str]:
     return ready, url, reason
 
 
+def _auth_disabled(plan: ResolvedRunPlan) -> bool:
+    return not bool(plan.deployment.options.get("enable_auth", False))
+
+
+def _route_authpolicy_name(release_name: str) -> str:
+    return f"{release_name}-kserve-route-authn"
+
+
+def _route_authpolicy_snapshot(payload: dict[str, object]) -> tuple[bool, bool, bool]:
+    spec = payload.get("spec", {})
+    status = payload.get("status", {})
+    anonymous = False
+    accepted = False
+    enforced = False
+
+    if isinstance(spec, dict):
+        rules = spec.get("rules", {})
+        if isinstance(rules, dict):
+            authentication = rules.get("authentication", {})
+            if isinstance(authentication, dict):
+                for rule in authentication.values():
+                    if not isinstance(rule, dict):
+                        continue
+                    if "anonymous" in rule:
+                        anonymous = True
+                        break
+
+    if isinstance(status, dict):
+        conditions = status.get("conditions") or []
+        if isinstance(conditions, list):
+            for condition in conditions:
+                if not isinstance(condition, dict):
+                    continue
+                condition_type = str(condition.get("type") or "")
+                condition_status = str(condition.get("status") or "").lower() == "true"
+                if condition_type == "Accepted":
+                    accepted = condition_status
+                elif condition_type == "Enforced":
+                    enforced = condition_status
+
+    return anonymous, accepted, enforced
+
+
+def _verify_public_route_auth(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    namespace = plan.deployment.namespace
+    authpolicy_name = _route_authpolicy_name(plan.deployment.release_name)
+    deadline = time.time() + timeout_seconds
+    last_snapshot: tuple[bool, bool, bool] | None = None
+
+    step(
+        f"Waiting for RHOAI route AuthPolicy {authpolicy_name} "
+        f"in namespace {namespace} to allow anonymous access"
+    )
+
+    while time.time() < deadline:
+        result = run_command(
+            [
+                kubectl_cmd,
+                "get",
+                "authpolicy",
+                authpolicy_name,
+                "-n",
+                namespace,
+                "-o",
+                "json",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail(f"AuthPolicy {authpolicy_name} not published yet")
+            time.sleep(5)
+            continue
+
+        payload = run_json_command(
+            [
+                kubectl_cmd,
+                "get",
+                "authpolicy",
+                authpolicy_name,
+                "-n",
+                namespace,
+                "-o",
+                "json",
+            ]
+        )
+        snapshot = _route_authpolicy_snapshot(payload)
+        if snapshot != last_snapshot:
+            anonymous, accepted, enforced = snapshot
+            detail(
+                "Anonymous auth: "
+                f"{'yes' if anonymous else 'no'}, "
+                f"accepted: {'yes' if accepted else 'no'}, "
+                f"enforced: {'yes' if enforced else 'no'}"
+            )
+            last_snapshot = snapshot
+
+        anonymous, accepted, enforced = snapshot
+        if anonymous and accepted and enforced:
+            success(
+                f"RHOAI route AuthPolicy {authpolicy_name} allows anonymous access"
+            )
+            return
+        time.sleep(5)
+
+    raise CommandError(
+        "timed out waiting for the RHOAI route AuthPolicy to allow anonymous access: "
+        f"{authpolicy_name}"
+    )
+
+
 def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
@@ -86,6 +198,8 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
         ready, url, _ = snapshot
         if ready and url:
             success(f"RHOAI deployment {release_name} is ready and published at {url}")
+            if _auth_disabled(plan):
+                _verify_public_route_auth(plan, timeout_seconds=min(timeout_seconds, 300))
             return
         time.sleep(10)
 
