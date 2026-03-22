@@ -17,7 +17,7 @@ rules:
     verbs: ["get", "patch", "update"]
   - apiGroups: ["kueue.x-k8s.io"]
     resources: ["workloads"]
-    verbs: ["get", "list", "watch", "delete"]
+    verbs: ["get", "list", "watch", "patch", "delete"]
   - apiGroups: ["kueue.x-k8s.io"]
     resources: ["workloads/status"]
     verbs: ["get", "patch", "update"]
