@@ -39,6 +39,8 @@ TARGET_KUBECONFIG_SECRET_LABEL = "benchflow.io/target-kubeconfig-secret"
 EXECUTION_NAME_LABEL = "benchflow.io/execution-name"
 SUBMISSION_CONFIGMAP_LABEL = "benchflow.io/submission-configmap"
 SUBMISSION_MANIFEST_KEY = "manifest.json"
+READY_REQUEUE_ANNOTATION = "benchflow.io/ready-requeue-at"
+READY_REQUEUE_COOLDOWN_SECONDS = 60
 
 
 def _now_rfc3339() -> str:
@@ -48,6 +50,18 @@ def _now_rfc3339() -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+def _parse_rfc3339(value: str) -> datetime | None:
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+    try:
+        if cleaned.endswith("Z"):
+            cleaned = cleaned[:-1] + "+00:00"
+        return datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
 
 
 def _duration_seconds(value: str) -> int:
@@ -872,6 +886,71 @@ def _patch_workload_check(
     )
 
 
+def _patch_workload_active(namespace: str, workload_name: str, *, active: bool) -> None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    run_command(
+        [
+            kubectl_cmd,
+            "patch",
+            "workload",
+            workload_name,
+            "-n",
+            namespace,
+            "--type",
+            "merge",
+            "-p",
+            json.dumps({"spec": {"active": active}}),
+        ]
+    )
+
+
+def _patch_workload_annotations(
+    namespace: str,
+    workload_name: str,
+    annotations: dict[str, str],
+) -> None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    run_command(
+        [
+            kubectl_cmd,
+            "patch",
+            "workload",
+            workload_name,
+            "-n",
+            namespace,
+            "--type",
+            "merge",
+            "-p",
+            json.dumps({"metadata": {"annotations": annotations}}),
+        ]
+    )
+
+
+def _requeue_ready_workload(namespace: str, workload: dict[str, Any]) -> None:
+    metadata = workload.get("metadata", {}) or {}
+    workload_name = str(metadata.get("name") or "")
+    if not workload_name:
+        return
+    annotations = metadata.get("annotations", {}) or {}
+    last_requeue_at = _parse_rfc3339(
+        str(annotations.get(READY_REQUEUE_ANNOTATION) or "")
+    )
+    if last_requeue_at is not None:
+        elapsed = (
+            datetime.now(timezone.utc) - last_requeue_at.astimezone(timezone.utc)
+        ).total_seconds()
+        if elapsed < READY_REQUEUE_COOLDOWN_SECONDS:
+            return
+    _patch_workload_active(namespace, workload_name, active=False)
+    _patch_workload_active(namespace, workload_name, active=True)
+    _patch_workload_annotations(
+        namespace,
+        workload_name,
+        {READY_REQUEUE_ANNOTATION: _now_rfc3339()},
+    )
+    detail(f"Requeued ready reservation workload {workload_name}")
+
+
 def _kubeconfig_path_for_secret(namespace: str, secret_name: str) -> Path:
     kubectl_cmd = require_any_command("oc", "kubectl")
     secret = run_json_command(
@@ -964,6 +1043,7 @@ def run_remote_capacity_controller(
                             f"for a {requested}-GPU workload"
                         ),
                     )
+                    _requeue_ready_workload(namespace, workload)
                     continue
                 _patch_workload_check(
                     namespace,
