@@ -65,6 +65,54 @@ def _parse_request_data(requests_data: Any) -> Dict[str, int]:
     return {"prompt_tokens": prompt_tokens, "output_tokens": output_tokens}
 
 
+def _extract_intended_concurrency(
+    benchmark_run: Dict[str, Any], benchmark_index: int
+) -> Any:
+    """Extract intended concurrency across old and new GuideLLM schemas."""
+    streams_value = _get_nested(benchmark_run, "scheduler", "strategy", "streams")
+    if streams_value is not None:
+        return streams_value
+
+    profile_args = _get_nested(benchmark_run, "config", "profile") or _get_nested(
+        benchmark_run, "args", "profile", default={}
+    )
+    streams = profile_args.get("streams", [])
+    if benchmark_index < len(streams):
+        return streams[benchmark_index]
+    return streams[0] if streams else None
+
+
+def _extract_ttft_sample(request_stats: Dict[str, Any]) -> float | None:
+    value = request_stats.get("time_to_first_token_ms")
+    if value is not None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    request_start = _get_nested(request_stats, "info", "timings", "request_start")
+    if request_start is None:
+        request_start = _get_nested(request_stats, "info", "timings", "resolve_start")
+    first_token = request_stats.get("first_token_iteration")
+    if first_token is None or request_start is None:
+        return None
+
+    try:
+        return 1000.0 * (float(first_token) - float(request_start))
+    except (TypeError, ValueError):
+        return None
+
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    color = hex_color.lstrip("#")
+    if len(color) != 6:
+        return hex_color
+    red = int(color[0:2], 16)
+    green = int(color[2:4], 16)
+    blue = int(color[4:6], 16)
+    return f"rgba({red}, {green}, {blue}, {alpha})"
+
+
 class BenchmarkProcessor:
     """
     Main class for processing benchmark JSON files and generating reports.
@@ -159,6 +207,7 @@ class BenchmarkProcessor:
         self.new_data_df: Optional[pd.DataFrame] = None
         self.combined_df: Optional[pd.DataFrame] = None
         self.config: Optional[Dict[str, Any]] = None
+        self.ttft_distribution_df: Optional[pd.DataFrame] = None
 
     def download_s3_csv(self) -> pd.DataFrame:
         """
@@ -285,29 +334,14 @@ class BenchmarkProcessor:
             config_prompt_tokens = token_info["prompt_tokens"]
             config_output_tokens = token_info["output_tokens"]
 
-        # Try multiple locations for concurrency/streams info
-        # 1. New format: scheduler.strategy.streams (single value for multiturn mode)
-        streams_value = _get_nested(benchmark_run, "scheduler", "strategy", "streams")
-
-        if streams_value is not None:
-            # Single value (multiturn mode - each file has one benchmark at one concurrency)
-            intended_concurrency = streams_value
-        else:
-            # 2. Old format: config.profile.streams or args.profile.streams (array)
-            profile_args = _get_nested(
-                benchmark_run, "config", "profile"
-            ) or _get_nested(benchmark_run, "args", "profile", default={})
-            streams = profile_args.get("streams", [])
-
-            if benchmark_index < len(streams):
-                intended_concurrency = streams[benchmark_index]
-            else:
-                intended_concurrency = streams[0] if streams else None
+        intended_concurrency = _extract_intended_concurrency(
+            benchmark_run, benchmark_index
+        )
 
         metrics = benchmark_run.get("metrics", {})
-        successful_metrics = lambda *keys: _get_nested(
-            metrics, *keys, "successful", default={}
-        )
+
+        def successful_metrics(*keys: str) -> Dict[str, Any]:
+            return _get_nested(metrics, *keys, "successful", default={})
 
         measured_concurrency = successful_metrics("request_concurrency").get("mean")
         measured_rps = successful_metrics("requests_per_second").get("mean")
@@ -438,6 +472,60 @@ class BenchmarkProcessor:
         df = pd.DataFrame(all_run_data)
         logger.info(f"Extracted {len(df)} rows from JSON")
         return df
+
+    def parse_ttft_distribution_json(self) -> pd.DataFrame:
+        """
+        Parse request-level TTFT samples from GuideLLM JSON.
+
+        Returns:
+            DataFrame containing TTFT samples grouped by intended concurrency
+        """
+        logger.info(f"Extracting TTFT distribution samples from {self.json_path}")
+
+        try:
+            with open(self.json_path) as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"JSON file not found at {self.json_path}")
+        except json.JSONDecodeError:
+            raise ValueError(f"Could not decode JSON from {self.json_path}")
+
+        benchmarks = data.get("benchmarks") or []
+        if not benchmarks:
+            return pd.DataFrame()
+
+        rows: list[dict[str, Any]] = []
+        for benchmark_index, benchmark_run in enumerate(benchmarks):
+            intended_concurrency = _extract_intended_concurrency(
+                benchmark_run, benchmark_index
+            )
+            successful_requests = _get_nested(
+                benchmark_run, "requests", "successful", default=[]
+            )
+            if not isinstance(successful_requests, list):
+                continue
+
+            for request_stats in successful_requests:
+                if not isinstance(request_stats, dict):
+                    continue
+                ttft_ms = _extract_ttft_sample(request_stats)
+                if ttft_ms is None:
+                    continue
+                rows.append(
+                    {
+                        "accelerator": self.accelerator,
+                        "model": self.model_name,
+                        "version": self.version,
+                        "TP": self.tp_size,
+                        "replicas": self.replicas,
+                        "intended concurrency": intended_concurrency,
+                        "ttft_ms": ttft_ms,
+                    }
+                )
+
+        distribution_df = pd.DataFrame(rows)
+        logger.info(f"Extracted {len(distribution_df)} TTFT request samples from JSON")
+        return distribution_df
 
     def merge_data(self) -> pd.DataFrame:
         """
@@ -841,55 +929,78 @@ class BenchmarkProcessor:
         colors = self.config["styling"]["colors"]
         markers = self.config["styling"]["markers"]
 
-        # Define grid layout: 6 rows × 3 columns
-        # Row 1: Throughput (spans 3 columns)
-        # Row 2-3: TTFT (5 plots split: 3 + 2)
-        # Row 4: TPOT (3 plots)
-        # Row 5: ITL (3 plots)
-        # Row 6: E2E Latency (3 plots)
+        has_ttft_distribution = (
+            self.ttft_distribution_df is not None
+            and not self.ttft_distribution_df.empty
+        )
 
-        specs = [
-            [{"colspan": 3}, None, None],  # Row 1: Throughput spans 3 columns
-            [{}, {}, {}],  # Row 2: TTFT P1, P50, P90
-            [{}, {}, None],  # Row 3: TTFT P99, Spread, empty
-            [{}, {}, {}],  # Row 4: TPOT P50, P90, P99
-            [{}, {}, {}],  # Row 5: ITL P50, P90, P99
-            [{}, {}, {}],  # Row 6: E2E Latency P50, P90, P99
-        ]
-
-        # Build subplot titles - one per actual subplot (15 total, skipping None specs)
-        # Titles are assigned in order to non-None spec cells
-        subplot_titles = [
-            # Row 1: Throughput (1 subplot)
-            "<b>Throughput</b><br><sub>Higher is better</sub>",
-            # Row 2: TTFT P1, P50, P90 (3 subplots)
-            "<b>TTFT P1</b><br><sub>Lower is better</sub>",
-            "<b>TTFT P50</b><br><sub>Lower is better</sub>",
-            "<b>TTFT P90</b><br><sub>Lower is better</sub>",
-            # Row 3: TTFT P99, Spread (2 subplots, 3rd cell is None)
-            "<b>TTFT P99</b><br><sub>Lower is better</sub>",
-            "<b>TTFT Spread</b><br><sub>Lower is better</sub>",
-            # Row 4: TPOT P50, P90, P99 (3 subplots)
-            "<b>TPOT P50</b><br><sub>Lower is better</sub>",
-            "<b>TPOT P90</b><br><sub>Lower is better</sub>",
-            "<b>TPOT P99</b><br><sub>Lower is better</sub>",
-            # Row 5: ITL P50, P90, P99 (3 subplots)
-            "<b>ITL P50</b><br><sub>Lower is better</sub>",
-            "<b>ITL P90</b><br><sub>Lower is better</sub>",
-            "<b>ITL P99</b><br><sub>Lower is better</sub>",
-            # Row 6: E2E Latency P50, P90, P99 (3 subplots)
-            "<b>E2E Latency P50</b><br><sub>Lower is better</sub>",
-            "<b>E2E Latency P90</b><br><sub>Lower is better</sub>",
-            "<b>E2E Latency P99</b><br><sub>Lower is better</sub>",
-        ]  # Total: 15 titles for 15 actual subplots
+        if has_ttft_distribution:
+            specs = [
+                [{"colspan": 3}, None, None],
+                [{"colspan": 3}, None, None],
+                [{}, {}, {}],
+                [{}, {}, None],
+                [{}, {}, {}],
+                [{}, {}, {}],
+                [{}, {}, {}],
+            ]
+            subplot_titles = [
+                "<b>Throughput</b><br><sub>Higher is better</sub>",
+                "<b>TTFT Distribution by Concurrency</b><br><sub>Lower is better</sub>",
+                "<b>TTFT P1</b><br><sub>Lower is better</sub>",
+                "<b>TTFT P50</b><br><sub>Lower is better</sub>",
+                "<b>TTFT P90</b><br><sub>Lower is better</sub>",
+                "<b>TTFT P99</b><br><sub>Lower is better</sub>",
+                "<b>TTFT Spread</b><br><sub>Lower is better</sub>",
+                "<b>TPOT P50</b><br><sub>Lower is better</sub>",
+                "<b>TPOT P90</b><br><sub>Lower is better</sub>",
+                "<b>TPOT P99</b><br><sub>Lower is better</sub>",
+                "<b>ITL P50</b><br><sub>Lower is better</sub>",
+                "<b>ITL P90</b><br><sub>Lower is better</sub>",
+                "<b>ITL P99</b><br><sub>Lower is better</sub>",
+                "<b>E2E Latency P50</b><br><sub>Lower is better</sub>",
+                "<b>E2E Latency P90</b><br><sub>Lower is better</sub>",
+                "<b>E2E Latency P99</b><br><sub>Lower is better</sub>",
+            ]
+            total_rows = 7
+            row_heights = [1.0, 1.2, 1.0, 1.0, 1.0, 1.0, 1.0]
+        else:
+            specs = [
+                [{"colspan": 3}, None, None],
+                [{}, {}, {}],
+                [{}, {}, None],
+                [{}, {}, {}],
+                [{}, {}, {}],
+                [{}, {}, {}],
+            ]
+            subplot_titles = [
+                "<b>Throughput</b><br><sub>Higher is better</sub>",
+                "<b>TTFT P1</b><br><sub>Lower is better</sub>",
+                "<b>TTFT P50</b><br><sub>Lower is better</sub>",
+                "<b>TTFT P90</b><br><sub>Lower is better</sub>",
+                "<b>TTFT P99</b><br><sub>Lower is better</sub>",
+                "<b>TTFT Spread</b><br><sub>Lower is better</sub>",
+                "<b>TPOT P50</b><br><sub>Lower is better</sub>",
+                "<b>TPOT P90</b><br><sub>Lower is better</sub>",
+                "<b>TPOT P99</b><br><sub>Lower is better</sub>",
+                "<b>ITL P50</b><br><sub>Lower is better</sub>",
+                "<b>ITL P90</b><br><sub>Lower is better</sub>",
+                "<b>ITL P99</b><br><sub>Lower is better</sub>",
+                "<b>E2E Latency P50</b><br><sub>Lower is better</sub>",
+                "<b>E2E Latency P90</b><br><sub>Lower is better</sub>",
+                "<b>E2E Latency P99</b><br><sub>Lower is better</sub>",
+            ]
+            total_rows = 6
+            row_heights = None
 
         fig = make_subplots(
-            rows=6,
+            rows=total_rows,
             cols=3,
             specs=specs,
             subplot_titles=subplot_titles,
-            vertical_spacing=0.10,  # Slightly more spacing for section titles
+            vertical_spacing=0.10,
             horizontal_spacing=0.08,
+            row_heights=row_heights,
         )
 
         # Filter data for the model
@@ -915,30 +1026,42 @@ class BenchmarkProcessor:
 
         legend_entries = set()
 
-        # Define plot positions: (row, col, metric_key)
-        plot_positions = [
-            # Row 1: Throughput
-            (1, 1, "output_tok/sec", "Concurrency", "Output tok/s"),
-            # Row 2: TTFT P1, P50, P90
-            (2, 1, "ttft_p1", "Concurrency", "P1 (ms)"),
-            (2, 2, "ttft_median", "Concurrency", "P50 (ms)"),
-            (2, 3, "ttft_p90", "Concurrency", "P90 (ms)"),
-            # Row 3: TTFT P99, Spread
-            (3, 1, "ttft_p99", "Concurrency", "P99 (ms)"),
-            (3, 2, "ttft_p99_p50_ratio", "Concurrency", "P99/P50 Ratio"),
-            # Row 4: TPOT P50, P90, P99
-            (4, 1, "tpot_median", "Concurrency", "P50 (ms)"),
-            (4, 2, "tpot_p90", "Concurrency", "P90 (ms)"),
-            (4, 3, "tpot_p99", "Concurrency", "P99 (ms)"),
-            # Row 5: ITL P50, P90, P99
-            (5, 1, "itl_median", "Concurrency", "P50 (ms)"),
-            (5, 2, "itl_p90", "Concurrency", "P90 (ms)"),
-            (5, 3, "itl_p99", "Concurrency", "P99 (ms)"),
-            # Row 6: E2E Latency P50, P90, P99
-            (6, 1, "request_latency_median", "Concurrency", "P50 (s)"),
-            (6, 2, "request_latency_p90", "Concurrency", "P90 (s)"),
-            (6, 3, "request_latency_p99", "Concurrency", "P99 (s)"),
-        ]
+        if has_ttft_distribution:
+            plot_positions = [
+                (1, 1, "output_tok/sec", "Concurrency", "Output tok/s"),
+                (3, 1, "ttft_p1", "Concurrency", "P1 (ms)"),
+                (3, 2, "ttft_median", "Concurrency", "P50 (ms)"),
+                (3, 3, "ttft_p90", "Concurrency", "P90 (ms)"),
+                (4, 1, "ttft_p99", "Concurrency", "P99 (ms)"),
+                (4, 2, "ttft_p99_p50_ratio", "Concurrency", "P99/P50 Ratio"),
+                (5, 1, "tpot_median", "Concurrency", "P50 (ms)"),
+                (5, 2, "tpot_p90", "Concurrency", "P90 (ms)"),
+                (5, 3, "tpot_p99", "Concurrency", "P99 (ms)"),
+                (6, 1, "itl_median", "Concurrency", "P50 (ms)"),
+                (6, 2, "itl_p90", "Concurrency", "P90 (ms)"),
+                (6, 3, "itl_p99", "Concurrency", "P99 (ms)"),
+                (7, 1, "request_latency_median", "Concurrency", "P50 (s)"),
+                (7, 2, "request_latency_p90", "Concurrency", "P90 (s)"),
+                (7, 3, "request_latency_p99", "Concurrency", "P99 (s)"),
+            ]
+        else:
+            plot_positions = [
+                (1, 1, "output_tok/sec", "Concurrency", "Output tok/s"),
+                (2, 1, "ttft_p1", "Concurrency", "P1 (ms)"),
+                (2, 2, "ttft_median", "Concurrency", "P50 (ms)"),
+                (2, 3, "ttft_p90", "Concurrency", "P90 (ms)"),
+                (3, 1, "ttft_p99", "Concurrency", "P99 (ms)"),
+                (3, 2, "ttft_p99_p50_ratio", "Concurrency", "P99/P50 Ratio"),
+                (4, 1, "tpot_median", "Concurrency", "P50 (ms)"),
+                (4, 2, "tpot_p90", "Concurrency", "P90 (ms)"),
+                (4, 3, "tpot_p99", "Concurrency", "P99 (ms)"),
+                (5, 1, "itl_median", "Concurrency", "P50 (ms)"),
+                (5, 2, "itl_p90", "Concurrency", "P90 (ms)"),
+                (5, 3, "itl_p99", "Concurrency", "P99 (ms)"),
+                (6, 1, "request_latency_median", "Concurrency", "P50 (s)"),
+                (6, 2, "request_latency_p90", "Concurrency", "P90 (s)"),
+                (6, 3, "request_latency_p99", "Concurrency", "P99 (s)"),
+            ]
 
         # Plot each metric
         for row, col, metric_key, x_label, y_label in plot_positions:
@@ -977,24 +1100,80 @@ class BenchmarkProcessor:
                     col=col,
                 )
 
-        # Update axis labels for each subplot
-        axis_labels = [
-            (1, 1, "Concurrency", "Output tok/s"),  # Throughput
-            (2, 1, "Concurrency", "P1 (ms)"),  # TTFT P1
-            (2, 2, "Concurrency", "P50 (ms)"),  # TTFT P50
-            (2, 3, "Concurrency", "P90 (ms)"),  # TTFT P90
-            (3, 1, "Concurrency", "P99 (ms)"),  # TTFT P99
-            (3, 2, "Concurrency", "P99/P50 Ratio"),  # TTFT Spread
-            (4, 1, "Concurrency", "P50 (ms)"),  # TPOT P50
-            (4, 2, "Concurrency", "P90 (ms)"),  # TPOT P90
-            (4, 3, "Concurrency", "P99 (ms)"),  # TPOT P99
-            (5, 1, "Concurrency", "P50 (ms)"),  # ITL P50
-            (5, 2, "Concurrency", "P90 (ms)"),  # ITL P90
-            (5, 3, "Concurrency", "P99 (ms)"),  # ITL P99
-            (6, 1, "Concurrency", "P50 (s)"),  # E2E P50
-            (6, 2, "Concurrency", "P90 (s)"),  # E2E P90
-            (6, 3, "Concurrency", "P99 (s)"),  # E2E P99
-        ]
+        if has_ttft_distribution:
+            distribution_data = self.ttft_distribution_df.copy()
+            distribution_data["intended concurrency"] = distribution_data[
+                "intended concurrency"
+            ].astype(str)
+            for group_key, group_data in distribution_data.groupby(
+                ["accelerator", "version", "TP", "replicas"]
+            ):
+                accelerator, version, tp, replicas = group_key
+                label = f"{accelerator} | {version} | TP={int(tp)} | R={int(replicas)}"
+                color = config_to_color.get(label, colors[0])
+                show_legend = label not in legend_entries
+                if show_legend:
+                    legend_entries.add(label)
+                fig.add_trace(
+                    go.Box(
+                        x=group_data["intended concurrency"],
+                        y=group_data["ttft_ms"],
+                        name=label,
+                        legendgroup=label,
+                        showlegend=show_legend,
+                        line=dict(color=color, width=1.5),
+                        fillcolor=_hex_to_rgba(color, 0.12),
+                        marker=dict(
+                            color=_hex_to_rgba(color, 0.45),
+                            size=4,
+                            line=dict(width=0),
+                        ),
+                        boxpoints="all",
+                        pointpos=0,
+                        jitter=0.28,
+                        whiskerwidth=0.6,
+                    ),
+                    row=2,
+                    col=1,
+                )
+
+        if has_ttft_distribution:
+            axis_labels = [
+                (1, 1, "Concurrency", "Output tok/s"),
+                (2, 1, "Concurrency", "TTFT (ms)"),
+                (3, 1, "Concurrency", "P1 (ms)"),
+                (3, 2, "Concurrency", "P50 (ms)"),
+                (3, 3, "Concurrency", "P90 (ms)"),
+                (4, 1, "Concurrency", "P99 (ms)"),
+                (4, 2, "Concurrency", "P99/P50 Ratio"),
+                (5, 1, "Concurrency", "P50 (ms)"),
+                (5, 2, "Concurrency", "P90 (ms)"),
+                (5, 3, "Concurrency", "P99 (ms)"),
+                (6, 1, "Concurrency", "P50 (ms)"),
+                (6, 2, "Concurrency", "P90 (ms)"),
+                (6, 3, "Concurrency", "P99 (ms)"),
+                (7, 1, "Concurrency", "P50 (s)"),
+                (7, 2, "Concurrency", "P90 (s)"),
+                (7, 3, "Concurrency", "P99 (s)"),
+            ]
+        else:
+            axis_labels = [
+                (1, 1, "Concurrency", "Output tok/s"),
+                (2, 1, "Concurrency", "P1 (ms)"),
+                (2, 2, "Concurrency", "P50 (ms)"),
+                (2, 3, "Concurrency", "P90 (ms)"),
+                (3, 1, "Concurrency", "P99 (ms)"),
+                (3, 2, "Concurrency", "P99/P50 Ratio"),
+                (4, 1, "Concurrency", "P50 (ms)"),
+                (4, 2, "Concurrency", "P90 (ms)"),
+                (4, 3, "Concurrency", "P99 (ms)"),
+                (5, 1, "Concurrency", "P50 (ms)"),
+                (5, 2, "Concurrency", "P90 (ms)"),
+                (5, 3, "Concurrency", "P99 (ms)"),
+                (6, 1, "Concurrency", "P50 (s)"),
+                (6, 2, "Concurrency", "P90 (s)"),
+                (6, 3, "Concurrency", "P99 (s)"),
+            ]
 
         for row, col, x_label, y_label in axis_labels:
             fig.update_xaxes(title_text=x_label, row=row, col=col)
@@ -1002,7 +1181,7 @@ class BenchmarkProcessor:
 
         # Calculate dimensions
         plot_width = 450 * 3  # 3 columns × 450px each = 1350px
-        plot_height = 400 * 6  # 6 rows × 400px each = 2400px
+        plot_height = (400 * total_rows) + (120 if has_ttft_distribution else 0)
 
         model_short_name = model_config["model"].split("/")[-1]
         versions_str = ", ".join(self.compare_versions)
@@ -1057,63 +1236,112 @@ class BenchmarkProcessor:
                 "borderwidth": 1,
             },
             showlegend=True,
+            boxmode="group",
         )
 
         # Add centered section titles as separators between metric groups
-        annotations = [
-            # TTFT section title (in gap between row 1 and row 2)
-            dict(
-                text="<b>— Time To First Token (TTFT) —</b>",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.865,
-                xanchor="center",
-                yanchor="middle",
-                showarrow=False,
-                font=dict(size=12, color="#666"),
-                bgcolor="rgba(255,255,255,0.9)",
-            ),
-            # TPOT section title (in gap between row 3 and row 4)
-            dict(
-                text="<b>— Time Per Output Token (TPOT) —</b>",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.500,
-                xanchor="center",
-                yanchor="middle",
-                showarrow=False,
-                font=dict(size=12, color="#666"),
-                bgcolor="rgba(255,255,255,0.9)",
-            ),
-            # ITL section title (in gap between row 4 and row 5)
-            dict(
-                text="<b>— Inter-Token Latency (ITL) —</b>",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.315,
-                xanchor="center",
-                yanchor="middle",
-                showarrow=False,
-                font=dict(size=12, color="#666"),
-                bgcolor="rgba(255,255,255,0.9)",
-            ),
-            # E2E Latency section title (in gap between row 5 and row 6)
-            dict(
-                text="<b>— End-to-End Request Latency —</b>",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.130,
-                xanchor="center",
-                yanchor="middle",
-                showarrow=False,
-                font=dict(size=12, color="#666"),
-                bgcolor="rgba(255,255,255,0.9)",
-            ),
-        ]
+        if has_ttft_distribution:
+            annotations = [
+                dict(
+                    text="<b>— Time To First Token (TTFT) —</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.905,
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=12, color="#666"),
+                    bgcolor="rgba(255,255,255,0.9)",
+                ),
+                dict(
+                    text="<b>— Time Per Output Token (TPOT) —</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.455,
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=12, color="#666"),
+                    bgcolor="rgba(255,255,255,0.9)",
+                ),
+                dict(
+                    text="<b>— Inter-Token Latency (ITL) —</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.275,
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=12, color="#666"),
+                    bgcolor="rgba(255,255,255,0.9)",
+                ),
+                dict(
+                    text="<b>— End-to-End Request Latency —</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.095,
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=12, color="#666"),
+                    bgcolor="rgba(255,255,255,0.9)",
+                ),
+            ]
+        else:
+            annotations = [
+                dict(
+                    text="<b>— Time To First Token (TTFT) —</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.865,
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=12, color="#666"),
+                    bgcolor="rgba(255,255,255,0.9)",
+                ),
+                dict(
+                    text="<b>— Time Per Output Token (TPOT) —</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.500,
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=12, color="#666"),
+                    bgcolor="rgba(255,255,255,0.9)",
+                ),
+                dict(
+                    text="<b>— Inter-Token Latency (ITL) —</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.315,
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=12, color="#666"),
+                    bgcolor="rgba(255,255,255,0.9)",
+                ),
+                dict(
+                    text="<b>— End-to-End Request Latency —</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.130,
+                    xanchor="center",
+                    yanchor="middle",
+                    showarrow=False,
+                    font=dict(size=12, color="#666"),
+                    bgcolor="rgba(255,255,255,0.9)",
+                ),
+            ]
 
         fig.update_layout(annotations=list(fig.layout.annotations) + annotations)
 
@@ -1140,7 +1368,10 @@ class BenchmarkProcessor:
 
         fig.write_html(self.output_html)
         logger.info(f"Report saved to {self.output_html}")
-        logger.info(f"Report contains 6 rows × 3 columns with 15 total plots")
+        total_plots = 16 if has_ttft_distribution else 15
+        logger.info(
+            f"Report contains {total_rows} rows × 3 columns with {total_plots} total plots"
+        )
 
     def process(self) -> None:
         """
@@ -1157,6 +1388,7 @@ class BenchmarkProcessor:
 
         self.consolidated_df = self.download_s3_csv()
         self.new_data_df = self.parse_guidellm_json()
+        self.ttft_distribution_df = self.parse_ttft_distribution_json()
         self.combined_df = self.merge_data()
         self.config = self.load_config()
         self.generate_report()

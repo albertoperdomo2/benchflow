@@ -1334,6 +1334,7 @@ def generate_plot_only_report(
 
     # Process each run to get its CSV data
     all_run_dataframes = []
+    ttft_distribution_dfs = []
 
     for run_data in runs_data:
         run_id = run_data["run_id"]
@@ -1372,9 +1373,12 @@ def generate_plot_only_report(
 
         # Parse this run's JSON to DataFrame (replicas will be included via processor)
         run_df = processor.parse_guidellm_json()
+        ttft_distribution_df = processor.parse_ttft_distribution_json()
 
         # Mark MLflow data with source column for filtering logic
         run_df["_data_source"] = "mlflow"
+        if not ttft_distribution_df.empty:
+            ttft_distribution_dfs.append(ttft_distribution_df)
 
         logger.info(f"Extracted {len(run_df)} rows from run {run_id}")
 
@@ -1384,6 +1388,11 @@ def generate_plot_only_report(
     logger.info(f"Combining {len(all_run_dataframes)} DataFrames")
     combined_runs_df = pd.concat(all_run_dataframes, ignore_index=True)
     logger.info(f"Combined runs DataFrame has {len(combined_runs_df)} rows")
+    combined_ttft_distribution_df = (
+        pd.concat(ttft_distribution_dfs, ignore_index=True)
+        if ttft_distribution_dfs
+        else pd.DataFrame()
+    )
 
     # Use BenchmarkProcessor's merge_data logic to properly combine
     logger.info("Merging with consolidated CSV using processor's merge logic")
@@ -1429,6 +1438,13 @@ def generate_plot_only_report(
         )
         logger.info("  CSV data filtered with exact match")
         logger.info("  MLflow data filtered with prefix match")
+        if not combined_ttft_distribution_df.empty:
+            distribution_mask = combined_ttft_distribution_df["version"].apply(
+                lambda value: any(str(value).startswith(base_v) for base_v in versions)
+            )
+            combined_ttft_distribution_df = combined_ttft_distribution_df[
+                distribution_mask
+            ].copy()
 
     # Apply version overrides after filtering, before plotting
     if versions_override:
@@ -1441,6 +1457,10 @@ def generate_plot_only_report(
                 logger.info(f"  Renamed {count} rows: {old_ver} → {new_ver}")
             else:
                 logger.warning(f"  No rows found with version '{old_ver}' to rename")
+            if not combined_ttft_distribution_df.empty:
+                combined_ttft_distribution_df.loc[
+                    combined_ttft_distribution_df["version"] == old_ver, "version"
+                ] = new_ver
 
     # Remove the temporary source column before generating report
     if "_data_source" in final_df.columns:
@@ -1481,6 +1501,7 @@ def generate_plot_only_report(
 
     # Override with our merged and filtered data
     final_processor.combined_df = final_df
+    final_processor.ttft_distribution_df = combined_ttft_distribution_df
     final_processor.config = final_processor.load_config()
     final_processor.generate_report()
 
