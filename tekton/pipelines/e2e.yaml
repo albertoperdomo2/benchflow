@@ -120,8 +120,25 @@ spec:
         - name: target-kubeconfig
           workspace: target-kubeconfig
 
-    - name: benchmark
+    - name: verify-completions-endpoint
       runAfter: [wait-for-endpoint]
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: verify-completions-endpoint
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+      workspaces:
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
+
+    - name: benchmark
+      runAfter: [verify-completions-endpoint]
       onError: continue
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"

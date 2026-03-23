@@ -62,7 +62,7 @@ from ..toolbox import (
     upload_plan_results,
 )
 from ..ui import detail, warning
-from ..waiting import wait_for_endpoint
+from ..waiting import wait_for_completions, wait_for_endpoint
 from .shared import (
     invoke_handler,
     load_runtime_plan,
@@ -593,6 +593,53 @@ def cmd_wait_endpoint(args: argparse.Namespace) -> int:
     wait_for_endpoint(
         target_url=target_url,
         endpoint_path=endpoint_path or "/v1/models",
+        timeout_seconds=args.timeout_seconds,
+        retry_interval_seconds=args.retry_interval,
+        verify_tls=args.verify_tls,
+    )
+    print("ready")
+    return 0
+
+
+def cmd_wait_completions(args: argparse.Namespace) -> int:
+    plan = load_runtime_plan(args)
+    if plan.target_cluster.enabled():
+        remote_args = [
+            "wait",
+            "completions",
+            "--run-plan-json",
+            remote_run_plan_json(plan),
+            "--timeout-seconds",
+            str(args.timeout_seconds),
+            "--retry-interval",
+            str(args.retry_interval),
+        ]
+        if args.target_url:
+            remote_args.extend(["--target-url", args.target_url])
+        if args.endpoint_path:
+            remote_args.extend(["--endpoint-path", args.endpoint_path])
+        if args.verify_tls:
+            remote_args.append("--verify-tls")
+        run_remote_job(
+            plan,
+            job_kind="wait-completions",
+            args=remote_args,
+            timeout_seconds=max(args.timeout_seconds + 300, 900),
+        )
+        print("ready")
+        return 0
+
+    target_url = args.target_url
+    if not target_url:
+        target_url, _ = resolve_target_url(
+            plan,
+            target_url=args.target_url,
+            endpoint_path=args.endpoint_path,
+        )
+    wait_for_completions(
+        target_url=target_url,
+        model_name=plan.model.resolved_name(),
+        endpoint_path=args.endpoint_path or "/v1/completions",
         timeout_seconds=args.timeout_seconds,
         retry_interval_seconds=args.retry_interval,
         verify_tls=args.verify_tls,
@@ -1405,6 +1452,42 @@ def wait_group() -> None:
 )
 def wait_endpoint_command(**kwargs: object) -> int:
     return invoke_handler(cmd_wait_endpoint, **kwargs)
+
+
+@wait_group.command(
+    "completions",
+    help="Poll the resolved completions endpoint until it accepts a small request.",
+    short_help="Wait for completions to work",
+)
+@runtime_plan_source_options
+@click.option("--target-url", help="Override the target base URL to probe.")
+@click.option(
+    "--endpoint-path",
+    default="/v1/completions",
+    show_default=True,
+    help="Completions path to probe.",
+)
+@click.option(
+    "--timeout-seconds",
+    type=int,
+    default=600,
+    show_default=True,
+    help="Maximum time to wait for a successful completions response.",
+)
+@click.option(
+    "--retry-interval",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Seconds between probe attempts.",
+)
+@click.option(
+    "--verify-tls",
+    is_flag=True,
+    help="Verify TLS certificates when probing the endpoint.",
+)
+def wait_completions_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_wait_completions, **kwargs)
 
 
 @click.group(

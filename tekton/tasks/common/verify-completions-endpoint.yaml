@@ -1,0 +1,37 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: verify-completions-endpoint
+  labels:
+    app.kubernetes.io/version: "0.2"
+  annotations:
+    tekton.dev/displayName: "Verify Completions Endpoint"
+spec:
+  description: >-
+    Send a small OpenAI-compatible completions request to the resolved endpoint
+    and wait until it returns a successful response.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+    - name: RUN_PLAN
+      type: string
+  workspaces:
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
+  steps:
+    - name: verify-completions
+      image: $(params.IMAGE)
+      env:
+        - name: BENCHFLOW_REMOTE_IMAGE
+          value: $(params.IMAGE)
+        - name: BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE
+          value: $(workspaces.target-kubeconfig.path)
+      command:
+        - bflow
+      args:
+        - wait
+        - completions
+        - --run-plan-json
+        - $(params.RUN_PLAN)
