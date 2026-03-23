@@ -122,6 +122,7 @@ spec:
                 name: tokenizers
 {% endif %}
             resources: {}
+{% endif %}
   template:
     containers:
       - name: main
@@ -173,6 +174,5 @@ spec:
             value: {{ model_name | tojson }}
           - name: PYTHONHASHSEED
             value: "42"
-{% endif %}
 {% endif %}
 {% endif %}
