@@ -17,6 +17,7 @@ work and should be treated as an unsupported placeholder.
 - [Dynamic MLflow Defaults](#dynamic-mlflow-defaults)
 - [Runtime Commands](#runtime-commands)
 - [Monitoring and Results](#monitoring-and-results)
+- [Local Metrics Viewer](#local-metrics-viewer)
 - [Comparison Reports](#comparison-reports)
 - [Current Assumptions](#current-assumptions)
 - [Troubleshooting](#troubleshooting)
@@ -758,6 +759,52 @@ Today the live path is:
 
 The archive dashboard and Infinity datasource were intentionally removed. The
 current supported Grafana path is the live Prometheus-backed dashboard only.
+
+## Local Metrics Viewer
+
+Use `bflow metrics serve` to inspect the stored Prometheus metrics for one
+MLflow run locally in a Plotly-based dashboard that mirrors the live Grafana
+layout closely enough for interactive analysis.
+
+BenchFlow:
+
+- downloads the run's `metrics/` artifact tree from MLflow
+- caches downloaded run metrics under `/tmp/benchflow-metrics-viewer`
+- reuses the stored Prometheus query results instead of querying Prometheus again
+- renders a local single-run dashboard with interactive legends and zoom
+- serves it on `http://127.0.0.1:8765/`
+
+Minimal usage:
+
+```bash
+export MLFLOW_TRACKING_URI=https://mlflow.example.com
+export MLFLOW_TRACKING_USERNAME=my-user
+export MLFLOW_TRACKING_PASSWORD=my-password
+export MLFLOW_TRACKING_INSECURE_TLS=true
+
+bflow metrics serve --mlflow-run-id 3f0c1f...
+```
+
+Compare multiple runs:
+
+```bash
+bflow metrics serve \
+  --mlflow-run-id 3f0c1f... \
+  --mlflow-run-id 91ab22... \
+  --mlflow-run-id c72de9...
+```
+
+In compare mode, BenchFlow aligns the traces on relative benchmark time instead
+of wall-clock time so separate executions can be overlaid meaningfully.
+
+Notes:
+
+- the port is intentionally fixed to `8765`
+- the command does not open a browser automatically
+- press `Ctrl-C` to stop the local server
+- repeat `--mlflow-run-id` to compare multiple runs in one viewer
+- cached runs are reused from `/tmp/benchflow-metrics-viewer`
+- the run must already contain BenchFlow `metrics/` artifacts in MLflow
 
 ## Comparison Reports
 

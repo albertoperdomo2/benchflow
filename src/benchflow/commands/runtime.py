@@ -55,6 +55,7 @@ from ..toolbox import (
     resolve_run_plan_stages,
     resolve_target_url,
     run_plan_benchmark,
+    serve_metrics_dashboard,
     setup_platform,
     teardown_platform,
     upload_artifact_directory,
@@ -140,6 +141,18 @@ def _parse_host_aliases(values: tuple[str, ...] | list[str] | None) -> dict[str,
             ) from exc
         aliases[hostname] = ip_address
     return aliases
+
+
+def _parse_mlflow_run_ids(values: tuple[str, ...] | list[str] | None) -> list[str]:
+    parsed: list[str] = []
+    for raw in values or ():
+        for part in str(raw).split(","):
+            item = part.strip()
+            if item:
+                parsed.append(item)
+    if not parsed:
+        raise ValidationError("at least one --mlflow-run-id is required")
+    return parsed
 
 
 def _apply_target_kubeconfig_secret(
@@ -740,6 +753,14 @@ def cmd_metrics_collect(args: argparse.Namespace) -> int:
             cleanup_after_upload=bool(args.cleanup_after_upload),
         )
     print(metrics_dir)
+    return 0
+
+
+def cmd_metrics_serve(args: argparse.Namespace) -> int:
+    serve_metrics_dashboard(
+        mlflow_run_ids=_parse_mlflow_run_ids(args.mlflow_run_id),
+        mlflow_tracking_uri=args.mlflow_tracking_uri or "",
+    )
     return 0
 
 
@@ -1609,6 +1630,27 @@ def metrics_group() -> None:
 )
 def metrics_collect_command(**kwargs: object) -> int:
     return invoke_handler(cmd_metrics_collect, **kwargs)
+
+
+@metrics_group.command(
+    "serve",
+    help="Serve a local interactive metrics dashboard from one or more MLflow runs.",
+    short_help="Serve local metrics viewer",
+)
+@click.option(
+    "--mlflow-run-id",
+    multiple=True,
+    required=True,
+    help="MLflow run ID to inspect. Repeat to compare multiple runs.",
+)
+@click.option(
+    "--mlflow-tracking-uri",
+    default=lambda: os.environ.get("MLFLOW_TRACKING_URI"),
+    show_default="env MLFLOW_TRACKING_URI",
+    help="MLflow tracking URI that owns the run.",
+)
+def metrics_serve_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_metrics_serve, **kwargs)
 
 
 @click.group(
