@@ -14,6 +14,7 @@ import yaml
 from botocore.exceptions import ClientError
 from plotly.subplots import make_subplots
 
+from ...plotting import REPORT_COLOR_PALETTE
 from ...ui import configure_logging
 
 configure_logging("INFO")
@@ -840,20 +841,7 @@ class BenchmarkProcessor:
                 "versions": self.compare_versions,
             },
             "styling": {
-                "colors": [
-                    "#3274A1",
-                    "#E1812C",
-                    "#7CB57C",
-                    "#D95F5F",
-                    "#9E67AB",
-                    "#B8704F",
-                    "#E89CAE",
-                    "#7C7C7C",
-                    "#1F77B4",
-                    "#FF7F0E",
-                    "#2CA02C",
-                    "#D62728",
-                ],
+                "colors": list(REPORT_COLOR_PALETTE),
                 "markers": [
                     "circle",
                     "square",

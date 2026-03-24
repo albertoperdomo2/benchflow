@@ -18,6 +18,7 @@ from mlflow.store.artifact.artifact_repository_registry import get_artifact_repo
 from plotly.offline import get_plotlyjs
 
 from ..contracts import ValidationError
+from ..plotting import REPORT_COLOR_PALETTE
 from ..ui import detail, step, success
 
 DEFAULT_METRICS_VIEWER_PORT = 8765
@@ -32,18 +33,7 @@ _DASHBOARD_ASSET = (
     / "grafana"
     / "benchflow-live-dashboard.json"
 )
-_PALETTE = [
-    "#1f3b73",
-    "#d95f02",
-    "#1b9e77",
-    "#7570b3",
-    "#e7298a",
-    "#66a61e",
-    "#a6761d",
-    "#e6ab02",
-    "#1f78b4",
-    "#b15928",
-]
+_PALETTE = list(REPORT_COLOR_PALETTE)
 _METRICS_CACHE_FILES = (
     "archive_index.json",
     "metrics_summary.json",
