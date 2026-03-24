@@ -1018,9 +1018,9 @@ def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:
         mlflow_tracking_uri: MLflow tracking URI (optional)
 
     Returns:
-        List of dictionaries containing run metadata and benchmark data
-        Each dict includes a 'composed_version' field that appends the 'epp' tag
-        to the base version if present (e.g., llm-d-0.4-precise-prefix-caching)
+        List of dictionaries containing run metadata and benchmark data.
+        Each dict includes a 'composed_version' field that appends either the
+        'epp' tag or, if absent, the 'deployment_type' tag to the base version.
     """
     if mlflow_tracking_uri:
         mlflow.set_tracking_uri(mlflow_tracking_uri)
@@ -1035,18 +1035,26 @@ def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:
             params = run.data.params
             tags = run.data.tags
 
-            # Compose version with epp tag if present
+            # Compose version with epp tag first, then deployment_type.
             base_version = params.get("version", "unknown")
-            epp_tag = tags.get("epp")
+            version_suffix = (
+                tags.get("epp") or tags.get("deployment_type") or ""
+            ).strip()
 
-            if epp_tag:
-                composed_version = f"{base_version}-{epp_tag}"
+            if version_suffix:
+                composed_version = f"{base_version}-{version_suffix}"
                 logger.info(
-                    f"Composed version: {base_version} + epp={epp_tag} -> {composed_version}"
+                    "Composed version: %s + suffix=%s -> %s",
+                    base_version,
+                    version_suffix,
+                    composed_version,
                 )
             else:
                 composed_version = base_version
-                logger.info(f"No epp tag found, using base version: {composed_version}")
+                logger.info(
+                    "No epp or deployment_type tag found, using base version: %s",
+                    composed_version,
+                )
 
             # Check if cached version exists
             cache_dir = f"/tmp/mlflow/{run_id}/results"

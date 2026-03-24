@@ -1,4 +1,5 @@
 import ast
+import html
 import json
 import logging
 import os
@@ -111,6 +112,41 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     green = int(color[2:4], 16)
     blue = int(color[4:6], 16)
     return f"rgba({red}, {green}, {blue}, {alpha})"
+
+
+def _wrap_header_items(items: list[str], *, max_chars: int = 110) -> list[str]:
+    lines: list[str] = []
+    current: list[str] = []
+
+    for raw_item in items:
+        item = str(raw_item).strip()
+        if not item:
+            continue
+        candidate_parts = [*current, item]
+        candidate = " | ".join(candidate_parts)
+        if current and len(candidate) > max_chars:
+            lines.append(" | ".join(current))
+            current = [item]
+        else:
+            current = candidate_parts
+
+    if current:
+        lines.append(" | ".join(current))
+
+    return lines or ["unknown"]
+
+
+def _format_summary_values(values: list[Any]) -> str:
+    normalized = []
+    for value in values:
+        if isinstance(value, float) and value.is_integer():
+            normalized.append(str(int(value)))
+        else:
+            normalized.append(str(value))
+    cleaned = sorted({item.strip() for item in normalized if item and item.strip()})
+    if not cleaned:
+        return "unknown"
+    return cleaned[0] if len(cleaned) == 1 else ", ".join(cleaned)
 
 
 class BenchmarkProcessor:
@@ -963,7 +999,7 @@ class BenchmarkProcessor:
                 "<b>E2E Latency P99</b><br><sub>Lower is better</sub>",
             ]
             total_rows = 7
-            row_heights = [1.0, 1.2, 1.0, 1.0, 1.0, 1.0, 1.0]
+            row_heights = [1.2, 1.2, 1.0, 1.0, 1.0, 1.0, 1.0]
         else:
             specs = [
                 [{"colspan": 3}, None, None],
@@ -998,7 +1034,7 @@ class BenchmarkProcessor:
             cols=3,
             specs=specs,
             subplot_titles=subplot_titles,
-            vertical_spacing=0.10,
+            vertical_spacing=0.055,
             horizontal_spacing=0.08,
             row_heights=row_heights,
         )
@@ -1180,11 +1216,31 @@ class BenchmarkProcessor:
             fig.update_yaxes(title_text=y_label, row=row, col=col)
 
         # Calculate dimensions
-        plot_width = 450 * 3  # 3 columns × 450px each = 1350px
-        plot_height = (400 * total_rows) + (120 if has_ttft_distribution else 0)
+        plot_width = 480 * 3  # 3 columns × 480px each = 1440px
+        plot_height = (420 * total_rows) + (140 if has_ttft_distribution else 0)
 
         model_short_name = model_config["model"].split("/")[-1]
-        versions_str = ", ".join(self.compare_versions)
+
+        if not filtered_data.empty:
+            header_versions = (
+                filtered_data["version"]
+                .fillna("unknown")
+                .astype(str)
+                .drop_duplicates()
+                .tolist()
+            )
+            header_accelerator = _format_summary_values(
+                filtered_data["accelerator"].fillna("unknown").astype(str).tolist()
+            )
+            header_tp = _format_summary_values(filtered_data["TP"].tolist())
+            header_replicas = _format_summary_values(filtered_data["replicas"].tolist())
+        else:
+            header_versions = list(self.compare_versions)
+            header_accelerator = str(self.accelerator)
+            header_tp = str(self.tp_size)
+            header_replicas = str(self.replicas)
+
+        version_lines = _wrap_header_items(header_versions)
 
         # Build data profile subtitle
         data_profile_parts = []
@@ -1205,14 +1261,29 @@ class BenchmarkProcessor:
             else f"Input Tokens: {model_config['prompt_toks']} | Output Tokens: {model_config['output_toks']}"
         )
 
+        title_lines = [
+            f"<b>{html.escape(model_short_name)} Performance Report</b>",
+            (
+                "<span style='font-size:13px;'>"
+                f"Accelerator: {html.escape(header_accelerator)} | "
+                f"TP: {html.escape(header_tp)} | "
+                f"R: {html.escape(header_replicas)}"
+                "</span>"
+            ),
+        ]
+        for index, line in enumerate(version_lines):
+            label = "<b>Configurations:</b> " if index == 0 else ""
+            title_lines.append(
+                f"<span style='font-size:12px;'>{label}{html.escape(line)}</span>"
+            )
+        title_lines.append(
+            f"<span style='font-size:12px;'>{html.escape(data_profile_str)}</span>"
+        )
+        top_margin = 90 + (len(title_lines) * 24)
+
         fig.update_layout(
             title={
-                "text": (
-                    f"<b>{model_short_name} Performance Report</b><br>"
-                    f"<sub>Comparing versions: {versions_str} | "
-                    f"Accelerator: {self.accelerator} | TP: {self.tp_size}</sub><br>"
-                    f"<sub>{data_profile_str}</sub>"
-                ),
+                "text": "<br>".join(title_lines),
                 "x": 0.5,
                 "xanchor": "center",
                 "font": {"size": 18},
@@ -1224,7 +1295,7 @@ class BenchmarkProcessor:
             plot_bgcolor="white",
             paper_bgcolor="white",
             font={"family": "Arial, sans-serif", "size": 11},
-            margin=dict(t=150, l=80, r=250, b=50),
+            margin=dict(t=top_margin, l=80, r=250, b=50),
             legend={
                 "title": {"text": "<b>Configuration</b>"},
                 "orientation": "v",
@@ -1239,108 +1310,39 @@ class BenchmarkProcessor:
             boxmode="group",
         )
 
-        # Add centered section titles as separators between metric groups
+        def _section_divider_y(upper_row: int, lower_row: int) -> float:
+            upper_domain = fig.get_subplot(upper_row, 1).yaxis.domain
+            lower_domain = fig.get_subplot(lower_row, 1).yaxis.domain
+            return (upper_domain[0] + lower_domain[1]) / 2
+
+        def _section_divider(text: str, upper_row: int, lower_row: int) -> dict:
+            return dict(
+                text=text,
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=_section_divider_y(upper_row, lower_row),
+                xanchor="center",
+                yanchor="middle",
+                showarrow=False,
+                font=dict(size=12, color="#666"),
+                bgcolor="rgba(255,255,255,0.9)",
+            )
+
+        # Add centered section titles as separators between metric groups.
         if has_ttft_distribution:
             annotations = [
-                dict(
-                    text="<b>— Time To First Token (TTFT) —</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.905,
-                    xanchor="center",
-                    yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=12, color="#666"),
-                    bgcolor="rgba(255,255,255,0.9)",
-                ),
-                dict(
-                    text="<b>— Time Per Output Token (TPOT) —</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.455,
-                    xanchor="center",
-                    yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=12, color="#666"),
-                    bgcolor="rgba(255,255,255,0.9)",
-                ),
-                dict(
-                    text="<b>— Inter-Token Latency (ITL) —</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.275,
-                    xanchor="center",
-                    yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=12, color="#666"),
-                    bgcolor="rgba(255,255,255,0.9)",
-                ),
-                dict(
-                    text="<b>— End-to-End Request Latency —</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.095,
-                    xanchor="center",
-                    yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=12, color="#666"),
-                    bgcolor="rgba(255,255,255,0.9)",
-                ),
+                _section_divider("<b>— Time To First Token (TTFT) —</b>", 1, 2),
+                _section_divider("<b>— Time Per Output Token (TPOT) —</b>", 4, 5),
+                _section_divider("<b>— Inter-Token Latency (ITL) —</b>", 5, 6),
+                _section_divider("<b>— End-to-End Request Latency —</b>", 6, 7),
             ]
         else:
             annotations = [
-                dict(
-                    text="<b>— Time To First Token (TTFT) —</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.865,
-                    xanchor="center",
-                    yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=12, color="#666"),
-                    bgcolor="rgba(255,255,255,0.9)",
-                ),
-                dict(
-                    text="<b>— Time Per Output Token (TPOT) —</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.500,
-                    xanchor="center",
-                    yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=12, color="#666"),
-                    bgcolor="rgba(255,255,255,0.9)",
-                ),
-                dict(
-                    text="<b>— Inter-Token Latency (ITL) —</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.315,
-                    xanchor="center",
-                    yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=12, color="#666"),
-                    bgcolor="rgba(255,255,255,0.9)",
-                ),
-                dict(
-                    text="<b>— End-to-End Request Latency —</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.130,
-                    xanchor="center",
-                    yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=12, color="#666"),
-                    bgcolor="rgba(255,255,255,0.9)",
-                ),
+                _section_divider("<b>— Time To First Token (TTFT) —</b>", 1, 2),
+                _section_divider("<b>— Time Per Output Token (TPOT) —</b>", 3, 4),
+                _section_divider("<b>— Inter-Token Latency (ITL) —</b>", 4, 5),
+                _section_divider("<b>— End-to-End Request Latency —</b>", 5, 6),
             ]
 
         fig.update_layout(annotations=list(fig.layout.annotations) + annotations)
