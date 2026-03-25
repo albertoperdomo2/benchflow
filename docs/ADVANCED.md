@@ -423,10 +423,11 @@ metadata:
   name: smoke # no direct CLI override
 spec:
   tool: guidellm # implemented value today
-  backend_type: openai_http # no CLI override
+  backend_type: openai_http # no CLI override today
   rate_type: concurrent # no CLI override
   rates:
     - 1 # overridden by spec.overrides.benchmark.rates
+  request_type: "" # optional; if empty BenchFlow defers to GuideLLM's internal default
   data: prompt_tokens=1000,output_tokens=1000 # no CLI override today
   max_seconds: 600 # overridden by spec.overrides.benchmark.max_seconds
   max_requests: null # overridden by spec.overrides.benchmark.max_requests
@@ -447,6 +448,7 @@ spec:
       rates: [128]
       max_seconds: 180
       max_requests: 500
+      request_type: text_completions
 ```
 
 `data` is intentionally not overrideable. It is treated as part of what defines

@@ -292,6 +292,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             ),
             max_seconds=base_experiment.spec.overrides.benchmark.max_seconds,
             max_requests=base_experiment.spec.overrides.benchmark.max_requests,
+            request_type=base_experiment.spec.overrides.benchmark.request_type,
         ),
         llm_d=OverrideLlmdSpec(
             repo_ref=(

@@ -321,6 +321,7 @@ def run_guidellm_cli(
     model: str,
     rate: str,
     backend_type: str = "openai_http",
+    request_type: str | None = None,
     rate_type: str = "concurrent",
     data: str = None,
     max_seconds=None,
@@ -339,8 +340,6 @@ def run_guidellm_cli(
         model,
         "--backend-type",
         backend_type,
-        "--rate-type",
-        rate_type,
         "--rate",
         str(rate),
         "--output-dir",
@@ -349,6 +348,9 @@ def run_guidellm_cli(
         output_path_obj.name,
     ]
 
+    if request_type:
+        cmd.extend(["--request-type", request_type])
+    cmd.extend(["--rate-type", rate_type])
     cmd.extend(["--backend-args", '{"timeout": 600}'])
     if target.startswith("https://"):
         # cmd.extend(["--backend-kwargs", '{"verify": false}'])
@@ -489,6 +491,7 @@ def _run_and_process_benchmark(
     model: str,
     rate: str,
     backend_type: str,
+    request_type: str | None,
     rate_type: str,
     data: str,
     max_seconds,
@@ -510,6 +513,7 @@ def _run_and_process_benchmark(
         model=model,
         rate=rate,
         backend_type=backend_type,
+        request_type=request_type,
         rate_type=rate_type,
         data=data,
         max_seconds=max_seconds,
@@ -550,6 +554,7 @@ def run_benchmark_without_mlflow(
     model: str,
     rate: str,
     backend_type: str = "openai_http",
+    request_type: str | None = None,
     rate_type: str = "concurrent",
     data: str = None,
     max_seconds=None,
@@ -610,6 +615,7 @@ def run_benchmark_without_mlflow(
                 model=model,
                 rate=concurrency_str,
                 backend_type=backend_type,
+                request_type=request_type,
                 rate_type=rate_type,
                 data=parsed_data,
                 max_seconds=parsed_max_seconds,
@@ -649,6 +655,7 @@ def run_benchmark_without_mlflow(
         model=model,
         rate=rate,
         backend_type=backend_type,
+        request_type=request_type,
         rate_type=rate_type,
         data=data,
         max_seconds=max_seconds,
@@ -683,6 +690,7 @@ def run_benchmark_with_mlflow(
     model: str,
     rate: str,
     backend_type: str = "openai_http",
+    request_type: str | None = None,
     rate_type: str = "concurrent",
     data: str = None,
     max_seconds=None,
@@ -741,6 +749,8 @@ def run_benchmark_with_mlflow(
                 "decode_replicas": decode_replicas,
                 "multiturn_mode": multiturn_mode,
             }
+            if request_type:
+                params["request_type"] = request_type
             if data:
                 params.update(
                     {
@@ -835,6 +845,7 @@ def run_benchmark_with_mlflow(
                             model=model,
                             rate=concurrency_str,
                             backend_type=backend_type,
+                            request_type=request_type,
                             rate_type=rate_type,
                             data=parsed_data,
                             max_seconds=parsed_max_seconds,
@@ -938,6 +949,7 @@ def run_benchmark_with_mlflow(
                     model=model,
                     rate=rate,
                     backend_type=backend_type,
+                    request_type=request_type,
                     rate_type=rate_type,
                     data=data,
                     max_seconds=max_seconds,

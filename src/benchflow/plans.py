@@ -261,6 +261,8 @@ def resolve_run_plan(
         benchmark.max_seconds = overrides.benchmark.max_seconds
     if overrides.benchmark.max_requests is not None:
         benchmark.max_requests = overrides.benchmark.max_requests
+    if overrides.benchmark.request_type is not None:
+        benchmark.request_type = overrides.benchmark.request_type
 
     target = _target_for(
         platform=deployment_profile.spec.platform,

@@ -235,6 +235,7 @@ class OverrideBenchmarkSpec:
     rates: list[int] | None = None
     max_seconds: int | None = None
     max_requests: str | None = None
+    request_type: str | None = None
 
 
 @dataclass(slots=True)
@@ -330,6 +331,7 @@ class BenchmarkRequirementsSpec:
 class BenchmarkProfileSpec:
     tool: str = "guidellm"
     backend_type: str = "openai_http"
+    request_type: str = ""
     rate_type: str = "concurrent"
     rates: list[int] = field(default_factory=list)
     data: str = "prompt_tokens=1000,output_tokens=1000"

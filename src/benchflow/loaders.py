@@ -183,6 +183,10 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
                 benchmark.get("max_requests"),
                 "spec.overrides.benchmark.max_requests",
             ),
+            request_type=_nonempty_string(
+                benchmark.get("request_type"),
+                "spec.overrides.benchmark.request_type",
+            ),
         ),
         llm_d=OverrideLlmdSpec(
             repo_ref=_string_or_list(
@@ -347,6 +351,7 @@ def load_benchmark_profile(path: Path) -> BenchmarkProfile:
     profile_spec = BenchmarkProfileSpec(
         tool=str(spec.get("tool", "guidellm")),
         backend_type=str(spec.get("backend_type", "openai_http")),
+        request_type=str(spec.get("request_type", "") or "").strip(),
         rate_type=str(spec.get("rate_type", "concurrent")),
         rates=rates,
         data=str(spec.get("data", "prompt_tokens=1000,output_tokens=1000")),
@@ -446,6 +451,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
     benchmark = BenchmarkProfileSpec(
         tool=str(benchmark_raw.get("tool", "guidellm")),
         backend_type=str(benchmark_raw.get("backend_type", "openai_http")),
+        request_type=str(benchmark_raw.get("request_type", "") or "").strip(),
         rate_type=str(benchmark_raw.get("rate_type", "concurrent")),
         rates=[int(item) for item in (benchmark_raw.get("rates") or [])],
         data=str(benchmark_raw.get("data", "prompt_tokens=1000,output_tokens=1000")),
