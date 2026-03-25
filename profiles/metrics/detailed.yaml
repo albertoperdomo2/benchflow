@@ -44,6 +44,22 @@ spec:
     kv_cache_usage_percent: '{__name__=~"(vllm|kserve_vllm):kv_cache_usage_perc", namespace="$namespace", pod=~".*$release.*"}'
     prefix_cache_hit_rate: rate({__name__=~"(vllm|kserve_vllm):prefix_cache_hits_total", namespace="$namespace", pod=~".*$release.*"}[5m]) / clamp_min(rate({__name__=~"(vllm|kserve_vllm):prefix_cache_queries_total", namespace="$namespace", pod=~".*$release.*"}[5m]), 1)
     num_preemptions_rate: rate({__name__=~"(vllm|kserve_vllm):num_preemptions_total", namespace="$namespace", pod=~".*$release.*"}[5m])
+    scheduler_up: up{namespace="$namespace", pod=~".*$release.*router-scheduler.*", endpoint="metrics"}
+    scheduler_ready_pods: kserve_inference_pool_ready_pods{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}
+    scheduler_average_queue_size: kserve_inference_pool_average_queue_size{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}
+    scheduler_per_pod_queue_size: kserve_inference_pool_per_pod_queue_size{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}
+    scheduler_average_kv_cache_utilization: kserve_inference_pool_average_kv_cache_utilization{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}
+    scheduler_running_requests: kserve_inference_objective_running_requests{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}
+    scheduler_request_rate_per_second: rate(kserve_inference_objective_request_total{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}[5m])
+    scheduler_request_duration_p50_seconds: histogram_quantile(0.5, sum(rate(kserve_inference_objective_request_duration_seconds_bucket{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}[5m])) by (le))
+    scheduler_request_duration_p90_seconds: histogram_quantile(0.9, sum(rate(kserve_inference_objective_request_duration_seconds_bucket{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}[5m])) by (le))
+    scheduler_request_duration_p99_seconds: histogram_quantile(0.99, sum(rate(kserve_inference_objective_request_duration_seconds_bucket{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}[5m])) by (le))
+    scheduler_e2e_duration_p50_seconds: histogram_quantile(0.5, sum(rate(kserve_inference_extension_scheduler_e2e_duration_seconds_bucket{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}[5m])) by (le))
+    scheduler_e2e_duration_p90_seconds: histogram_quantile(0.9, sum(rate(kserve_inference_extension_scheduler_e2e_duration_seconds_bucket{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}[5m])) by (le))
+    scheduler_e2e_duration_p99_seconds: histogram_quantile(0.99, sum(rate(kserve_inference_extension_scheduler_e2e_duration_seconds_bucket{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}[5m])) by (le))
+    scheduler_plugin_duration_p50_seconds_by_plugin: histogram_quantile(0.5, sum(rate(kserve_inference_extension_plugin_duration_seconds_bucket{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}[5m])) by (le, plugin_name, extension_point))
+    scheduler_go_goroutines: kserve_go_goroutines{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}
+    scheduler_process_resident_memory_bytes: kserve_process_resident_memory_bytes{namespace="$namespace", pod=~".*$release.*router-scheduler.*"}
     gpu_utilization_by_pod: DCGM_FI_DEV_GPU_UTIL{exported_namespace="$namespace", exported_pod=~".*$release.*"}
     gpu_memory_used_by_pod: DCGM_FI_DEV_FB_USED{exported_namespace="$namespace", exported_pod=~".*$release.*"}
     gpu_memory_free_by_pod: DCGM_FI_DEV_FB_FREE{exported_namespace="$namespace", exported_pod=~".*$release.*"}
