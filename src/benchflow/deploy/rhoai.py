@@ -293,7 +293,7 @@ def deploy_rhoai(
             [kubectl_cmd, "apply", "-f", "-"],
             input_text=yaml.safe_dump(profiler_configmap, sort_keys=False),
         )
-    success(f"Applied profiler ConfigMap {configmap_name} in namespace {namespace}")
+        success(f"Applied profiler ConfigMap {configmap_name} in namespace {namespace}")
 
     step(
         f"Applying RHOAI {plan.deployment.mode} deployment {release_name} "
