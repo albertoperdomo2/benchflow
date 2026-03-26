@@ -1,5 +1,6 @@
-ARG GUIDELLM_VERSION=pr-590
-FROM ghcr.io/vllm-project/guidellm:${GUIDELLM_VERSION}
+# XXX: Temporary fix
+ARG GUIDELLM_VERSION=nightly
+FROM ghcr.io/albertoperdomo2/guidellm:${GUIDELLM_VERSION}
 
 ARG HELM_VERSION=v3.17.1
 ARG HELMFILE_VERSION=v0.171.0
@@ -8,7 +9,7 @@ ARG OPENSHIFT_CLIENT_VERSION=4.19.5
 ENV PYTHONUNBUFFERED=1
 
 # XXX: For GuideLLM correct version
-ENV GUIDELLM_VERSION=v0.5.4
+ENV GUIDELLM_VERSION=albertoperdomo2-nightly
 
 USER root
 
