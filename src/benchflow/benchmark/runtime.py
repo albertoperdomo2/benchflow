@@ -62,6 +62,46 @@ class BenchmarkExecutionError(RuntimeError):
         self.run_id = run_id
 
 
+def _stringify_data_profile_value(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(",", ":"))
+    return value
+
+
+def _parse_data_profile_config(data: str | None) -> dict[str, Any]:
+    if not data:
+        return {}
+
+    raw = str(data).strip()
+    if not raw:
+        return {}
+
+    try:
+        parsed_json = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed_json = None
+
+    if isinstance(parsed_json, dict):
+        parsed: dict[str, Any] = {}
+        for key, value in parsed_json.items():
+            clean_key = str(key).strip()
+            if not clean_key:
+                continue
+            parsed[clean_key] = _stringify_data_profile_value(value)
+        return parsed
+
+    parsed: dict[str, Any] = {}
+    for part in raw.split(","):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        clean_key = key.strip()
+        if not clean_key:
+            continue
+        parsed[clean_key] = value.strip()
+    return parsed
+
+
 def _list_run_artifacts_recursively(artifact_uri: str, root_path: str) -> list[str]:
     repo = get_artifact_repository(artifact_uri)
     pending = [root_path]
@@ -814,12 +854,7 @@ def run_benchmark_with_mlflow(
             if request_type:
                 params["request_type"] = request_type
             if data:
-                params.update(
-                    {
-                        d.split("=")[0].strip(): d.split("=")[1].strip()
-                        for d in data.split(",")
-                    }
-                )
+                params.update(_parse_data_profile_config(data))
             if max_seconds:
                 params["max_seconds"] = max_seconds
             if max_requests:

@@ -62,6 +62,7 @@ def _coerce_data_profile_value(raw: Any) -> Any:
 def _parse_request_profile(requests_data: Any) -> Dict[str, Any]:
     """Parse request data into a generic data-profile dictionary."""
     data_str = ""
+    parsed_dict: Dict[str, Any] = {}
 
     if isinstance(requests_data, str):
         # Try to evaluate as a Python literal first (handles "['...']" format)
@@ -71,11 +72,39 @@ def _parse_request_profile(requests_data: Any) -> Dict[str, Any]:
                 data_str = evaluated_data[0]
             elif isinstance(evaluated_data, str):
                 data_str = evaluated_data
+            elif isinstance(evaluated_data, dict):
+                parsed_dict = {
+                    str(key).strip(): _coerce_data_profile_value(value)
+                    for key, value in evaluated_data.items()
+                    if str(key).strip()
+                }
         except (ValueError, SyntaxError):
-            # If evaluation fails, use the string directly
-            data_str = requests_data
+            try:
+                decoded_json = json.loads(requests_data)
+            except json.JSONDecodeError:
+                data_str = requests_data
+            else:
+                if isinstance(decoded_json, dict):
+                    parsed_dict = {
+                        str(key).strip(): _coerce_data_profile_value(value)
+                        for key, value in decoded_json.items()
+                        if str(key).strip()
+                    }
+                elif isinstance(decoded_json, list) and decoded_json:
+                    data_str = str(decoded_json[0])
+                elif isinstance(decoded_json, str):
+                    data_str = decoded_json
     elif isinstance(requests_data, list) and requests_data:
         data_str = requests_data[0]
+    elif isinstance(requests_data, dict):
+        parsed_dict = {
+            str(key).strip(): _coerce_data_profile_value(value)
+            for key, value in requests_data.items()
+            if str(key).strip()
+        }
+
+    if parsed_dict:
+        return parsed_dict
 
     parsed: Dict[str, Any] = {}
     if not data_str:
