@@ -11,6 +11,44 @@ from .ui import detail, step, success
 RHOAI_PROFILER_OUTPUT_DIR = "/tmp/benchflow-profiler"
 
 
+def _release_token_matches(candidate: str, release_name: str) -> bool:
+    if candidate == release_name:
+        return True
+    for separator in ("-", ".", "/", "_"):
+        if candidate.startswith(f"{release_name}{separator}"):
+            return True
+        if candidate.endswith(f"{separator}{release_name}"):
+            return True
+        if f"{separator}{release_name}{separator}" in candidate:
+            return True
+    return False
+
+
+def _matches_release(metadata: dict[str, object], release_name: str) -> bool:
+    name = metadata.get("name")
+    if isinstance(name, str) and _release_token_matches(name, release_name):
+        return True
+
+    labels = metadata.get("labels")
+    if isinstance(labels, dict):
+        for value in labels.values():
+            if isinstance(value, str) and _release_token_matches(value, release_name):
+                return True
+
+    owner_references = metadata.get("ownerReferences")
+    if isinstance(owner_references, list):
+        for owner in owner_references:
+            if not isinstance(owner, dict):
+                continue
+            owner_name = owner.get("name")
+            if isinstance(owner_name, str) and _release_token_matches(
+                owner_name, release_name
+            ):
+                return True
+
+    return False
+
+
 def _pod_type(pod_name: str) -> str:
     lowered = pod_name.lower()
     if any(token in lowered for token in ("gaie", "scheduler", "epp", "kserve-router")):
@@ -188,6 +226,7 @@ def collect_artifacts(
     _ensure_artifact_layout(artifacts_dir)
 
     namespace = plan.deployment.namespace
+    release_name = plan.deployment.release_name
 
     execution_pod_count = 0
     execution_pods: list[str] = []
@@ -228,7 +267,12 @@ def collect_artifacts(
             [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"]
         )
         for item in payload.get("items", []):
-            pod_name = item.get("metadata", {}).get("name", "")
+            metadata = item.get("metadata", {})
+            if not isinstance(metadata, dict) or not _matches_release(
+                metadata, release_name
+            ):
+                continue
+            pod_name = metadata.get("name", "")
             if not pod_name or pod_name.endswith("-pod") or pod_name in execution_pods:
                 continue
             pod_type = _pod_type(pod_name)
@@ -302,7 +346,12 @@ def collect_artifacts(
             resource_dir = manifest_root / resource_type
             resource_dir.mkdir(parents=True, exist_ok=True)
             for item in items:
-                name = item.get("metadata", {}).get("name")
+                metadata = item.get("metadata", {})
+                if not isinstance(metadata, dict) or not _matches_release(
+                    metadata, release_name
+                ):
+                    continue
+                name = metadata.get("name")
                 if not name:
                     continue
                 result = run_command(
