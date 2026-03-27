@@ -133,6 +133,14 @@ def render_rhoai_raw_kserve_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
         )
 
     env = _rhoai_runtime_env(plan)
+    env.append(
+        {
+            "name": "STORAGE_URI",
+            "value": (
+                f"pvc://{plan.deployment.model_storage.pvc_name}{_model_path(plan)}"
+            ),
+        }
+    )
     if plan.execution.profiling.enabled:
         env.extend(
             [
@@ -177,6 +185,7 @@ def render_rhoai_raw_kserve_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
                 "nvidia.com/gpu": str(plan.deployment.runtime.tensor_parallelism)
             },
         },
+        "ports": [{"containerPort": 8000, "protocol": "TCP"}],
     }
     if env:
         container_spec["env"] = env
@@ -192,12 +201,6 @@ def render_rhoai_raw_kserve_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
     predictor_spec: dict[str, Any] = {
         "minReplicas": plan.deployment.runtime.replicas,
         "maxReplicas": plan.deployment.runtime.replicas,
-        "model": {
-            "modelFormat": {"name": "vllm"},
-            "storageUri": (
-                f"pvc://{plan.deployment.model_storage.pvc_name}{_model_path(plan)}"
-            ),
-        },
         "containers": [container_spec],
     }
     if plan.execution.profiling.enabled:
