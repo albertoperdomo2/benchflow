@@ -59,9 +59,11 @@ def _target_for(
     if platform == "rhoai":
         if mode == "raw-kserve":
             return TargetSpec(
-                discovery="inferenceservice-status-url",
-                resource_kind="InferenceService",
-                resource_name=release_name,
+                discovery="static",
+                base_url=(
+                    f"http://{release_name}-predictor."
+                    f"{namespace}.svc.cluster.local:8000"
+                ),
                 path=path,
             )
         return TargetSpec(
