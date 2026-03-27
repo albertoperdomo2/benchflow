@@ -10,6 +10,7 @@ spec:
     pvc_name: models-storage
     cache_dir: /models
   runtime:
+    image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.3.0
     replicas: 4
     tensor_parallelism: 2
     vllm_args:
@@ -18,5 +19,7 @@ spec:
       - --trust-remote-code
       - --disable-log-requests
       - --enable-prefix-caching
+    env:
+      HF_HUB_OFFLINE: "1"
   options:
     enable_auth: false

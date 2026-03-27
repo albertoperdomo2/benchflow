@@ -125,6 +125,108 @@ def render_rhoai_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
     )
 
 
+def render_rhoai_raw_kserve_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
+    _validate_rhoai_profiling(plan)
+    if not plan.deployment.runtime.image:
+        raise ValidationError(
+            "rhoai raw-kserve deployments require deployment.runtime.image"
+        )
+
+    env = _rhoai_runtime_env(plan)
+    if plan.execution.profiling.enabled:
+        env.extend(
+            [
+                {
+                    "name": "POD_NAME",
+                    "valueFrom": {
+                        "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.name",
+                        }
+                    },
+                },
+                {"name": "PYTHONPATH", "value": RHOAI_PROFILER_MOUNT_PATH},
+                {
+                    "name": "VLLM_PROFILER_RANGES",
+                    "value": plan.execution.profiling.call_ranges,
+                },
+                {
+                    "name": "VLLM_PROFILER_OUTPUT_DIR",
+                    "value": RHOAI_PROFILER_OUTPUT_DIR,
+                },
+            ]
+        )
+
+    container_spec: dict[str, Any] = {
+        "name": "kserve-container",
+        "image": plan.deployment.runtime.image,
+        "command": ["python3", "-m", "vllm.entrypoints.openai.api_server"],
+        "args": [
+            "--port=8000",
+            "--host=0.0.0.0",
+            "--model=/mnt/models",
+            f"--served-model-name={plan.model.name}",
+            f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
+            *plan.deployment.runtime.vllm_args,
+        ],
+        "resources": {
+            "limits": {
+                "nvidia.com/gpu": str(plan.deployment.runtime.tensor_parallelism)
+            },
+            "requests": {
+                "nvidia.com/gpu": str(plan.deployment.runtime.tensor_parallelism)
+            },
+        },
+    }
+    if env:
+        container_spec["env"] = env
+    if plan.execution.profiling.enabled:
+        container_spec["volumeMounts"] = [
+            {
+                "mountPath": RHOAI_PROFILER_MOUNT_PATH,
+                "name": "vllm-profiler",
+                "readOnly": True,
+            }
+        ]
+
+    predictor_spec: dict[str, Any] = {
+        "minReplicas": plan.deployment.runtime.replicas,
+        "maxReplicas": plan.deployment.runtime.replicas,
+        "model": {
+            "modelFormat": {"name": "vllm"},
+            "storageUri": (
+                f"pvc://{plan.deployment.model_storage.pvc_name}{_model_path(plan)}"
+            ),
+        },
+        "containers": [container_spec],
+    }
+    if plan.execution.profiling.enabled:
+        predictor_spec["volumes"] = [
+            {
+                "name": "vllm-profiler",
+                "configMap": {"name": rhoai_profiler_configmap_name(plan)},
+            }
+        ]
+
+    return {
+        "apiVersion": "serving.kserve.io/v1beta1",
+        "kind": "InferenceService",
+        "metadata": {
+            "name": plan.deployment.release_name,
+            "namespace": plan.deployment.namespace,
+            "labels": _base_labels(plan),
+            "annotations": {
+                "serving.kserve.io/deploymentMode": "RawDeployment",
+                "serving.kserve.io/enable-prometheus-scraping": "true",
+                "serving.knative.dev/autoscaleClass": "external",
+            },
+        },
+        "spec": {
+            "predictor": predictor_spec,
+        },
+    }
+
+
 def rhoai_profiler_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"{plan.deployment.release_name}-{RHOAI_PROFILER_CONFIGMAP_SUFFIX}"
 
@@ -279,14 +381,12 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
 
     if plan.deployment.platform == "rhoai":
         if plan.deployment.mode == "raw-kserve":
-            manifests = render_rhaiis_manifests(plan)
-            names = ["servingruntime.yaml", "inferenceservice.yaml"]
-            for manifest, name in zip(manifests, names, strict=True):
-                target = output_dir / name
-                target.write_text(
-                    yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
-                )
-                written.append(target)
+            target = output_dir / "inferenceservice.yaml"
+            target.write_text(
+                yaml.safe_dump(render_rhoai_raw_kserve_manifest(plan), sort_keys=False),
+                encoding="utf-8",
+            )
+            written.append(target)
             if plan.execution.profiling.enabled:
                 profiler_target = output_dir / "vllm-profiler-configmap.yaml"
                 profiler_target.write_text(
