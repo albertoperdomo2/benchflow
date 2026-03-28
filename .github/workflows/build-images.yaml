@@ -24,7 +24,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
+  IMAGE_REPOSITORY: ${{ github.repository_owner }}/benchflow
 
 jobs:
   resolve-build:
@@ -189,7 +189,7 @@ jobs:
 
           while IFS= read -r tag; do
             [[ -z "${tag}" ]] && continue
-            IMAGE_URL="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/benchflow:${tag}"
+            IMAGE_URL="${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}:${tag}"
             podman tag "${LOCAL_IMAGE}" "${IMAGE_URL}"
             podman push "${IMAGE_URL}"
           done <<< "${{ steps.tags.outputs.tags }}"
@@ -199,7 +199,7 @@ jobs:
           echo "## Built Images" >> "$GITHUB_STEP_SUMMARY"
           while IFS= read -r tag; do
             [[ -z "${tag}" ]] && continue
-            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/benchflow:${tag}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}:${tag}\`" >> "$GITHUB_STEP_SUMMARY"
           done <<< "${{ steps.tags.outputs.tags }}"
 
   cleanup-main-images:
@@ -225,7 +225,7 @@ jobs:
             API_SCOPE="users"
           fi
 
-          PACKAGE_NAME="${GITHUB_REPOSITORY#*/}/benchflow"
+          PACKAGE_NAME="benchflow"
           PACKAGE_NAME_ENCODED="${PACKAGE_NAME//\//%2F}"
           PACKAGE_BASE="/${API_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions"
 
@@ -298,7 +298,7 @@ jobs:
             API_SCOPE="users"
           fi
 
-          PACKAGE_NAME="${GITHUB_REPOSITORY#*/}/benchflow"
+          PACKAGE_NAME="benchflow"
           PACKAGE_NAME_ENCODED="${PACKAGE_NAME//\//%2F}"
           PACKAGE_BASE="/${API_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions"
 

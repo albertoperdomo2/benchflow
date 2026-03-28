@@ -17,7 +17,7 @@ spec:
       description: JSON array of resolved immutable RunPlans.
     - name: BENCHFLOW_IMAGE
       type: string
-      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+      default: ghcr.io/albertoperdomo2/benchflow:latest
     - name: CHILD_PIPELINE_NAME
       type: string
       default: benchflow-e2e

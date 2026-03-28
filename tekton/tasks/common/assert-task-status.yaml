@@ -10,7 +10,7 @@ spec:
   params:
     - name: IMAGE
       type: string
-      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+      default: ghcr.io/albertoperdomo2/benchflow:latest
     - name: TASK_NAME
       type: string
     - name: TASK_STATUS

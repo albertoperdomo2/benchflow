@@ -21,7 +21,7 @@ from .cluster import (
 from .models import ResolvedRunPlan, sanitize_name
 from .ui import detail
 
-DEFAULT_REMOTE_IMAGE = "ghcr.io/albertoperdomo2/benchflow/benchflow:latest"
+DEFAULT_REMOTE_IMAGE = "ghcr.io/albertoperdomo2/benchflow:latest"
 REMOTE_RESULTS_PVC = "benchmark-results"
 REMOTE_RESULTS_MOUNT = "/benchmark-results"
 REMOTE_RESULTS_ROOT = f"{REMOTE_RESULTS_MOUNT}/remote-jobs"

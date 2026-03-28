@@ -13,7 +13,7 @@ spec:
   params:
     - name: IMAGE
       type: string
-      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+      default: ghcr.io/albertoperdomo2/benchflow:latest
     - name: RUN_PLAN
       type: string
     - name: PIPELINE_RUN_NAME

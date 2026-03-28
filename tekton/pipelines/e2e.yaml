@@ -15,7 +15,7 @@ spec:
       description: Resolved immutable run plan in JSON format.
     - name: BENCHFLOW_IMAGE
       type: string
-      default: ghcr.io/albertoperdomo2/benchflow/benchflow:latest
+      default: ghcr.io/albertoperdomo2/benchflow:latest
     - name: SETUP_MODE
       type: string
       default: auto
