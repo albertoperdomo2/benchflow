@@ -61,8 +61,7 @@ def _target_for(
             return TargetSpec(
                 discovery="static",
                 base_url=(
-                    f"http://{release_name}-predictor."
-                    f"{namespace}.svc.cluster.local:8000"
+                    f"http://{release_name}-frontend.{namespace}.svc.cluster.local:8000"
                 ),
                 path=path,
             )

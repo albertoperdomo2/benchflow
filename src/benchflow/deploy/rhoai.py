@@ -10,6 +10,7 @@ from ..models import ResolvedRunPlan
 from ..renderers.deployment import (
     render_rhoai_manifest,
     render_rhoai_raw_kserve_manifest,
+    render_rhoai_raw_kserve_frontend_service,
     render_rhoai_profiler_configmap,
 )
 from ..ui import detail, step, success
@@ -260,7 +261,10 @@ def deploy_rhoai(
         render_rhoai_profiler_configmap(plan) if _profiling_enabled(plan) else None
     )
     manifests = (
-        [render_rhoai_raw_kserve_manifest(plan)]
+        [
+            render_rhoai_raw_kserve_manifest(plan),
+            render_rhoai_raw_kserve_frontend_service(plan),
+        ]
         if plan.deployment.mode == "raw-kserve"
         else [render_rhoai_manifest(plan)]
     )
@@ -273,7 +277,7 @@ def deploy_rhoai(
             )
             detail(f"Rendered profiler ConfigMap written to {profiler_target}")
         names = (
-            ["inferenceservice.yaml"]
+            ["inferenceservice.yaml", "frontend-service.yaml"]
             if plan.deployment.mode == "raw-kserve"
             else ["llminferenceservice.yaml"]
         )

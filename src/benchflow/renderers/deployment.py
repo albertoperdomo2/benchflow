@@ -230,6 +230,39 @@ def render_rhoai_raw_kserve_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
     }
 
 
+def rhoai_raw_kserve_frontend_service_name(plan: ResolvedRunPlan) -> str:
+    return f"{plan.deployment.release_name}-frontend"
+
+
+def render_rhoai_raw_kserve_frontend_service(plan: ResolvedRunPlan) -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": rhoai_raw_kserve_frontend_service_name(plan),
+            "namespace": plan.deployment.namespace,
+            "labels": {
+                **_base_labels(plan),
+                "app.kubernetes.io/component": "raw-kserve-frontend",
+            },
+        },
+        "spec": {
+            "type": "ClusterIP",
+            "selector": {
+                "serving.kserve.io/inferenceservice": plan.deployment.release_name,
+            },
+            "ports": [
+                {
+                    "name": "http",
+                    "port": 8000,
+                    "protocol": "TCP",
+                    "targetPort": 8000,
+                }
+            ],
+        },
+    }
+
+
 def rhoai_profiler_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"{plan.deployment.release_name}-{RHOAI_PROFILER_CONFIGMAP_SUFFIX}"
 
@@ -384,12 +417,19 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
 
     if plan.deployment.platform == "rhoai":
         if plan.deployment.mode == "raw-kserve":
-            target = output_dir / "inferenceservice.yaml"
-            target.write_text(
-                yaml.safe_dump(render_rhoai_raw_kserve_manifest(plan), sort_keys=False),
-                encoding="utf-8",
-            )
-            written.append(target)
+            manifests = [
+                ("inferenceservice.yaml", render_rhoai_raw_kserve_manifest(plan)),
+                (
+                    "frontend-service.yaml",
+                    render_rhoai_raw_kserve_frontend_service(plan),
+                ),
+            ]
+            for name, manifest in manifests:
+                target = output_dir / name
+                target.write_text(
+                    yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+                )
+                written.append(target)
             if plan.execution.profiling.enabled:
                 profiler_target = output_dir / "vllm-profiler-configmap.yaml"
                 profiler_target.write_text(
