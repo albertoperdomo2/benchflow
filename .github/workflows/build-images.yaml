@@ -230,27 +230,8 @@ jobs:
           PACKAGE_BASE="/${API_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions"
 
           if ! gh api "${PACKAGE_BASE}?per_page=1" >/dev/null 2>&1; then
-            PACKAGE_NAME="$(
-              gh api "/${API_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages?package_type=container&per_page=100" \
-                --jq '
-                  map(select(
-                    (.name == "benchflow")
-                    or (.name == "'"${GITHUB_REPOSITORY#*/}"'/benchflow")
-                    or (.name | endswith("/benchflow"))
-                  ))
-                  | sort_by(.updated_at)
-                  | reverse
-                  | .[0].name // ""
-                '
-            )"
-
-            if [[ -z "${PACKAGE_NAME}" ]]; then
-              echo "Could not resolve the GHCR package name for benchflow" >&2
-              exit 1
-            fi
-
-            PACKAGE_NAME_ENCODED="${PACKAGE_NAME//\//%2F}"
-            PACKAGE_BASE="/${API_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions"
+            echo "Could not resolve the GHCR package name for benchflow" >&2
+            exit 1
           fi
 
           echo "Pruning package ${PACKAGE_NAME}"
@@ -303,27 +284,8 @@ jobs:
           PACKAGE_BASE="/${API_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions"
 
           if ! gh api "${PACKAGE_BASE}?per_page=1" >/dev/null 2>&1; then
-            PACKAGE_NAME="$(
-              gh api "/${API_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages?package_type=container&per_page=100" \
-                --jq '
-                  map(select(
-                    (.name == "benchflow")
-                    or (.name == "'"${GITHUB_REPOSITORY#*/}"'/benchflow")
-                    or (.name | endswith("/benchflow"))
-                  ))
-                  | sort_by(.updated_at)
-                  | reverse
-                  | .[0].name // ""
-                '
-            )"
-
-            if [[ -z "${PACKAGE_NAME}" ]]; then
-              echo "Could not resolve the GHCR package name for benchflow" >&2
-              exit 1
-            fi
-
-            PACKAGE_NAME_ENCODED="${PACKAGE_NAME//\//%2F}"
-            PACKAGE_BASE="/${API_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions"
+            echo "Could not resolve the GHCR package name for benchflow" >&2
+            exit 1
           fi
 
           echo "Pruning PR ${PR_NUMBER} images from package ${PACKAGE_NAME}"
