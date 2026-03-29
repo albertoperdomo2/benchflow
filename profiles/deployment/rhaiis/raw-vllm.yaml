@@ -12,8 +12,8 @@ spec:
     mount_path: /mnt
   runtime:
     image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.3.0
-    replicas: 1
-    tensor_parallelism: 1
+    replicas: 4
+    tensor_parallelism: 2
     vllm_args:
       - --max-model-len=8192
       - --enable-prefix-caching
