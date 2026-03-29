@@ -63,6 +63,7 @@ def _pod_type(pod_name: str) -> str:
             "prefill",
             "predictor",
             "kserve-",
+            "vllm",
         )
     ):
         return "model"

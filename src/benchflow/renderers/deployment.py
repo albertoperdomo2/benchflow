@@ -286,6 +286,141 @@ def render_rhoai_profiler_configmap(plan: ResolvedRunPlan) -> dict[str, Any]:
     }
 
 
+def rhaiis_raw_vllm_deployment_name(plan: ResolvedRunPlan) -> str:
+    return f"{plan.deployment.release_name}-vllm"
+
+
+def rhaiis_raw_vllm_service_name(plan: ResolvedRunPlan) -> str:
+    return plan.deployment.release_name
+
+
+def _rhaiis_raw_vllm_labels(plan: ResolvedRunPlan) -> dict[str, str]:
+    return {
+        **_base_labels(plan),
+        "app.kubernetes.io/component": "raw-vllm",
+        "app.kubernetes.io/instance": plan.deployment.release_name,
+        "benchflow.io/release": plan.deployment.release_name,
+    }
+
+
+def _rhaiis_raw_vllm_selector_labels(plan: ResolvedRunPlan) -> dict[str, str]:
+    return {
+        "app.kubernetes.io/component": "raw-vllm",
+        "app.kubernetes.io/instance": plan.deployment.release_name,
+        "benchflow.io/release": plan.deployment.release_name,
+    }
+
+
+def _rhaiis_raw_vllm_model_path(plan: ResolvedRunPlan) -> str:
+    mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
+    cache_dir = plan.deployment.model_storage.cache_dir.rstrip("/")
+    return f"{mount_root}{cache_dir}/{plan.model.pvc_directory_name}"
+
+
+def _rhaiis_raw_vllm_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
+    cache_dir = f"{mount_root}{plan.deployment.model_storage.cache_dir.rstrip('/')}"
+    env = {
+        "HOME": "/tmp/vllm-home",
+        "HF_HOME": cache_dir,
+        "TRANSFORMERS_CACHE": f"{cache_dir}/hub",
+        "HF_HUB_CACHE": f"{cache_dir}/hub",
+        **plan.deployment.runtime.env,
+    }
+    return [{"name": key, "value": value} for key, value in sorted(env.items())]
+
+
+def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    if not plan.deployment.runtime.image:
+        raise ValidationError(
+            "rhaiis raw-vllm deployments require deployment.runtime.image"
+        )
+
+    labels = _rhaiis_raw_vllm_labels(plan)
+    selector_labels = _rhaiis_raw_vllm_selector_labels(plan)
+    container_spec: dict[str, Any] = {
+        "name": "vllm",
+        "image": plan.deployment.runtime.image,
+        "command": ["python3", "-m", "vllm.entrypoints.openai.api_server"],
+        "args": [
+            f"--model={_rhaiis_raw_vllm_model_path(plan)}",
+            f"--served-model-name={plan.model.name}",
+            f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
+            "--port=8000",
+            "--host=0.0.0.0",
+            *plan.deployment.runtime.vllm_args,
+        ],
+        "env": _rhaiis_raw_vllm_runtime_env(plan),
+        "ports": [{"containerPort": 8000, "name": "http", "protocol": "TCP"}],
+        "resources": {
+            "limits": {
+                "nvidia.com/gpu": str(plan.deployment.runtime.tensor_parallelism)
+            },
+            "requests": {
+                "nvidia.com/gpu": str(plan.deployment.runtime.tensor_parallelism)
+            },
+        },
+        "volumeMounts": [
+            {
+                "name": "model-storage",
+                "mountPath": plan.deployment.model_storage.mount_path,
+            }
+        ],
+    }
+
+    deployment = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": rhaiis_raw_vllm_deployment_name(plan),
+            "namespace": plan.deployment.namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "replicas": plan.deployment.runtime.replicas,
+            "selector": {"matchLabels": selector_labels},
+            "template": {
+                "metadata": {"labels": {**labels, **selector_labels}},
+                "spec": {
+                    "containers": [container_spec],
+                    "volumes": [
+                        {
+                            "name": "model-storage",
+                            "persistentVolumeClaim": {
+                                "claimName": plan.deployment.model_storage.pvc_name
+                            },
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+    service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": rhaiis_raw_vllm_service_name(plan),
+            "namespace": plan.deployment.namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "type": "ClusterIP",
+            "selector": selector_labels,
+            "ports": [
+                {
+                    "name": "http",
+                    "port": 8000,
+                    "protocol": "TCP",
+                    "targetPort": "http",
+                }
+            ],
+        },
+    }
+
+    return [deployment, service]
+
+
 def render_rhaiis_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     storage_uri = f"pvc://{plan.deployment.model_storage.pvc_name}{_model_path(plan)}"
     runtime_name = plan.deployment.release_name
@@ -453,6 +588,17 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
             encoding="utf-8",
         )
         written.append(target)
+        return written
+
+    if plan.deployment.platform == "rhaiis" and plan.deployment.mode == "raw-vllm":
+        manifests = render_rhaiis_raw_vllm_manifests(plan)
+        names = ["deployment.yaml", "service.yaml"]
+        for manifest, name in zip(manifests, names, strict=True):
+            target = output_dir / name
+            target.write_text(
+                yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+            )
+            written.append(target)
         return written
 
     manifests = render_rhaiis_manifests(plan)

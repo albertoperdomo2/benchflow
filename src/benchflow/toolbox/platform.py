@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..cleanup import cleanup_llmd, cleanup_rhoai
+from ..cleanup import cleanup_llmd, cleanup_rhaiis, cleanup_rhoai
 from ..cluster import resolve_target_base_url, use_kubeconfig
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
-from ..deploy import deploy_llmd, deploy_rhoai
+from ..deploy import deploy_llmd, deploy_rhaiis, deploy_rhoai
 from ..setup import (
     load_setup_state,
     setup_llmd,
@@ -103,6 +103,14 @@ def deploy_platform(
                 verify=verify,
                 verify_timeout_seconds=verify_timeout_seconds,
             )
+        if plan.deployment.platform == "rhaiis":
+            return deploy_rhaiis(
+                plan,
+                manifests_dir=manifests_dir,
+                skip_if_exists=skip_if_exists,
+                verify=verify,
+                verify_timeout_seconds=verify_timeout_seconds,
+            )
         raise ValidationError(
             f"unsupported deployment platform: {plan.deployment.platform}"
         )
@@ -126,6 +134,14 @@ def cleanup_deployment(
             return
         if plan.deployment.platform == "rhoai":
             cleanup_rhoai(
+                plan,
+                wait_for_deletion=wait_for_deletion,
+                timeout_seconds=timeout_seconds,
+                skip_if_not_exists=skip_if_not_exists,
+            )
+            return
+        if plan.deployment.platform == "rhaiis":
+            cleanup_rhaiis(
                 plan,
                 wait_for_deletion=wait_for_deletion,
                 timeout_seconds=timeout_seconds,
