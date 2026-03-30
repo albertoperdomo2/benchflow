@@ -22,6 +22,8 @@ def _configure_huggingface_runtime() -> Path:
     os.environ.setdefault("HF_HOME", str(hf_home))
     os.environ.setdefault("XDG_CACHE_HOME", str(xdg_cache_home))
     os.environ.setdefault("HF_HUB_CACHE", str(hf_home / "hub"))
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
+    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
     os.environ.setdefault("HF_XET_CACHE", str(hf_home / "xet"))
     os.environ.setdefault("TRANSFORMERS_CACHE", str(hf_home / "transformers"))
 
@@ -62,18 +64,25 @@ def download_model(
     target_dir.parent.mkdir(parents=True, exist_ok=True)
 
     try:
+        cache_dir = _configure_huggingface_runtime()
         from huggingface_hub import snapshot_download
 
-        cache_dir = _configure_huggingface_runtime()
         detail(f"Hugging Face cache directory: {cache_dir}")
+        detail(
+            "Hugging Face timeouts: "
+            f"download={os.environ['HF_HUB_DOWNLOAD_TIMEOUT']}s, "
+            f"etag={os.environ['HF_HUB_ETAG_TIMEOUT']}s"
+        )
         step(f"Downloading {plan.model.name}")
 
         snapshot_download(
             repo_id=plan.model.name,
             local_dir=str(target_dir),
             cache_dir=str(cache_dir),
+            etag_timeout=float(os.environ["HF_HUB_ETAG_TIMEOUT"]),
             token=os.environ.get("HF_TOKEN"),
             local_dir_use_symlinks=False,
+            resume_download=True,
         )
     except Exception as exc:  # noqa: BLE001
         raise CommandError(
