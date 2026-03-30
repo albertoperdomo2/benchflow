@@ -122,6 +122,8 @@ def run_benchmark(
     run_id = ""
     benchmark_env = _configure_benchmark_runtime()
     benchmark_env.update(plan.benchmark.env)
+    if output_dir is not None:
+        benchmark_env["GUIDELLM_OUTPUT_DIR"] = str(output_dir)
     step(f"Preparing benchmark run for {plan.model.name}")
     detail(f"Target: {benchmark_target}")
     detail(

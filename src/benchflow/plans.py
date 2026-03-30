@@ -20,6 +20,13 @@ from .models import (
 
 _MATRIX_CHILD_INDEX_LABEL = "benchflow.io/matrix-child-index"
 _MAX_MODEL_LEN_FLAG = "--max-model-len"
+_UNSUPPORTED_BENCHMARK_ENV = {
+    "GUIDELLM_OUTPUT_PATH": (
+        "GUIDELLM_OUTPUT_PATH is not supported in benchmark env overrides; "
+        "BenchFlow manages exact benchmark output file paths. "
+        "Use the BenchFlow-managed output directory or GUIDELLM_OUTPUT_DIR instead."
+    )
+}
 
 
 def _validate_profiling_support(*, platform: str, profiling_enabled: bool) -> None:
@@ -45,6 +52,12 @@ def _validate_existing_target_support(experiment: Experiment) -> None:
             "spec.target.base_url requires the following stages to be disabled: "
             f"{joined}"
         )
+
+
+def _validate_benchmark_env(env: dict[str, str]) -> None:
+    for name, message in _UNSUPPORTED_BENCHMARK_ENV.items():
+        if str(env.get(name, "")).strip():
+            raise ValidationError(message)
 
 
 def _release_name_for(experiment: Experiment) -> str:
@@ -308,6 +321,7 @@ def resolve_run_plan(
             **benchmark_profile.spec.env,
             **overrides.benchmark.env,
         }
+    _validate_benchmark_env(benchmark.env)
 
     target = (
         TargetSpec(

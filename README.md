@@ -78,3 +78,4 @@ For the full command surface, RunPlan PipelineRun flow, matrix execution, and lo
 - `llm-d` matrix children run sequentially today because the upstream GAIE deployment still creates shared namespaced resources that collide across parallel child deployments.
 - Matrix parent cancellation is best-effort after child executions have already been submitted; queued or running children may need to be cancelled individually.
 - Kueue only gates GPU capacity and start order. It does not replace mutation safety for shared platform resources.
+- BenchFlow manages GuideLLM benchmark output paths itself. `GUIDELLM_OUTPUT_DIR` is set automatically during benchmark execution, and `GUIDELLM_OUTPUT_PATH` is not supported in benchmark environment overrides.
