@@ -9,27 +9,17 @@ from ..cluster import CommandError, require_any_command, run_command, run_json_c
 from ..models import ResolvedRunPlan
 from ..renderers.deployment import (
     render_rhoai_manifest,
-    render_rhoai_raw_kserve_manifest,
-    render_rhoai_raw_kserve_frontend_service,
     render_rhoai_profiler_configmap,
 )
 from ..ui import detail, step, success
 
 
 def _deployment_resource(plan: ResolvedRunPlan) -> str:
-    return (
-        "inferenceservice"
-        if plan.deployment.mode == "raw-kserve"
-        else "llminferenceservice"
-    )
+    return "llminferenceservice"
 
 
 def _deployment_kind(plan: ResolvedRunPlan) -> str:
-    return (
-        "InferenceService"
-        if plan.deployment.mode == "raw-kserve"
-        else "LLMInferenceService"
-    )
+    return "LLMInferenceService"
 
 
 def _deployment_exists(
@@ -225,7 +215,7 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
         ready, url, _ = snapshot
         if ready and url:
             success(f"RHOAI deployment {release_name} is ready and published at {url}")
-            if resource == "llminferenceservice" and _auth_disabled(plan):
+            if _auth_disabled(plan):
                 _verify_public_route_auth(
                     plan, timeout_seconds=min(timeout_seconds, 300)
                 )
@@ -260,14 +250,7 @@ def deploy_rhoai(
     profiler_configmap = (
         render_rhoai_profiler_configmap(plan) if _profiling_enabled(plan) else None
     )
-    manifests = (
-        [
-            render_rhoai_raw_kserve_manifest(plan),
-            render_rhoai_raw_kserve_frontend_service(plan),
-        ]
-        if plan.deployment.mode == "raw-kserve"
-        else [render_rhoai_manifest(plan)]
-    )
+    manifests = [render_rhoai_manifest(plan)]
     if manifests_dir is not None:
         manifests_dir.mkdir(parents=True, exist_ok=True)
         if profiler_configmap is not None:
@@ -276,11 +259,7 @@ def deploy_rhoai(
                 yaml.safe_dump(profiler_configmap, sort_keys=False), encoding="utf-8"
             )
             detail(f"Rendered profiler ConfigMap written to {profiler_target}")
-        names = (
-            ["inferenceservice.yaml", "frontend-service.yaml"]
-            if plan.deployment.mode == "raw-kserve"
-            else ["llminferenceservice.yaml"]
-        )
+        names = ["llminferenceservice.yaml"]
         for manifest, name in zip(manifests, names, strict=True):
             target = manifests_dir / name
             target.write_text(

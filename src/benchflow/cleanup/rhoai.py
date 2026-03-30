@@ -4,64 +4,15 @@ import time
 
 from ..cluster import CommandError, require_any_command, run_command
 from ..models import ResolvedRunPlan
-from ..renderers.deployment import (
-    rhoai_profiler_configmap_name,
-    rhoai_raw_kserve_frontend_service_name,
-)
+from ..renderers.deployment import rhoai_profiler_configmap_name
 
 
 def _deployment_resource(plan: ResolvedRunPlan) -> str:
-    return (
-        "inferenceservice"
-        if plan.deployment.mode == "raw-kserve"
-        else "llminferenceservice"
-    )
+    return "llminferenceservice"
 
 
 def _deployment_kind(plan: ResolvedRunPlan) -> str:
-    return (
-        "InferenceService"
-        if plan.deployment.mode == "raw-kserve"
-        else "LLMInferenceService"
-    )
-
-
-def _delete_raw_kserve_runtime(
-    plan: ResolvedRunPlan, *, kubectl_cmd: str, namespace: str
-) -> None:
-    if plan.deployment.mode != "raw-kserve":
-        return
-    run_command(
-        [
-            kubectl_cmd,
-            "delete",
-            "servingruntime",
-            plan.deployment.release_name,
-            "-n",
-            namespace,
-            "--ignore-not-found",
-        ],
-        check=False,
-    )
-
-
-def _delete_raw_kserve_frontend_service(
-    plan: ResolvedRunPlan, *, kubectl_cmd: str, namespace: str
-) -> None:
-    if plan.deployment.mode != "raw-kserve":
-        return
-    run_command(
-        [
-            kubectl_cmd,
-            "delete",
-            "service",
-            rhoai_raw_kserve_frontend_service_name(plan),
-            "-n",
-            namespace,
-            "--ignore-not-found",
-        ],
-        check=False,
-    )
+    return "LLMInferenceService"
 
 
 def _delete_profiler_configmap(
@@ -111,10 +62,6 @@ def cleanup_rhoai(
         check=False,
     )
     if exists.returncode != 0:
-        _delete_raw_kserve_runtime(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
-        _delete_raw_kserve_frontend_service(
-            plan, kubectl_cmd=kubectl_cmd, namespace=namespace
-        )
         _delete_profiler_configmap(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
         if skip_if_not_exists:
             return
@@ -131,10 +78,6 @@ def cleanup_rhoai(
             "-n",
             namespace,
         ]
-    )
-    _delete_raw_kserve_runtime(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
-    _delete_raw_kserve_frontend_service(
-        plan, kubectl_cmd=kubectl_cmd, namespace=namespace
     )
 
     if not wait_for_deletion:

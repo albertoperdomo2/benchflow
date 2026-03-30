@@ -57,14 +57,6 @@ def _target_for(
         return TargetSpec(discovery="static", base_url=base_url, path=path)
 
     if platform == "rhoai":
-        if mode == "raw-kserve":
-            return TargetSpec(
-                discovery="static",
-                base_url=(
-                    f"http://{release_name}-frontend.{namespace}.svc.cluster.local:8000"
-                ),
-                path=path,
-            )
         return TargetSpec(
             discovery="llminferenceservice-status-url",
             resource_kind="LLMInferenceService",

@@ -125,144 +125,6 @@ def render_rhoai_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
     )
 
 
-def render_rhoai_raw_kserve_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
-    _validate_rhoai_profiling(plan)
-    if not plan.deployment.runtime.image:
-        raise ValidationError(
-            "rhoai raw-kserve deployments require deployment.runtime.image"
-        )
-
-    env = _rhoai_runtime_env(plan)
-    env.append(
-        {
-            "name": "STORAGE_URI",
-            "value": (
-                f"pvc://{plan.deployment.model_storage.pvc_name}{_model_path(plan)}"
-            ),
-        }
-    )
-    if plan.execution.profiling.enabled:
-        env.extend(
-            [
-                {
-                    "name": "POD_NAME",
-                    "valueFrom": {
-                        "fieldRef": {
-                            "apiVersion": "v1",
-                            "fieldPath": "metadata.name",
-                        }
-                    },
-                },
-                {"name": "PYTHONPATH", "value": RHOAI_PROFILER_MOUNT_PATH},
-                {
-                    "name": "VLLM_PROFILER_RANGES",
-                    "value": plan.execution.profiling.call_ranges,
-                },
-                {
-                    "name": "VLLM_PROFILER_OUTPUT_DIR",
-                    "value": RHOAI_PROFILER_OUTPUT_DIR,
-                },
-            ]
-        )
-
-    container_spec: dict[str, Any] = {
-        "name": "kserve-container",
-        "image": plan.deployment.runtime.image,
-        "command": ["python3", "-m", "vllm.entrypoints.openai.api_server"],
-        "args": [
-            "--port=8000",
-            "--host=0.0.0.0",
-            "--model=/mnt/models",
-            f"--served-model-name={plan.model.name}",
-            f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
-            *plan.deployment.runtime.vllm_args,
-        ],
-        "resources": {
-            "limits": {
-                "nvidia.com/gpu": str(plan.deployment.runtime.tensor_parallelism)
-            },
-            "requests": {
-                "nvidia.com/gpu": str(plan.deployment.runtime.tensor_parallelism)
-            },
-        },
-        "ports": [{"containerPort": 8000, "protocol": "TCP"}],
-    }
-    if env:
-        container_spec["env"] = env
-    if plan.execution.profiling.enabled:
-        container_spec["volumeMounts"] = [
-            {
-                "mountPath": RHOAI_PROFILER_MOUNT_PATH,
-                "name": "vllm-profiler",
-                "readOnly": True,
-            }
-        ]
-
-    predictor_spec: dict[str, Any] = {
-        "minReplicas": plan.deployment.runtime.replicas,
-        "maxReplicas": plan.deployment.runtime.replicas,
-        "containers": [container_spec],
-    }
-    if plan.execution.profiling.enabled:
-        predictor_spec["volumes"] = [
-            {
-                "name": "vllm-profiler",
-                "configMap": {"name": rhoai_profiler_configmap_name(plan)},
-            }
-        ]
-
-    return {
-        "apiVersion": "serving.kserve.io/v1beta1",
-        "kind": "InferenceService",
-        "metadata": {
-            "name": plan.deployment.release_name,
-            "namespace": plan.deployment.namespace,
-            "labels": _base_labels(plan),
-            "annotations": {
-                "serving.kserve.io/deploymentMode": "RawDeployment",
-                "serving.kserve.io/enable-prometheus-scraping": "true",
-                "serving.knative.dev/autoscaleClass": "external",
-            },
-        },
-        "spec": {
-            "predictor": predictor_spec,
-        },
-    }
-
-
-def rhoai_raw_kserve_frontend_service_name(plan: ResolvedRunPlan) -> str:
-    return f"{plan.deployment.release_name}-frontend"
-
-
-def render_rhoai_raw_kserve_frontend_service(plan: ResolvedRunPlan) -> dict[str, Any]:
-    return {
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": {
-            "name": rhoai_raw_kserve_frontend_service_name(plan),
-            "namespace": plan.deployment.namespace,
-            "labels": {
-                **_base_labels(plan),
-                "app.kubernetes.io/component": "raw-kserve-frontend",
-            },
-        },
-        "spec": {
-            "type": "ClusterIP",
-            "selector": {
-                "serving.kserve.io/inferenceservice": plan.deployment.release_name,
-            },
-            "ports": [
-                {
-                    "name": "http",
-                    "port": 8000,
-                    "protocol": "TCP",
-                    "targetPort": 8000,
-                }
-            ],
-        },
-    }
-
-
 def rhoai_profiler_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"{plan.deployment.release_name}-{RHOAI_PROFILER_CONFIGMAP_SUFFIX}"
 
@@ -421,123 +283,6 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
     return [deployment, service]
 
 
-def render_rhaiis_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
-    storage_uri = f"pvc://{plan.deployment.model_storage.pvc_name}{_model_path(plan)}"
-    runtime_name = plan.deployment.release_name
-    args = [
-        "--model=/mnt/models",
-        f"--served-model-name={plan.model.name}",
-        "--port=8080",
-        f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
-    ] + plan.deployment.runtime.vllm_args
-    env = [
-        {"name": key, "value": value}
-        for key, value in sorted(plan.deployment.runtime.env.items())
-    ]
-    if plan.execution.profiling.enabled:
-        env.extend(
-            [
-                {
-                    "name": "POD_NAME",
-                    "valueFrom": {
-                        "fieldRef": {
-                            "apiVersion": "v1",
-                            "fieldPath": "metadata.name",
-                        }
-                    },
-                },
-                {"name": "PYTHONPATH", "value": RHOAI_PROFILER_MOUNT_PATH},
-                {
-                    "name": "VLLM_PROFILER_RANGES",
-                    "value": plan.execution.profiling.call_ranges,
-                },
-                {
-                    "name": "VLLM_PROFILER_OUTPUT_DIR",
-                    "value": RHOAI_PROFILER_OUTPUT_DIR,
-                },
-            ]
-        )
-
-    container_spec: dict[str, Any] = {
-        "name": "kserve-container",
-        "image": plan.deployment.runtime.image,
-        "command": ["python", "-m", "vllm.entrypoints.openai.api_server"],
-        "args": args,
-        "env": env,
-        "ports": [{"containerPort": 8080, "protocol": "TCP"}],
-    }
-    volumes: list[dict[str, Any]] = []
-    if plan.execution.profiling.enabled:
-        container_spec["volumeMounts"] = [
-            {
-                "mountPath": RHOAI_PROFILER_MOUNT_PATH,
-                "name": "vllm-profiler",
-                "readOnly": True,
-            }
-        ]
-        volumes.append(
-            {
-                "name": "vllm-profiler",
-                "configMap": {"name": rhoai_profiler_configmap_name(plan)},
-            }
-        )
-
-    serving_runtime = {
-        "apiVersion": "serving.kserve.io/v1alpha1",
-        "kind": "ServingRuntime",
-        "metadata": {
-            "name": runtime_name,
-            "namespace": plan.deployment.namespace,
-            "labels": _base_labels(plan),
-        },
-        "spec": {
-            "containers": [container_spec],
-            "multiModel": False,
-            "supportedModelFormats": [{"name": "pytorch", "autoSelect": True}],
-        },
-    }
-    if volumes:
-        serving_runtime["spec"]["volumes"] = volumes
-
-    inference_service = {
-        "apiVersion": "serving.kserve.io/v1beta1",
-        "kind": "InferenceService",
-        "metadata": {
-            "name": runtime_name,
-            "namespace": plan.deployment.namespace,
-            "labels": _base_labels(plan),
-            "annotations": {
-                "serving.kserve.io/deploymentMode": "RawDeployment",
-                "serving.kserve.io/enable-prometheus-scraping": "true",
-            },
-        },
-        "spec": {
-            "predictor": {
-                "minReplicas": plan.deployment.runtime.replicas,
-                "model": {
-                    "modelFormat": {"name": "pytorch"},
-                    "runtime": runtime_name,
-                    "storageUri": storage_uri,
-                    "resources": {
-                        "limits": {
-                            "nvidia.com/gpu": str(
-                                plan.deployment.runtime.tensor_parallelism
-                            )
-                        },
-                        "requests": {
-                            "nvidia.com/gpu": str(
-                                plan.deployment.runtime.tensor_parallelism
-                            )
-                        },
-                    },
-                },
-            }
-        },
-    }
-
-    return [serving_runtime, inference_service]
-
-
 def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -551,30 +296,6 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
         return written
 
     if plan.deployment.platform == "rhoai":
-        if plan.deployment.mode == "raw-kserve":
-            manifests = [
-                ("inferenceservice.yaml", render_rhoai_raw_kserve_manifest(plan)),
-                (
-                    "frontend-service.yaml",
-                    render_rhoai_raw_kserve_frontend_service(plan),
-                ),
-            ]
-            for name, manifest in manifests:
-                target = output_dir / name
-                target.write_text(
-                    yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
-                )
-                written.append(target)
-            if plan.execution.profiling.enabled:
-                profiler_target = output_dir / "vllm-profiler-configmap.yaml"
-                profiler_target.write_text(
-                    yaml.safe_dump(
-                        render_rhoai_profiler_configmap(plan), sort_keys=False
-                    ),
-                    encoding="utf-8",
-                )
-                written.append(profiler_target)
-            return written
         if plan.execution.profiling.enabled:
             profiler_target = output_dir / "vllm-profiler-configmap.yaml"
             profiler_target.write_text(
@@ -590,7 +311,7 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
         written.append(target)
         return written
 
-    if plan.deployment.platform == "rhaiis" and plan.deployment.mode == "raw-vllm":
+    if plan.deployment.platform == "rhaiis":
         manifests = render_rhaiis_raw_vllm_manifests(plan)
         names = ["deployment.yaml", "service.yaml"]
         for manifest, name in zip(manifests, names, strict=True):
@@ -601,10 +322,6 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
             written.append(target)
         return written
 
-    manifests = render_rhaiis_manifests(plan)
-    names = ["servingruntime.yaml", "inferenceservice.yaml"]
-    for manifest, name in zip(manifests, names, strict=True):
-        target = output_dir / name
-        target.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
-        written.append(target)
-    return written
+    raise ValidationError(
+        f"unsupported deployment platform for rendered assets: {plan.deployment.platform}"
+    )
