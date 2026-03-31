@@ -89,7 +89,7 @@ jobs:
                 BUILD_CHANNEL="pr"
                 TAG_PREFIX="pr-${PR_NUMBER}"
                 CLEANUP_PATTERN="^pr-${PR_NUMBER}-[0-9a-f]{7}$"
-                CLEANUP_KEEP=1
+                CLEANUP_KEEP=3
               fi
             fi
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
@@ -110,14 +110,14 @@ jobs:
               fi
             else
               CLEANUP_PATTERN="^manual-[0-9a-f]{7}$"
-              CLEANUP_KEEP=1
+              CLEANUP_KEEP=3
             fi
           elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
             SHOULD_BUILD=true
             CHECKOUT_REF="${GITHUB_SHA}"
             BUILD_CHANNEL="main"
             CLEANUP_PATTERN="^main-[0-9a-f]{7}$"
-            CLEANUP_KEEP=1
+            CLEANUP_KEEP=3
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             git fetch origin main --depth=1
             if git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
