@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..accelerator import discover_plan_accelerator
 from ..cluster import CommandError
 from ..models import ResolvedRunPlan
 from ..setup.rhoai import RHOAI_PINNED_SERIES, discover_rhoai_mlflow_version
@@ -73,6 +74,17 @@ def _runtime_args(plan: ResolvedRunPlan) -> str:
     return " ".join(plan.deployment.runtime.vllm_args)
 
 
+def _resolved_accelerator(plan: ResolvedRunPlan) -> str:
+    try:
+        return discover_plan_accelerator(plan)
+    except CommandError as exc:
+        warning(
+            "Could not auto-discover accelerator from the cluster; "
+            f"falling back to unknown: {exc}"
+        )
+        return "unknown"
+
+
 def _configure_benchmark_runtime() -> dict[str, str]:
     runtime_root = Path("/tmp/benchflow-guidellm")
     home_dir = runtime_root / "home"
@@ -127,6 +139,7 @@ def run_benchmark(
     run_id = ""
     benchmark_env = _configure_benchmark_runtime()
     benchmark_env.update(plan.benchmark.env)
+    accelerator = _resolved_accelerator(plan)
     if output_dir is not None:
         benchmark_env["GUIDELLM_OUTPUT_DIR"] = str(output_dir)
     step(f"Preparing benchmark run for {plan.model.name}")
@@ -156,7 +169,7 @@ def run_benchmark(
                     data=plan.benchmark.data,
                     max_seconds=plan.benchmark.max_seconds,
                     max_requests=plan.benchmark.max_requests,
-                    accelerator=plan.deployment.options.get("accelerator"),
+                    accelerator=accelerator,
                     experiment_name=plan.mlflow.experiment,
                     mlflow_tracking_uri=mlflow_tracking_uri
                     or os.environ.get("MLFLOW_TRACKING_URI"),
@@ -184,7 +197,7 @@ def run_benchmark(
                     max_seconds=plan.benchmark.max_seconds,
                     max_requests=plan.benchmark.max_requests,
                     output_dir=str(output_dir),
-                    accelerator=plan.deployment.options.get("accelerator"),
+                    accelerator=accelerator,
                     version=benchmark_version_from_plan(plan),
                     tp_size=plan.deployment.runtime.tensor_parallelism,
                     runtime_args=_runtime_args(plan),

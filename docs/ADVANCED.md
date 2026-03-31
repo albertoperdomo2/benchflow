@@ -775,6 +775,10 @@ The benchmark runtime adds:
 - `vllm_version`
 - `guidellm_version`
 
+If `accelerator` is not already present in MLflow tags, BenchFlow also tries to
+derive it from the cluster by inspecting the nodes backing the serving pods and
+normalizing labels like `nvidia.com/gpu.product` to values such as `H200`.
+
 User-provided tags still override the defaults if you need to force a value.
 
 ## Runtime Commands
