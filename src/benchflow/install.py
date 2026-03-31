@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import secrets
 import subprocess
 import time
 from dataclasses import dataclass
@@ -11,20 +10,62 @@ from typing import Any
 
 import yaml
 
+from .bootstrap_grafana import (
+    apply_grafana_stack as apply_bootstrap_grafana_stack,
+    discover_grafana_route_host as discover_bootstrap_grafana_route_host,
+    install_grafana_if_needed as maybe_install_bootstrap_grafana,
+    wait_for_grafana_ready as wait_for_bootstrap_grafana_ready,
+    wait_for_grafana_route as wait_for_bootstrap_grafana_route,
+)
+from .bootstrap_kueue import (
+    apply_kueue_support_resources as apply_bootstrap_kueue_support_resources,
+    install_kueue_if_needed as install_bootstrap_kueue_if_needed,
+    kueue_crds_present as bootstrap_kueue_crds_present,
+    kueue_ready as bootstrap_kueue_ready,
+    register_kueue_cluster_queue as register_bootstrap_kueue_cluster_queue,
+    wait_for_kueue_support_ready as wait_for_bootstrap_kueue_support_ready,
+)
+from .bootstrap_operators import (
+    approve_pending_installplan as approve_bootstrap_pending_installplan,
+    catalog_source_for_package as bootstrap_catalog_source_for_package,
+    configure_tekton_scc as configure_bootstrap_tekton_scc,
+    default_channel_for_package as bootstrap_default_channel_for_package,
+    get_packagemanifest as bootstrap_get_packagemanifest,
+    get_subscription as bootstrap_get_subscription,
+    gpu_operator_ready as bootstrap_gpu_operator_ready,
+    install_accelerator_prerequisites as install_bootstrap_accelerator_prerequisites,
+    install_gpu_operator_and_cluster_policy as install_bootstrap_gpu_operator_and_cluster_policy,
+    install_nfd_operator_and_instance as install_bootstrap_nfd_operator_and_instance,
+    install_operator_from_package as install_bootstrap_operator_from_package,
+    install_tekton_if_needed as install_bootstrap_tekton_if_needed,
+    nfd_ready as bootstrap_nfd_ready,
+    operatorgroups_in_namespace as bootstrap_operatorgroups_in_namespace,
+    print_olm_diagnostics as print_bootstrap_olm_diagnostics,
+    reuse_or_create_operatorgroup as reuse_bootstrap_or_create_operatorgroup,
+    wait_for_csv_succeeded as wait_for_bootstrap_csv_succeeded,
+    wait_for_subscription_current_csv as wait_for_bootstrap_subscription_current_csv,
+)
 from .assets import asset_text, render_yaml_documents
+from .bootstrap_presentation import (
+    print_bootstrap_intro,
+    print_bootstrap_summary,
+)
+from .bootstrap_resources import (
+    apply_cluster_monitoring_rbac as apply_bootstrap_cluster_monitoring_rbac,
+    apply_manifest_tree as apply_bootstrap_manifest_tree,
+    apply_namespaced_resources as apply_bootstrap_namespaced_resources,
+    apply_runner_rbac as apply_bootstrap_runner_rbac,
+    apply_workspace_pvcs as apply_bootstrap_workspace_pvcs,
+    install_real_secrets as install_bootstrap_real_secrets,
+)
 from .cluster import (
     CommandError,
     TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION,
     discover_repo_root,
     require_command,
 )
-from .kueue import (
-    DEFAULT_CONTROLLER_IMAGE,
-    KUEUE_NAMESPACE,
-    REMOTE_CAPACITY_CONTROLLER_DEPLOYMENT,
-    ensure_cluster_queue_resources,
-)
-from .ui import detail, emit, panel, rule, step, success, ui_scope, warning
+from .kueue import DEFAULT_CONTROLLER_IMAGE, KUEUE_NAMESPACE
+from .ui import detail, emit, step, ui_scope, warning
 
 
 CONNECTIVITY_MARKERS = (
@@ -144,157 +185,37 @@ class Installer:
         return 0
 
     def print_intro(self) -> None:
-        options = self.options
-        rule("BenchFlow Bootstrap")
-        panel(
-            "Configuration",
-            (
-                ("Bootstrap mode", self.bootstrap_mode),
-                ("Namespace", options.namespace),
-                ("Grafana namespace", self.grafana_namespace),
-                ("Kueue namespace", self.kueue_namespace),
-                ("NFD namespace", self.nfd_namespace),
-                ("GPU operator namespace", self.gpu_operator_namespace),
-                (
-                    "GPU prerequisites",
-                    (
-                        "NFD operator + instance, GPU operator + ClusterPolicy"
-                        if options.install_accelerator_prerequisites
-                        else "not installed in this bootstrap mode"
-                    ),
-                ),
-                ("Install Tekton if missing", str(options.install_tekton).lower()),
-                ("Install Kueue if missing", str(options.install_kueue).lower()),
-                ("Install Grafana if missing", str(options.install_grafana).lower()),
-                ("OpenShift Pipelines channel", options.tekton_channel),
-                (
-                    "Target kubeconfig",
-                    options.target_kubeconfig or "current cluster context",
-                ),
-                (
-                    "models-storage",
-                    (
-                        f"{options.models_storage_access_mode} {options.models_storage_size}"
-                        f"{f' via {options.models_storage_class}' if options.models_storage_class else ''}"
-                        if options.install_models_storage
-                        else "not installed in this bootstrap mode"
-                    ),
-                ),
-                (
-                    "benchmark-results",
-                    (
-                        f"ReadWriteOnce {options.results_storage_size}"
-                        f"{f' via {options.results_storage_class}' if options.results_storage_class else ''}"
-                        if options.install_results_storage
-                        else "not installed in this bootstrap mode"
-                    ),
-                ),
-                (
-                    "metrics access",
-                    "cluster-monitoring-view -> benchflow-runner, benchflow-grafana",
-                ),
+        print_bootstrap_intro(
+            bootstrap_mode=self.bootstrap_mode,
+            options=self.options,
+            grafana_namespace=self.grafana_namespace,
+            kueue_namespace=self.kueue_namespace,
+            nfd_namespace=self.nfd_namespace,
+            gpu_operator_namespace=self.gpu_operator_namespace,
+            default_storage_class=(
+                self.default_storage_class()
+                if self.options.install_models_storage
+                and self.options.models_storage_class is None
+                else None
             ),
         )
-        if options.install_models_storage and options.models_storage_class is None:
-            detail(
-                f"default StorageClass for models-storage: {self.default_storage_class()}"
-            )
-        if (
-            options.install_models_storage
-            and options.models_storage_access_mode == "ReadWriteOnce"
-        ):
-            detail(
-                "note: the shipped qwen smoke profile is single-replica and matches ReadWriteOnce"
-            )
 
     def print_summary(self) -> None:
-        options = self.options
         grafana_host: str | None = None
         try:
             grafana_host = self.discover_grafana_route_host()
         except CommandError as exc:
             warning(f"Could not query the Grafana route for the final summary: {exc}")
-        rule("Bootstrap Complete")
-        panel(
-            "BenchFlow",
-            (
-                ("Bootstrap mode", self.bootstrap_mode),
-                ("Namespace", options.namespace),
-                ("Grafana namespace", self.grafana_namespace),
-                ("Kueue namespace", self.kueue_namespace),
-                ("NFD namespace", self.nfd_namespace),
-                ("GPU operator namespace", self.gpu_operator_namespace),
-                (
-                    "GPU prerequisites",
-                    (
-                        "NFD operator + instance, GPU operator + ClusterPolicy"
-                        if options.install_accelerator_prerequisites
-                        else "not installed in this bootstrap mode"
-                    ),
-                ),
-                ("Tekton install attempted", str(options.install_tekton).lower()),
-                ("Kueue install attempted", str(options.install_kueue).lower()),
-                ("Grafana install attempted", str(options.install_grafana).lower()),
-                ("OpenShift Pipelines channel", options.tekton_channel),
-                (
-                    "Target kubeconfig",
-                    options.target_kubeconfig or "current cluster context",
-                ),
-                (
-                    "models-storage",
-                    (
-                        f"{options.models_storage_access_mode} {options.models_storage_size}"
-                        f"{f' via {options.models_storage_class}' if options.models_storage_class else ''}"
-                        if options.install_models_storage
-                        else "not installed in this bootstrap mode"
-                    ),
-                ),
-                (
-                    "benchmark-results",
-                    (
-                        f"ReadWriteOnce {options.results_storage_size}"
-                        f"{f' via {options.results_storage_class}' if options.results_storage_class else ''}"
-                        if options.install_results_storage
-                        else "not installed in this bootstrap mode"
-                    ),
-                ),
-                (
-                    "metrics access",
-                    "cluster-monitoring-view bound to benchflow-runner and benchflow-grafana",
-                ),
-                (
-                    "Grafana route",
-                    f"https://{grafana_host}" if grafana_host else "not detected yet",
-                ),
-            ),
+        print_bootstrap_summary(
+            bootstrap_mode=self.bootstrap_mode,
+            options=self.options,
+            grafana_namespace=self.grafana_namespace,
+            kueue_namespace=self.kueue_namespace,
+            nfd_namespace=self.nfd_namespace,
+            gpu_operator_namespace=self.gpu_operator_namespace,
+            grafana_host=grafana_host,
+            grafana_admin_secret_name=self.grafana_admin_secret_name,
         )
-        if grafana_host:
-            detail(
-                "Grafana admin password: "
-                f"oc get secret -n {self.grafana_namespace} {self.grafana_admin_secret_name} "
-                '-o go-template=\'{{index .data "admin-password" | base64decode}}{{"\\n"}}\''
-            )
-        step("Required secrets if you have not already created them")
-        detail("config/cluster/secrets/huggingface-token.example.yaml")
-        detail("config/cluster/secrets/mlflow-auth.example.yaml")
-        detail("config/cluster/secrets/mlflow-s3-creds.example.yaml")
-        step("Example run")
-        detail("pip install -e .")
-        if self.bootstrap_mode == "single-cluster":
-            detail(
-                f"bflow experiment run experiments/smoke/qwen3-06b-llm-d-smoke.yaml --namespace {options.namespace}"
-            )
-        elif self.bootstrap_mode == "management-cluster":
-            detail(
-                "bflow bootstrap --target-kubeconfig ~/.kube/target-cluster --cluster-name target-cluster"
-            )
-            detail(
-                f"bflow experiment run experiments/smoke/qwen3-06b-rhoai-distributed-default-smoke.yaml --namespace {options.namespace} --cluster-name target-cluster"
-            )
-        else:
-            detail(
-                f"bflow experiment run experiments/smoke/qwen3-06b-rhoai-distributed-default-smoke.yaml --namespace {options.namespace} --cluster-name <management-secret-name>"
-            )
 
     def _is_connectivity_error(self, output: str) -> bool:
         return any(marker in output for marker in CONNECTIVITY_MARKERS)
@@ -622,195 +543,61 @@ class Installer:
         )
 
     def _kueue_crds_present(self) -> bool:
-        return all(
-            self._resource_exists("get", "crd", name)
-            for name in (
-                "admissionchecks.kueue.x-k8s.io",
-                "clusterqueues.kueue.x-k8s.io",
-                "localqueues.kueue.x-k8s.io",
-                "resourceflavors.kueue.x-k8s.io",
-                "workloads.kueue.x-k8s.io",
-            )
-        )
+        return bootstrap_kueue_crds_present(self)
 
     def kueue_ready(self) -> bool:
-        if not self._kueue_crds_present():
-            return False
-        if not self._resource_exists(
-            "get",
-            "deployment",
-            "kueue-controller-manager",
-            "-n",
-            self.kueue_namespace,
-        ):
-            return False
-        deployment = self._oc_json(
-            "get",
-            "deployment",
-            "kueue-controller-manager",
-            "-n",
-            self.kueue_namespace,
-            retry=True,
-            description="reading deployment/kueue-controller-manager",
-        )
-        status = deployment.get("status", {}) or {}
-        ready = int(status.get("readyReplicas", 0) or 0)
-        desired = int(status.get("replicas", 0) or 0)
-        return desired > 0 and ready >= desired
+        return bootstrap_kueue_ready(self)
 
     def _print_olm_diagnostics(
         self, *, subscription_name: str, namespace: str, catalog_source: str
     ) -> None:
-        warning("Operator OLM diagnostics")
-        for argv in (
-            ["get", "subscription", subscription_name, "-n", namespace, "-o", "yaml"],
-            ["get", "csv", "-n", namespace],
-            ["get", "installplan", "-n", namespace],
-            [
-                "get",
-                "catalogsource",
-                catalog_source,
-                "-n",
-                "openshift-marketplace",
-                "-o",
-                "yaml",
-            ],
-            ["get", "pods", "-n", "openshift-operator-lifecycle-manager"],
-        ):
-            result = self._oc(*argv, check=False)
-            output = result.stdout or result.stderr or ""
-            if output:
-                emit(output, end="" if output.endswith("\n") else "\n", stderr=True)
+        print_bootstrap_olm_diagnostics(
+            self,
+            subscription_name=subscription_name,
+            namespace=namespace,
+            catalog_source=catalog_source,
+        )
 
     def _wait_for_subscription_current_csv(
         self, *, subscription_name: str, namespace: str, timeout_seconds: int
     ) -> str:
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            try:
-                subscription = self._oc_json(
-                    "get",
-                    "subscription",
-                    subscription_name,
-                    "-n",
-                    namespace,
-                    retry=True,
-                    description=f"reading subscription/{subscription_name}",
-                )
-            except CommandError:
-                time.sleep(5)
-                continue
-            conditions = subscription.get("status", {}).get("conditions", [])
-            resolution_failed = next(
-                (
-                    condition
-                    for condition in conditions
-                    if condition.get("type") == "ResolutionFailed"
-                    and condition.get("status") == "True"
-                ),
-                None,
-            )
-            if resolution_failed is not None:
-                message = resolution_failed.get(
-                    "message", "subscription resolution failed"
-                )
-                raise CommandError(
-                    f"subscription/{subscription_name} in namespace {namespace} failed to resolve: {message}"
-                )
-            current_csv = subscription.get("status", {}).get("currentCSV", "")
-            if current_csv:
-                return str(current_csv)
-            time.sleep(5)
-        raise CommandError(
-            f"timed out waiting for subscription/{subscription_name} to resolve a CSV"
+        return wait_for_bootstrap_subscription_current_csv(
+            self,
+            subscription_name=subscription_name,
+            namespace=namespace,
+            timeout_seconds=timeout_seconds,
         )
 
     def _get_subscription(
         self, *, subscription_name: str, namespace: str, description: str | None = None
     ) -> dict[str, Any]:
-        return self._oc_json(
-            "get",
-            "subscription",
-            subscription_name,
-            "-n",
-            namespace,
-            retry=True,
-            description=description or f"reading subscription/{subscription_name}",
+        return bootstrap_get_subscription(
+            self,
+            subscription_name=subscription_name,
+            namespace=namespace,
+            description=description,
         )
 
     def _get_packagemanifest(self, package_name: str) -> dict[str, Any]:
-        return self._oc_json(
-            "get",
-            "packagemanifest",
-            package_name,
-            "-n",
-            "openshift-marketplace",
-            retry=True,
-            description=f"reading packagemanifest/{package_name}",
-        )
+        return bootstrap_get_packagemanifest(self, package_name)
 
     def _default_channel_for_package(self, package_name: str) -> str:
-        package = self._get_packagemanifest(package_name)
-        channel = package.get("status", {}).get("defaultChannel", "")
-        if not channel:
-            raise CommandError(
-                f"packagemanifest/{package_name} does not expose a default channel"
-            )
-        return str(channel)
+        return bootstrap_default_channel_for_package(self, package_name)
 
     def _catalog_source_for_package(self, package_name: str) -> tuple[str, str]:
-        package = self._get_packagemanifest(package_name)
-        status = package.get("status", {}) or {}
-        catalog_source = status.get("catalogSource", "")
-        catalog_namespace = status.get("catalogSourceNamespace", "")
-        if not catalog_source or not catalog_namespace:
-            raise CommandError(
-                f"packagemanifest/{package_name} does not expose catalog source details"
-            )
-        return str(catalog_source), str(catalog_namespace)
+        return bootstrap_catalog_source_for_package(self, package_name)
 
     def _operatorgroups_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
-        operatorgroups = self._oc_json(
-            "get",
-            "operatorgroup",
-            "-n",
-            namespace,
-            retry=True,
-            description=f"reading operatorgroups in namespace {namespace}",
-        )
-        return list(operatorgroups.get("items", []))
+        return bootstrap_operatorgroups_in_namespace(self, namespace)
 
     def _reuse_or_create_operatorgroup(
         self, *, namespace: str, operatorgroup_name: str
     ) -> bool:
-        operatorgroups = self._operatorgroups_in_namespace(namespace)
-        if not operatorgroups:
-            return False
-
-        if len(operatorgroups) > 1:
-            names = ", ".join(
-                str(item.get("metadata", {}).get("name", "unknown"))
-                for item in operatorgroups
-            )
-            raise CommandError(
-                f"namespace {namespace} already has multiple OperatorGroups ({names}); "
-                "BenchFlow requires exactly one. Clean the namespace and rerun bootstrap."
-            )
-
-        operatorgroup = operatorgroups[0]
-        target_namespaces = (
-            operatorgroup.get("spec", {}).get("targetNamespaces", []) or []
+        return reuse_bootstrap_or_create_operatorgroup(
+            self,
+            namespace=namespace,
+            operatorgroup_name=operatorgroup_name,
         )
-        if target_namespaces not in ([], [namespace]):
-            raise CommandError(
-                f"existing OperatorGroup {operatorgroup.get('metadata', {}).get('name', 'unknown')} "
-                f"in namespace {namespace} targets {target_namespaces}, expected [{namespace}]"
-            )
-        detail(
-            "Reusing existing OperatorGroup "
-            f"{operatorgroup.get('metadata', {}).get('name', 'unknown')} in namespace {namespace}"
-        )
-        return True
 
     def _install_operator_from_package(
         self,
@@ -821,53 +608,14 @@ class Installer:
         operatorgroup_name: str,
         asset_path: str,
     ) -> str:
-        channel = self._default_channel_for_package(package_name)
-        catalog_source, catalog_namespace = self._catalog_source_for_package(
-            package_name
-        )
-        self.ensure_namespace(namespace)
-        has_existing_operatorgroup = self._reuse_or_create_operatorgroup(
-            namespace=namespace, operatorgroup_name=operatorgroup_name
-        )
-        documents = self._render_asset_documents(
-            asset_path,
-            {
-                "OPERATOR_NAMESPACE": namespace,
-                "OPERATORGROUP_NAME": operatorgroup_name,
-                "SUBSCRIPTION_NAME": subscription_name,
-                "PACKAGE_NAME": package_name,
-                "CHANNEL": channel,
-                "SOURCE": catalog_source,
-                "SOURCE_NAMESPACE": catalog_namespace,
-            },
-        )
-        if has_existing_operatorgroup:
-            documents = [
-                document
-                for document in documents
-                if document.get("kind") != "OperatorGroup"
-            ]
-        self._apply_documents(
-            documents,
-            namespace=None,
-            description=f"installing operator package {package_name}",
-        )
-        step(f"Waiting for the {package_name} subscription to resolve")
-        csv_name = self._wait_for_subscription_current_csv(
-            subscription_name=subscription_name,
+        return install_bootstrap_operator_from_package(
+            self,
+            package_name=package_name,
             namespace=namespace,
-            timeout_seconds=600,
-        )
-        step(f"Waiting for CSV {csv_name} to succeed")
-        self._wait_for_csv_succeeded(
             subscription_name=subscription_name,
-            namespace=namespace,
-            csv_name=csv_name,
-            timeout_seconds=900,
-            csv_prefix=f"{package_name}.",
-            catalog_source=catalog_source,
+            operatorgroup_name=operatorgroup_name,
+            asset_path=asset_path,
         )
-        return csv_name
 
     def _approve_pending_installplan(
         self,
@@ -878,83 +626,13 @@ class Installer:
         catalog_source: str,
         expected_csv_name: str | None = None,
     ) -> None:
-        subscription = self._oc_json(
-            "get",
-            "subscription",
-            subscription_name,
-            "-n",
-            namespace,
-            retry=True,
-            description=f"checking InstallPlan state for subscription/{subscription_name}",
-        )
-        conditions = subscription.get("status", {}).get("conditions", [])
-        pending = next(
-            (
-                condition
-                for condition in conditions
-                if condition.get("type") == "InstallPlanPending"
-            ),
-            None,
-        )
-        if (
-            not pending
-            or pending.get("status") != "True"
-            or pending.get("reason") != "RequiresApproval"
-        ):
-            return
-
-        installplan_name = (
-            subscription.get("status", {}).get("installPlanRef", {}) or {}
-        ).get("name")
-        if not installplan_name:
-            return
-
-        installplan = self._oc_json(
-            "get",
-            "installplan",
-            installplan_name,
-            "-n",
-            namespace,
-            retry=True,
-            description=f"reading installplan/{installplan_name}",
-        )
-        csv_names = installplan.get("spec", {}).get("clusterServiceVersionNames", [])
-        for csv_name in csv_names:
-            if expected_csv_name is not None:
-                if str(csv_name) != expected_csv_name:
-                    self._print_olm_diagnostics(
-                        subscription_name=subscription_name,
-                        namespace=namespace,
-                        catalog_source=catalog_source,
-                    )
-                    raise CommandError(
-                        f"refusing to auto-approve InstallPlan {installplan_name}: expected {expected_csv_name}, got {csv_name}"
-                    )
-                continue
-            if not str(csv_name).startswith(csv_prefix):
-                self._print_olm_diagnostics(
-                    subscription_name=subscription_name,
-                    namespace=namespace,
-                    catalog_source=catalog_source,
-                )
-                raise CommandError(
-                    f"refusing to auto-approve InstallPlan {installplan_name}: unexpected CSV {csv_name}"
-                )
-
-        step(f"Approving pending InstallPlan {installplan_name}")
-        self._oc(
-            "patch",
-            "installplan",
-            installplan_name,
-            "-n",
-            namespace,
-            "--type",
-            "merge",
-            "-p",
-            '{"spec":{"approved":true}}',
-            retry=True,
-            description=f"approving installplan/{installplan_name}",
-            echo_output=True,
+        approve_bootstrap_pending_installplan(
+            self,
+            subscription_name=subscription_name,
+            namespace=namespace,
+            csv_prefix=csv_prefix,
+            catalog_source=catalog_source,
+            expected_csv_name=expected_csv_name,
         )
 
     def _wait_for_csv_succeeded(
@@ -968,613 +646,88 @@ class Installer:
         catalog_source: str,
         expected_csv_name: str | None = None,
     ) -> None:
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            self._approve_pending_installplan(
-                subscription_name=subscription_name,
-                namespace=namespace,
-                csv_prefix=csv_prefix,
-                catalog_source=catalog_source,
-                expected_csv_name=expected_csv_name,
-            )
-            try:
-                csv = self._oc_json(
-                    "get",
-                    "csv",
-                    csv_name,
-                    "-n",
-                    namespace,
-                    retry=True,
-                    description=f"reading csv/{csv_name}",
-                )
-            except CommandError:
-                time.sleep(5)
-                continue
-            phase = csv.get("status", {}).get("phase", "")
-            if phase == "Succeeded":
-                return
-            time.sleep(5)
-
-        self._print_olm_diagnostics(
+        wait_for_bootstrap_csv_succeeded(
+            self,
             subscription_name=subscription_name,
             namespace=namespace,
+            csv_name=csv_name,
+            timeout_seconds=timeout_seconds,
+            csv_prefix=csv_prefix,
             catalog_source=catalog_source,
+            expected_csv_name=expected_csv_name,
         )
-        raise CommandError(f"timed out waiting for CSV {csv_name} to reach Succeeded")
 
     def install_accelerator_prerequisites(self) -> None:
-        step("Installing accelerator prerequisites for GPU inference")
-        self.install_nfd_operator_and_instance()
-        self.install_gpu_operator_and_cluster_policy()
+        install_bootstrap_accelerator_prerequisites(self)
 
     def nfd_ready(self) -> bool:
-        return self._resource_exists(
-            "get",
-            "nodefeaturediscovery.nfd.openshift.io",
-            "nfd-instance",
-            "-n",
-            self.nfd_namespace,
-        )
+        return bootstrap_nfd_ready(self)
 
     def gpu_operator_ready(self) -> bool:
-        if not self._resource_exists(
-            "get", "clusterpolicy.nvidia.com", "gpu-cluster-policy"
-        ):
-            return False
-        cluster_policy = self._oc_json(
-            "get",
-            "clusterpolicy.nvidia.com",
-            "gpu-cluster-policy",
-            retry=True,
-            description="reading ClusterPolicy/gpu-cluster-policy",
-        )
-        status = str(cluster_policy.get("status", {}).get("state", ""))
-        return status.lower() == "ready"
+        return bootstrap_gpu_operator_ready(self)
 
     def install_nfd_operator_and_instance(self) -> None:
-        if self.nfd_ready():
-            success("Node Feature Discovery instance already present")
-            return
-        self._install_operator_from_package(
-            package_name=self.nfd_package_name,
-            namespace=self.nfd_namespace,
-            subscription_name="nfd",
-            operatorgroup_name="nfd",
-            asset_path="operators/nfd/operator.yaml",
-        )
-        self._wait_for_resource(
-            resource="crd/nodefeaturediscoveries.nfd.openshift.io",
-            namespace=None,
-            timeout_seconds=600,
-            label="CRD nodefeaturediscoveries.nfd.openshift.io",
-        )
-        step("Applying the Node Feature Discovery instance")
-        self._apply_asset_documents(
-            "operators/nfd/instance.yaml",
-            namespace=None,
-            description="applying NodeFeatureDiscovery instance",
-            variables=self._base_asset_variables(),
-        )
-        success("Node Feature Discovery operator and instance are present")
+        install_bootstrap_nfd_operator_and_instance(self)
 
     def install_gpu_operator_and_cluster_policy(self) -> None:
-        if self.gpu_operator_ready():
-            success("NVIDIA GPU ClusterPolicy already present and ready")
-            return
-        self._install_operator_from_package(
-            package_name=self.gpu_operator_package_name,
-            namespace=self.gpu_operator_namespace,
-            subscription_name="gpu-operator-certified",
-            operatorgroup_name="gpu-operator-certified",
-            asset_path="operators/gpu/operator.yaml",
-        )
-        self._wait_for_resource(
-            resource="crd/clusterpolicies.nvidia.com",
-            namespace=None,
-            timeout_seconds=600,
-            label="CRD clusterpolicies.nvidia.com",
-        )
-        step("Applying the NVIDIA GPU ClusterPolicy")
-        self._apply_asset_documents(
-            "operators/gpu/cluster-policy.yaml",
-            namespace=None,
-            description="applying NVIDIA GPU ClusterPolicy",
-            variables=self._base_asset_variables(),
-        )
-        success("NVIDIA GPU Operator and ClusterPolicy are present")
+        install_bootstrap_gpu_operator_and_cluster_policy(self)
 
     def install_tekton_if_needed(self) -> None:
-        if self.tekton_ready():
-            success("Tekton CRDs already present")
-            return
-
-        step(
-            f"Installing OpenShift Pipelines operator in {self.pipelines_operator_namespace}"
-        )
-        self._apply_documents(
-            self._render_asset_documents(
-                "operators/tekton/subscription.yaml",
-                {"TEKTON_CHANNEL": self.options.tekton_channel},
-            ),
-            namespace=None,
-            description="applying OpenShift Pipelines subscription",
-        )
-
-        step("Waiting for the Tekton subscription to resolve")
-        tekton_csv = self._wait_for_subscription_current_csv(
-            subscription_name="openshift-pipelines-operator",
-            namespace=self.pipelines_operator_namespace,
-            timeout_seconds=600,
-        )
-        step(f"Waiting for CSV {tekton_csv} to succeed")
-        self._wait_for_csv_succeeded(
-            subscription_name="openshift-pipelines-operator",
-            namespace=self.pipelines_operator_namespace,
-            csv_name=tekton_csv,
-            timeout_seconds=600,
-            csv_prefix="openshift-pipelines-operator-rh.",
-            catalog_source="redhat-operators",
-        )
-
-        step("Waiting for Tekton CRDs")
-        self._wait_for_resource(
-            resource="crd/tasks.tekton.dev",
-            namespace=None,
-            timeout_seconds=600,
-            label="CRD tasks.tekton.dev",
-        )
-        self._wait_for_resource(
-            resource="crd/pipelines.tekton.dev",
-            namespace=None,
-            timeout_seconds=600,
-            label="CRD pipelines.tekton.dev",
-        )
-        self._wait_for_resource(
-            resource="crd/pipelineruns.tekton.dev",
-            namespace=None,
-            timeout_seconds=600,
-            label="CRD pipelineruns.tekton.dev",
-        )
-
-        step("Waiting for Tekton service accounts")
-        for sa_name in (
-            "serviceaccount/tekton-pipelines-controller",
-            "serviceaccount/tekton-events-controller",
-            "serviceaccount/tekton-pipelines-webhook",
-        ):
-            self._wait_for_resource(
-                resource=sa_name,
-                namespace=self.pipelines_runtime_namespace,
-                timeout_seconds=600,
-                label=f"{sa_name} in namespace {self.pipelines_runtime_namespace}",
-            )
-
-        self.configure_tekton_scc()
-
-        step("Waiting for Tekton controllers")
-        for deployment in (
-            "deployment/tekton-pipelines-controller",
-            "deployment/tekton-pipelines-webhook",
-        ):
-            self._wait_for_resource(
-                resource=deployment,
-                namespace=self.pipelines_runtime_namespace,
-                timeout_seconds=600,
-                label=f"{deployment} in namespace {self.pipelines_runtime_namespace}",
-            )
-            self._oc(
-                "wait",
-                "--for=condition=available",
-                "--timeout=10m",
-                deployment,
-                "-n",
-                self.pipelines_runtime_namespace,
-                retry=True,
-                description=f"waiting for {deployment} in {self.pipelines_runtime_namespace}",
-            )
+        install_bootstrap_tekton_if_needed(self)
 
     def install_kueue_if_needed(self) -> None:
-        if self.kueue_ready():
-            success("Kueue CRDs and controller are already present")
-            return
-
-        self.ensure_namespace(self.kueue_namespace)
-        if not self._kueue_crds_present():
-            step(f"Installing Kueue in {self.kueue_namespace}")
-            self._oc(
-                "apply",
-                "--server-side",
-                "-f",
-                "https://github.com/kubernetes-sigs/kueue/releases/download/v0.16.4/manifests.yaml",
-                retry=True,
-                description="installing Kueue",
-                echo_output=True,
-            )
-
-        step("Waiting for Kueue CRDs")
-        for crd_name in (
-            "crd/admissionchecks.kueue.x-k8s.io",
-            "crd/clusterqueues.kueue.x-k8s.io",
-            "crd/localqueues.kueue.x-k8s.io",
-            "crd/resourceflavors.kueue.x-k8s.io",
-            "crd/workloads.kueue.x-k8s.io",
-        ):
-            self._wait_for_resource(
-                resource=crd_name,
-                namespace=None,
-                timeout_seconds=600,
-                label=crd_name,
-            )
-
-        step("Waiting for the Kueue controller manager")
-        self._wait_for_resource(
-            resource="deployment/kueue-controller-manager",
-            namespace=self.kueue_namespace,
-            timeout_seconds=600,
-            label=f"deployment/kueue-controller-manager in namespace {self.kueue_namespace}",
-        )
-        self._oc(
-            "wait",
-            "--for=condition=available",
-            "--timeout=10m",
-            "deployment/kueue-controller-manager",
-            "-n",
-            self.kueue_namespace,
-            retry=True,
-            description="waiting for deployment/kueue-controller-manager",
-        )
+        install_bootstrap_kueue_if_needed(self)
 
     def apply_kueue_support_resources(self) -> None:
-        step("Applying BenchFlow Kueue support resources")
-        self._apply_asset_documents(
-            "operators/kueue/controller.yaml",
-            namespace=None,
-            description="applying BenchFlow Kueue support resources",
-            variables=self._base_asset_variables(),
-        )
-        self.wait_for_kueue_support_ready(timeout_seconds=600)
+        apply_bootstrap_kueue_support_resources(self)
 
     def wait_for_kueue_support_ready(self, timeout_seconds: int) -> None:
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            if not self._resource_exists(
-                "get",
-                "deployment",
-                REMOTE_CAPACITY_CONTROLLER_DEPLOYMENT,
-                "-n",
-                self.options.namespace,
-            ):
-                time.sleep(5)
-                continue
-            deployment = self._oc_json(
-                "get",
-                "deployment",
-                REMOTE_CAPACITY_CONTROLLER_DEPLOYMENT,
-                "-n",
-                self.options.namespace,
-                retry=True,
-                description=f"reading deployment/{REMOTE_CAPACITY_CONTROLLER_DEPLOYMENT}",
-            )
-            status = deployment.get("status", {}) or {}
-            ready = int(status.get("readyReplicas", 0) or 0)
-            desired = int(status.get("replicas", 0) or 0)
-            if desired > 0 and ready >= desired:
-                return
-            time.sleep(5)
-        raise CommandError(
-            "timed out waiting for the BenchFlow remote-capacity controller deployment"
-        )
+        wait_for_bootstrap_kueue_support_ready(self, timeout_seconds=timeout_seconds)
 
     def register_kueue_cluster_queue(
         self, *, cluster_name: str, gpu_capacity: int
     ) -> None:
-        ensure_cluster_queue_resources(
-            namespace=self.options.namespace,
+        register_bootstrap_kueue_cluster_queue(
+            self,
             cluster_name=cluster_name,
             gpu_capacity=gpu_capacity,
         )
 
     def configure_tekton_scc(self) -> None:
-        if not self._resource_exists(
-            "get", "namespace", self.pipelines_runtime_namespace
-        ):
-            detail(
-                f"Skipping Tekton SCC configuration because {self.pipelines_runtime_namespace} does not exist yet"
-            )
-            return
-
-        step("Configuring Tekton SCCs")
-        for service_account in (
-            "tekton-pipelines-controller",
-            "tekton-events-controller",
-            "tekton-pipelines-webhook",
-        ):
-            result = self._oc(
-                "adm",
-                "policy",
-                "add-scc-to-user",
-                "privileged",
-                "-z",
-                service_account,
-                "-n",
-                self.pipelines_runtime_namespace,
-                retry=True,
-                description=f"granting privileged SCC to {service_account}",
-                check=False,
-            )
-            if result.returncode != 0:
-                warning(f"Could not grant privileged SCC to {service_account}")
-                if result.stderr:
-                    emit(
-                        result.stderr,
-                        end="" if result.stderr.endswith("\n") else "\n",
-                        stderr=True,
-                    )
-            else:
-                success(f"Granted privileged SCC to {service_account}")
+        configure_bootstrap_tekton_scc(self)
 
     def install_grafana_if_needed(self) -> None:
-        if not self.options.install_grafana:
-            detail(
-                "Skipping Grafana install because install_grafana=false for this bootstrap run"
-            )
-            return
-        success(
-            f"Grafana will be installed directly in namespace {self.grafana_namespace}"
-        )
+        maybe_install_bootstrap_grafana(self)
 
     def install_real_secrets(self) -> None:
-        secrets_dir = self.repo_root / "config" / "cluster" / "secrets"
-        found = False
-        for secret_file in sorted(secrets_dir.glob("*.yaml")):
-            if secret_file.name.endswith(".example.yaml"):
-                continue
-            found = True
-            step(f"Applying secret {secret_file.name}")
-            self._oc(
-                "apply",
-                "-n",
-                self.options.namespace,
-                "-f",
-                str(secret_file),
-                retry=True,
-                description=f"applying secret {secret_file.name}",
-                echo_output=True,
-            )
-        if not found:
-            detail("No non-example secrets found under config/cluster/secrets")
+        install_bootstrap_real_secrets(self)
 
     def apply_manifest_tree(self, root_dir: Path, label: str) -> None:
-        step(f"Applying {label}")
-        for manifest in sorted(root_dir.rglob("*.yaml")):
-            detail(str(manifest.relative_to(self.repo_root)))
-            self._oc(
-                "apply",
-                "-n",
-                self.options.namespace,
-                "-f",
-                str(manifest),
-                retry=True,
-                description=f"applying {manifest.relative_to(self.repo_root)}",
-                echo_output=True,
-            )
+        apply_bootstrap_manifest_tree(self, root_dir, label)
 
     def apply_workspace_pvcs(self) -> None:
-        variables = {
-            "MODELS_STORAGE_ACCESS_MODE": self.options.models_storage_access_mode,
-            "MODELS_STORAGE_CLASS": self.options.models_storage_class,
-            "MODELS_STORAGE_SIZE": self.options.models_storage_size,
-            "RESULTS_STORAGE_CLASS": self.options.results_storage_class,
-            "RESULTS_STORAGE_SIZE": self.options.results_storage_size,
-        }
-        documents = self._render_asset_documents("workspaces/pvcs.yaml", variables)
-        selected: list[dict[str, Any]] = []
-        for document in documents:
-            name = str(document.get("metadata", {}).get("name") or "")
-            if name == "models-storage" and self.options.install_models_storage:
-                selected.append(document)
-            elif name == "benchmark-results" and self.options.install_results_storage:
-                selected.append(document)
-        if not selected:
-            detail("Skipping workspace PVCs for this bootstrap mode")
-            return
-        step("Applying workspace PVCs")
-        self._apply_documents(
-            selected,
-            namespace=self.options.namespace,
-            description="applying workspace PVCs",
-        )
+        apply_bootstrap_workspace_pvcs(self)
 
     def apply_cluster_monitoring_rbac(self) -> None:
-        step("Applying cluster monitoring RBAC")
-        if not self._resource_exists("get", "clusterrole", "cluster-monitoring-view"):
-            raise CommandError(
-                "required ClusterRole not found: cluster-monitoring-view. "
-                "This BenchFlow MVP expects OpenShift cluster monitoring to be available."
-            )
-
-        self._apply_asset_documents(
-            "rbac/runner-cluster-monitoring-view.yaml",
-            namespace=None,
-            description="applying cluster monitoring RBAC",
-            variables=self._base_asset_variables(),
-        )
+        apply_bootstrap_cluster_monitoring_rbac(self)
 
     def apply_runner_rbac(self) -> None:
-        step("Applying runner RBAC")
-        self._apply_asset_documents(
-            "rbac/runner-namespaced.yaml",
-            namespace=self.options.namespace,
-            description="applying runner RBAC",
-            variables=self._base_asset_variables(),
-        )
-        if self._resource_exists("get", "namespace", "istio-system"):
-            self._apply_asset_documents(
-                "rbac/runner-istio-system.yaml",
-                namespace=None,
-                description="applying istio-system runner RBAC",
-                variables=self._base_asset_variables(),
-            )
-        else:
-            detail(
-                "Skipping istio-system runner RBAC because namespace istio-system does not exist"
-            )
-        self._apply_asset_documents(
-            "rbac/runner-cluster.yaml",
-            namespace=None,
-            description="applying runner cluster RBAC",
-            variables=self._base_asset_variables(),
-        )
+        apply_bootstrap_runner_rbac(self)
 
     def apply_namespaced_resources(self) -> None:
-        step("Applying namespace RBAC")
-        self._apply_asset_documents(
-            "rbac/runner-base.yaml",
-            namespace=self.options.namespace,
-            description="applying namespace service account",
-            variables=self._base_asset_variables(),
-        )
-        self.apply_runner_rbac()
-        self.apply_cluster_monitoring_rbac()
-        self.apply_workspace_pvcs()
-        if self.options.install_tekton:
-            self.apply_manifest_tree(
-                self.repo_root / "tekton" / "tasks", "Tekton tasks"
-            )
-            self.apply_manifest_tree(
-                self.repo_root / "tekton" / "pipelines", "Tekton pipelines"
-            )
+        apply_bootstrap_namespaced_resources(self)
 
     def discover_grafana_route_host(self) -> str | None:
-        if not self._resource_exists("get", "route", "-n", self.grafana_namespace):
-            return None
-        routes = self._oc_json(
-            "get",
-            "route",
-            "-n",
-            self.grafana_namespace,
-            retry=True,
-            description="reading routes",
-        )
-        for item in routes.get("items", []):
-            name = item.get("metadata", {}).get("name", "")
-            host = item.get("spec", {}).get("host", "")
-            if "grafana" in name and host:
-                return str(host)
-        return None
+        return discover_bootstrap_grafana_route_host(self)
 
     def wait_for_grafana_route(self, timeout_seconds: int) -> None:
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            host = self.discover_grafana_route_host()
-            if host:
-                return
-            time.sleep(5)
-        raise CommandError("timed out waiting for the Grafana route")
+        wait_for_bootstrap_grafana_route(self, timeout_seconds)
 
     def wait_for_grafana_ready(self, timeout_seconds: int) -> None:
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            if not self._resource_exists(
-                "get", "deployment", "grafana", "-n", self.grafana_namespace
-            ):
-                time.sleep(5)
-                continue
-            deployment = self._oc_json(
-                "get",
-                "deployment",
-                "grafana",
-                "-n",
-                self.grafana_namespace,
-                retry=True,
-                description="reading deployment/grafana",
-            )
-            status = deployment.get("status", {}) or {}
-            ready = int(status.get("readyReplicas", 0) or 0)
-            desired = int(status.get("replicas", 0) or 0)
-            if desired > 0 and ready >= desired:
-                return
-            time.sleep(5)
-        raise CommandError("timed out waiting for deployment/grafana to become ready")
+        wait_for_bootstrap_grafana_ready(self, timeout_seconds)
 
     def apply_grafana_stack(self) -> None:
-        if not self.options.install_grafana:
-            return
-
-        step("Applying Grafana monitoring RBAC")
-        self._apply_asset_documents(
-            "operators/grafana/rbac.yaml",
-            namespace=None,
-            description="applying Grafana service account resources",
-            variables=self._base_asset_variables(),
-        )
-        self._wait_for_secret_key(
-            name=self.grafana_datasource_token_secret,
-            key="token",
-            namespace=self.grafana_namespace,
-            timeout_seconds=300,
-        )
-        if not self._resource_exists(
-            "get",
-            "secret",
-            self.grafana_admin_secret_name,
-            "-n",
-            self.grafana_namespace,
-        ):
-            self._apply_asset_documents(
-                "operators/grafana/admin-secret.yaml",
-                namespace=self.grafana_namespace,
-                description="applying Grafana admin credentials",
-                variables={
-                    **self._base_asset_variables(),
-                    "GRAFANA_ADMIN_USER": "admin",
-                    "GRAFANA_ADMIN_PASSWORD": secrets.token_urlsafe(24),
-                },
-            )
-
-        step("Applying Grafana deployment, route, datasource, and dashboards")
-        grafana_stack_variables = {
-            **self._base_asset_variables(),
-            "GRAFANA_DATASOURCES_YAML": self._asset_text(
-                "operators/grafana/datasources.yaml"
-            ),
-            "GRAFANA_DASHBOARDS_YAML": self._asset_text(
-                "operators/grafana/dashboard-providers.yaml"
-            ),
-            "GRAFANA_LIVE_DASHBOARD_JSON": self._asset_text(
-                "operators/grafana/benchflow-live-dashboard.json"
-            ),
-        }
-        self._apply_documents(
-            [
-                *self._render_asset_documents(
-                    "operators/grafana/provisioning-configmap.yaml",
-                    grafana_stack_variables,
-                ),
-                *self._render_asset_documents(
-                    "operators/grafana/dashboards-configmap.yaml",
-                    grafana_stack_variables,
-                ),
-                *self._render_asset_documents(
-                    "operators/grafana/deployment.yaml",
-                    grafana_stack_variables,
-                ),
-                *self._render_asset_documents(
-                    "operators/grafana/service.yaml",
-                    grafana_stack_variables,
-                ),
-                *self._render_asset_documents(
-                    "operators/grafana/route.yaml",
-                    grafana_stack_variables,
-                ),
-            ],
-            namespace=self.grafana_namespace,
-            description="applying Grafana stack",
-        )
-        step("Waiting for Grafana route")
-        self.wait_for_grafana_route(timeout_seconds=600)
-        step("Waiting for Grafana to become ready")
-        self.wait_for_grafana_ready(timeout_seconds=600)
+        apply_bootstrap_grafana_stack(self)
 
 
 def run_bootstrap(
