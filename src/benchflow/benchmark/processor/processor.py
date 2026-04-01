@@ -375,6 +375,7 @@ class BenchmarkProcessor:
         turns: Optional[int] = None,
         prefix_tokens: Optional[int] = None,
         prefix_count: Optional[int] = None,
+        repeat_section_legends: bool = False,
     ):
         """
         Initialize the benchmark processor.
@@ -399,6 +400,7 @@ class BenchmarkProcessor:
             turns: Number of turns for multi-turn benchmarks (optional)
             prefix_tokens: Prefix tokens for prefix caching benchmarks (optional)
             prefix_count: Prefix count for prefix caching benchmarks (optional)
+            repeat_section_legends: Render repeated side legends per section (optional)
         """
         self.json_path = json_path
         self.config_path = config_path
@@ -411,6 +413,7 @@ class BenchmarkProcessor:
         self.runtime_args = runtime_args
         self.replicas = replicas
         self.output_html = output_html or "benchmark_report.html"
+        self.repeat_section_legends = repeat_section_legends
 
         # Data profile parameters
         normalized_profile = {
@@ -1221,7 +1224,7 @@ class BenchmarkProcessor:
                 "<b>E2E Latency P99</b><br><sub>Lower is better</sub>",
             ]
             total_rows = 9
-            row_heights = [1.2, 1.0, 1.0, 1.2, 1.0, 1.0, 1.0, 1.0, 1.0]
+            row_heights = [1.8, 1.5, 1.5, 1.2, 1.0, 1.0, 1.0, 1.0, 1.0]
         else:
             specs = [
                 [{"colspan": 3}, None, None],
@@ -1253,7 +1256,7 @@ class BenchmarkProcessor:
                 "<b>E2E Latency P99</b><br><sub>Lower is better</sub>",
             ]
             total_rows = 8
-            row_heights = [1.2, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            row_heights = [1.8, 1.5, 1.5, 1.0, 1.0, 1.0, 1.0, 1.0]
 
         fig = make_subplots(
             rows=total_rows,
@@ -1304,6 +1307,7 @@ class BenchmarkProcessor:
             config_to_color[label] = colors[idx % len(colors)]
             config_to_marker[label] = markers[idx % len(markers)]
 
+        legend_labels = list(config_to_color.keys())
         legend_entries = set()
 
         if has_ttft_distribution:
@@ -1359,7 +1363,11 @@ class BenchmarkProcessor:
                 color = config_to_color[label]
                 marker = config_to_marker[label]
 
-                show_legend = label not in legend_entries
+                show_legend = (
+                    False
+                    if self.repeat_section_legends
+                    else label not in legend_entries
+                )
                 if show_legend:
                     legend_entries.add(label)
 
@@ -1437,16 +1445,38 @@ class BenchmarkProcessor:
 
         if has_ttft_distribution:
             distribution_data = self.ttft_distribution_df.copy()
-            distribution_data["intended concurrency"] = distribution_data[
-                "intended concurrency"
-            ].astype(str)
+            numeric_concurrency = pd.to_numeric(
+                distribution_data["intended concurrency"], errors="coerce"
+            )
+            distribution_data["intended concurrency"] = [
+                (
+                    str(int(value))
+                    if pd.notna(value) and float(value).is_integer()
+                    else str(value)
+                )
+                if pd.notna(value)
+                else str(raw_value)
+                for value, raw_value in zip(
+                    numeric_concurrency,
+                    distribution_data["intended concurrency"],
+                    strict=False,
+                )
+            ]
+            distribution_categories = [
+                str(int(value)) if float(value).is_integer() else str(value)
+                for value in sorted(numeric_concurrency.dropna().unique().tolist())
+            ]
             for group_key, group_data in distribution_data.groupby(
                 ["accelerator", "version", "TP", "replicas"]
             ):
                 accelerator, version, tp, replicas = group_key
                 label = f"{accelerator} | {version} | TP={int(tp)} | R={int(replicas)}"
                 color = config_to_color.get(label, colors[0])
-                show_legend = label not in legend_entries
+                show_legend = (
+                    False
+                    if self.repeat_section_legends
+                    else label not in legend_entries
+                )
                 if show_legend:
                     legend_entries.add(label)
                 fig.add_trace(
@@ -1471,6 +1501,12 @@ class BenchmarkProcessor:
                     row=4,
                     col=1,
                 )
+            fig.update_xaxes(
+                categoryorder="array",
+                categoryarray=distribution_categories,
+                row=4,
+                col=1,
+            )
 
         if has_ttft_distribution:
             axis_labels = [
@@ -1538,9 +1574,85 @@ class BenchmarkProcessor:
             fig.update_xaxes(title_text=x_label, row=row, col=col)
             fig.update_yaxes(title_text=y_label, row=row, col=col)
 
+        def _row_top(row: int) -> float:
+            domain = fig.get_subplot(row, 1).yaxis.domain
+            return domain[1]
+
+        def _build_repeated_legend(legend_name: str, y_top: float) -> None:
+            for legend_index, label in enumerate(legend_labels):
+                fig.add_trace(
+                    go.Scatter(
+                        x=[None],
+                        y=[None],
+                        mode="lines+markers",
+                        name=label,
+                        legend=legend_name,
+                        legendgroup=label,
+                        legendrank=legend_index,
+                        showlegend=True,
+                        hoverinfo="skip",
+                        line=dict(color=config_to_color[label], width=2),
+                        marker=dict(
+                            size=8,
+                            symbol=config_to_marker[label],
+                            line=dict(width=1, color="white"),
+                            color=config_to_color[label],
+                        ),
+                    )
+                )
+
+            fig.update_layout(
+                **{
+                    legend_name: dict(
+                        title={"text": "<b>Configuration</b>"},
+                        orientation="v",
+                        yanchor="top",
+                        y=y_top,
+                        xanchor="left",
+                        x=1.01,
+                        bordercolor="#cbd5e1",
+                        borderwidth=1,
+                        bgcolor="rgba(255,255,255,0.94)",
+                        font={"size": 10},
+                        groupclick="togglegroup",
+                    )
+                }
+            )
+
+        legend_positions = [
+            ("legend", _row_top(1)),
+            ("legend2", _row_top(2)),
+            ("legend3", _row_top(3)),
+        ]
+        if has_ttft_distribution:
+            legend_positions.extend(
+                [
+                    ("legend4", _row_top(4)),
+                    ("legend5", _row_top(5)),
+                    ("legend6", _row_top(7)),
+                    ("legend7", _row_top(8)),
+                    ("legend8", _row_top(9)),
+                ]
+            )
+        else:
+            legend_positions.extend(
+                [
+                    ("legend4", _row_top(4)),
+                    ("legend5", _row_top(6)),
+                    ("legend6", _row_top(7)),
+                    ("legend7", _row_top(8)),
+                ]
+            )
+
+        if self.repeat_section_legends and legend_labels:
+            for legend_name, y_top in legend_positions:
+                _build_repeated_legend(legend_name, y_top)
+
         # Calculate dimensions
-        plot_width = 480 * 3  # 3 columns × 480px each = 1440px
-        plot_height = (420 * total_rows) + (140 if has_ttft_distribution else 0)
+        plot_width = 1540 if self.repeat_section_legends else 1440
+        plot_height = int(
+            (420 * sum(row_heights)) + (140 if has_ttft_distribution else 0)
+        )
 
         model_short_name = model_config["model"].split("/")[-1]
 
@@ -1611,18 +1723,13 @@ class BenchmarkProcessor:
             plot_bgcolor="white",
             paper_bgcolor="white",
             font={"family": "Arial, sans-serif", "size": 11},
-            margin=dict(t=top_margin, l=80, r=250, b=50),
-            legend={
-                "title": {"text": "<b>Configuration</b>"},
-                "orientation": "v",
-                "yanchor": "top",
-                "y": 1,
-                "xanchor": "left",
-                "x": 1.01,
-                "bordercolor": "black",
-                "borderwidth": 1,
-            },
-            showlegend=True,
+            margin=dict(
+                t=top_margin,
+                l=80,
+                r=360 if self.repeat_section_legends else 250,
+                b=50,
+            ),
+            showlegend=bool(legend_labels),
             boxmode="group",
         )
 

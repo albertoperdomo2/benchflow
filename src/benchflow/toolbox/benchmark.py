@@ -193,6 +193,7 @@ def generate_plan_report(
     versions: list[str] | None,
     version_overrides: dict[str, str],
     additional_csv_files: list[str] | tuple[str, ...] | None,
+    repeat_section_legends: bool = False,
 ) -> Path:
     model = model_name or (plan.model.name if plan is not None else None)
     resolved_version = version or (
@@ -227,4 +228,5 @@ def generate_plan_report(
         versions=versions,
         version_overrides=version_overrides,
         additional_csv_files=additional_csv_files,
+        repeat_section_legends=repeat_section_legends,
     )

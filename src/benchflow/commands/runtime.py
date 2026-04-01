@@ -775,6 +775,7 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         else None,
         version_overrides=parse_version_overrides(args.version_override),
         additional_csv_files=args.additional_csv or None,
+        repeat_section_legends=bool(args.repeat_section_legends),
     )
     print(report_path)
     return 0
@@ -1652,6 +1653,14 @@ def benchmark_run_command(**kwargs: object) -> int:
     multiple=True,
     type=click.Path(dir_okay=False, path_type=Path),
     help="Additional CSV inputs to include in the report.",
+)
+@click.option(
+    "--repeat-section-legends",
+    is_flag=True,
+    help=(
+        "Repeat right-side legends for each report section. "
+        "Useful when taking screenshots of individual sections."
+    ),
 )
 def benchmark_report_command(**kwargs: object) -> int:
     return invoke_handler(cmd_benchmark_report, **kwargs)

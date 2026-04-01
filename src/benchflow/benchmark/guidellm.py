@@ -242,6 +242,7 @@ def generate_report(
     versions: list[str] | None = None,
     version_overrides: dict[str, str] | None = None,
     additional_csv_files: list[str] | None = None,
+    repeat_section_legends: bool = False,
 ) -> Path:
     module = _load_guidellm_module()
 
@@ -255,6 +256,7 @@ def generate_report(
             versions_override=version_overrides or {},
             output_dir=str(output_dir) if output_dir else None,
             output_file=str(output_file) if output_file else None,
+            repeat_section_legends=repeat_section_legends,
         )
         if not html_path:
             raise CommandError("GuideLLM report generation returned no output path")
@@ -275,6 +277,7 @@ def generate_report(
         output_dir=str(output_dir) if output_dir else None,
         output_file=str(output_file) if output_file else None,
         replicas=replicas,
+        repeat_section_legends=repeat_section_legends,
     )
     if not html_path:
         raise CommandError("GuideLLM report generation returned no output path")
