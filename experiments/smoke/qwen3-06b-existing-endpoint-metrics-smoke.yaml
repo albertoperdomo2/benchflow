@@ -1,0 +1,14 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen3-06b-existing-endpoint
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: rhoai-distributed-default
+  benchmark_profile: guidellm-smoke
+  metrics_profile: detailed
+  namespace: benchflow
+  target:
+    base_url: https://my-existing-endpoint.example.com
+    metrics_release_name: qwen3-06b-existing-release

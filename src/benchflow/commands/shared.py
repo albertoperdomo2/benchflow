@@ -258,6 +258,11 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             if target_path is not None
             else base_experiment.spec.target.path
         ),
+        metrics_release_name=(
+            str(getattr(args, "target_metrics_release_name", "") or "").strip()
+            if getattr(args, "target_metrics_release_name", None) is not None
+            else base_experiment.spec.target.metrics_release_name
+        ),
     )
     target_host_aliases = dict(base_experiment.spec.target_cluster.host_aliases)
     if resolved_target_kubeconfig_secret:
@@ -504,11 +509,24 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
         ),
         click.option(
             "--target-url",
-            help="Benchmark an existing endpoint base URL instead of resolving a deployed target.",
+            help=(
+                "Benchmark an existing endpoint base URL instead of resolving a "
+                "deployed target. BenchFlow automatically disables download, "
+                "deploy, and cleanup for this path."
+            ),
         ),
         click.option(
             "--target-path",
             help="Readiness path for an existing target URL. Defaults to /v1/models.",
+        ),
+        click.option(
+            "--target-metrics-release-name",
+            help=(
+                "Workload release identity used for Prometheus metrics collection "
+                "when benchmarking an already deployed endpoint. If set, "
+                "BenchFlow automatically enables metrics collection for the "
+                "existing-endpoint path."
+            ),
         ),
         click.option(
             "--cluster-name",

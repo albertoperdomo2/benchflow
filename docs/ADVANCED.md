@@ -340,6 +340,7 @@ spec:
   target:
     base_url: https://my-existing-endpoint.example.com # --target-url
     path: /v1/models # --target-path; defaults to /v1/models
+    metrics_release_name: my-existing-release # --target-metrics-release-name; enables metrics collection for an existing endpoint
   ttl_seconds_after_finished: 3600 # --ttl-seconds-after-finished
   stages:
     download: true # --download / --no-download
@@ -415,7 +416,10 @@ Target-cluster semantics:
 Existing endpoint path:
 
 - set `spec.target.base_url` to benchmark an already deployed endpoint
-- this is a benchmark-only path; disable `download`, `deploy`, `collect`, and `cleanup`
+- BenchFlow automatically disables `download`, `deploy`, and `cleanup`
+- BenchFlow automatically disables `collect` unless `spec.target.metrics_release_name` is set
+- when `spec.target.metrics_release_name` is set, BenchFlow treats the collect phase as metrics-focused for the existing endpoint path
+- in that mode, BenchFlow still preserves benchmark outputs and execution logs, but it does not try to sweep workload logs or manifests from an arbitrary existing deployment
 - BenchFlow resolves the target as a static URL and skips deployment discovery entirely
 
 Example:
@@ -433,12 +437,7 @@ spec:
   metrics_profile: detailed
   target:
     base_url: https://my-existing-endpoint.example.com
-  stages:
-    download: false
-    deploy: false
-    benchmark: true
-    collect: false
-    cleanup: false
+    metrics_release_name: qwen-existing-release
 ```
 - setup, deploy, teardown, and cleanup run from the control cluster against the target kubeconfig
 - download, wait-for-endpoint, benchmark, artifact collection, and metrics collection run as plain Kubernetes `Job`s in the target cluster and copy results back when needed

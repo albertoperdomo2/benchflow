@@ -216,6 +216,7 @@ class ClusterTargetSpec:
 class ExperimentTargetSpec:
     base_url: str = ""
     path: str = "/v1/models"
+    metrics_release_name: str = ""
 
     def enabled(self) -> bool:
         return bool(self.base_url.strip())
@@ -392,6 +393,10 @@ class TargetSpec:
     resource_kind: str = ""
     resource_name: str = ""
     path: str = "/v1/models"
+    metrics_release_name: str = ""
+
+    def scoped_release_name(self, default: str) -> str:
+        return str(self.metrics_release_name or "").strip() or default
 
 
 @dataclass(slots=True)

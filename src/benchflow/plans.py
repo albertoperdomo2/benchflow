@@ -11,6 +11,7 @@ from .models import (
     ResolvedDeployment,
     ResolvedRunPlan,
     RuntimeSpec,
+    StageSpec,
     TargetSpec,
     ValidationError,
     normalize_model_names,
@@ -41,17 +42,19 @@ def _validate_profiling_support(*, platform: str, profiling_enabled: bool) -> No
 def _validate_existing_target_support(experiment: Experiment) -> None:
     if not experiment.spec.target.enabled():
         return
-    invalid_stages = [
-        stage_name
-        for stage_name in ("download", "deploy", "collect", "cleanup")
-        if getattr(experiment.spec.stages, stage_name)
-    ]
-    if invalid_stages:
-        joined = ", ".join(invalid_stages)
-        raise ValidationError(
-            "spec.target.base_url requires the following stages to be disabled: "
-            f"{joined}"
-        )
+    return
+
+
+def _resolved_stage_spec(experiment: Experiment) -> StageSpec:
+    if not experiment.spec.target.enabled():
+        return experiment.spec.stages
+    return StageSpec(
+        download=False,
+        deploy=False,
+        benchmark=experiment.spec.stages.benchmark,
+        collect=bool(str(experiment.spec.target.metrics_release_name or "").strip()),
+        cleanup=False,
+    )
 
 
 def _validate_benchmark_env(env: dict[str, str]) -> None:
@@ -328,6 +331,7 @@ def resolve_run_plan(
             discovery="static",
             base_url=experiment.spec.target.base_url.rstrip("/"),
             path=experiment.spec.target.path,
+            metrics_release_name=experiment.spec.target.metrics_release_name,
         )
         if experiment.spec.target.enabled()
         else _target_for(
@@ -391,7 +395,7 @@ def resolve_run_plan(
         deployment=deployment,
         benchmark=benchmark,
         metrics=metrics_profile.spec,
-        stages=experiment.spec.stages,
+        stages=_resolved_stage_spec(experiment),
         mlflow=mlflow,
         service_account=experiment.spec.service_account,
         ttl_seconds_after_finished=experiment.spec.ttl_seconds_after_finished,

@@ -65,7 +65,7 @@ def _build_grafana_url(
         f"{grafana_base_url}/d/benchflow"
         f"?var-run_id={run_id}"
         f"&var-namespace={plan.deployment.namespace}"
-        f"&var-release={plan.deployment.release_name}"
+        f"&var-release={plan.deployment.target.scoped_release_name(plan.deployment.release_name)}"
         f"&from={start_ms}"
         f"&to={end_ms}"
     )

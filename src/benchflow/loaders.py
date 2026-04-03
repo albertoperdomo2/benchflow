@@ -288,11 +288,16 @@ def _experiment_target_from_dict(raw: dict[str, Any] | None) -> ExperimentTarget
         raise ValidationError("target must be a mapping")
     base_url = str(raw.get("base_url", "") or "").strip()
     path = str(raw.get("path", "/v1/models") or "/v1/models").strip()
+    metrics_release_name = str(raw.get("metrics_release_name", "") or "").strip()
     if not path:
         raise ValidationError("target.path must not be empty")
     if raw and not base_url:
         raise ValidationError("target.base_url must not be empty")
-    return ExperimentTargetSpec(base_url=base_url, path=path)
+    return ExperimentTargetSpec(
+        base_url=base_url,
+        path=path,
+        metrics_release_name=metrics_release_name,
+    )
 
 
 def load_yaml_file(path: Path) -> dict[str, Any]:
@@ -526,6 +531,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
             resource_kind=str(target_raw.get("resource_kind", "")),
             resource_name=str(target_raw.get("resource_name", "")),
             path=str(target_raw.get("path", "/v1/models")),
+            metrics_release_name=str(target_raw.get("metrics_release_name", "")),
         ),
     )
 

@@ -143,13 +143,18 @@ def collect_metrics(
     raw_dir.mkdir(parents=True, exist_ok=True)
     prometheus_dir.mkdir(parents=True, exist_ok=True)
     step(
-        f"Collecting Prometheus metrics for {plan.deployment.release_name} "
+        f"Collecting Prometheus metrics for "
+        f"{plan.deployment.target.scoped_release_name(plan.deployment.release_name)} "
         f"from {benchmark_start_time} to {benchmark_end_time}"
     )
     detail(f"Prometheus URL: {plan.metrics.prometheus_url}")
     detail(
         f"Query step: {plan.metrics.query_step}, timeout: {plan.metrics.query_timeout}, "
         f"TLS verification: {'enabled' if plan.metrics.verify_tls else 'disabled'}"
+    )
+
+    metrics_release_name = plan.deployment.target.scoped_release_name(
+        plan.deployment.release_name
     )
 
     queries = plan.metrics.queries or {}
@@ -185,14 +190,14 @@ def collect_metrics(
     query_metadata: dict[str, str] = {}
     archive_index: dict[str, object] = {
         "namespace": plan.deployment.namespace,
-        "release_name": plan.deployment.release_name,
+        "release_name": metrics_release_name,
         "benchmark_start_time": start_time.isoformat().replace("+00:00", "Z"),
         "benchmark_end_time": end_time.isoformat().replace("+00:00", "Z"),
         "metrics": {},
     }
     summary: dict[str, object] = {
         "namespace": plan.deployment.namespace,
-        "release_name": plan.deployment.release_name,
+        "release_name": metrics_release_name,
         "prometheus_url": plan.metrics.prometheus_url,
         "verify_tls": plan.metrics.verify_tls,
         "benchmark_start_time": start_time.isoformat().replace("+00:00", "Z"),
@@ -209,7 +214,7 @@ def collect_metrics(
     for metric_name, query_template in sorted(queries.items()):
         resolved_query = query_template.replace(
             "$namespace", plan.deployment.namespace
-        ).replace("$release", plan.deployment.release_name)
+        ).replace("$release", metrics_release_name)
         query_metadata[metric_name] = resolved_query
         detail(f"Querying metric {metric_name}")
         params = urllib.parse.urlencode(

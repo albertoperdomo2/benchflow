@@ -104,6 +104,9 @@ def _normalize_accelerator_label(raw: str) -> str:
 def _matching_model_pods(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     kubectl_cmd = require_any_command("oc", "kubectl")
     kubeconfig = str(plan.target_cluster.kubeconfig or "").strip() or None
+    metrics_release_name = plan.deployment.target.scoped_release_name(
+        plan.deployment.release_name
+    )
     with use_kubeconfig(kubeconfig):
         payload = run_json_command(
             [
@@ -131,7 +134,7 @@ def _matching_model_pods(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
         pod_name = str(metadata.get("name") or "")
         if not pod_name or _pod_type(pod_name) != "model":
             continue
-        if _matches_release(metadata, plan.deployment.release_name):
+        if _matches_release(metadata, metrics_release_name):
             matched.append(item)
     return matched
 
