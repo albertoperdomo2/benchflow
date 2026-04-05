@@ -914,10 +914,60 @@ Notes:
 - cached runs are reused from `/tmp/benchflow-metrics-viewer`
 - the run must already contain BenchFlow `metrics/` artifacts in MLflow
 
-## Comparison Reports
+## Benchmark Reports
 
-Use `bflow benchmark report` to generate a comparison report from existing
-MLflow runs.
+BenchFlow has two report commands:
+
+- `bflow benchmark plot run`
+- `bflow benchmark plot comparison`
+
+`bflow benchmark report` still exists as a compatibility alias for
+`bflow benchmark plot comparison`.
+
+### Post-Run Reports
+
+Use `bflow benchmark plot run` when you already have a collected BenchFlow
+artifact directory and want the richer single-run HTML report.
+
+```bash
+bflow benchmark plot run \
+  --artifacts-dir ./artifacts
+```
+
+Write the report under a specific directory:
+
+```bash
+bflow benchmark plot run \
+  --artifacts-dir ./artifacts \
+  --output-dir ./reports
+```
+
+Write the report to an exact file path:
+
+```bash
+bflow benchmark plot run \
+  --artifacts-dir ./artifacts \
+  --output-file ./reports/full-run.html
+```
+
+Control the diagnostics grid density:
+
+```bash
+bflow benchmark plot run \
+  --artifacts-dir ./artifacts \
+  --columns 2
+```
+
+This command expects a collected artifact tree with benchmark outputs and
+metrics. The report derives total accelerator count from `tp * replicas` in the
+collected `metadata.json`. In the normal BenchFlow workflow the same post-run
+report is generated automatically after collection, before artifacts are
+uploaded to MLflow.
+
+### Comparison Reports
+
+Use `bflow benchmark plot comparison` to generate the comparison report from
+existing MLflow runs or benchmark JSON inputs.
 
 You can either pass `--mlflow-tracking-uri` explicitly or let BenchFlow and the
 MLflow client read the standard environment variables:
@@ -932,14 +982,14 @@ export MLFLOW_TRACKING_INSECURE_TLS=true
 With those environment variables set, you can omit `--mlflow-tracking-uri`:
 
 ```bash
-bflow benchmark report \
+bflow benchmark plot comparison \
   --mlflow-run-ids 3f0c1f...,91ab22...,c72de9...
 ```
 
 Minimal MLflow comparison:
 
 ```bash
-bflow benchmark report \
+bflow benchmark plot comparison \
   --mlflow-run-ids 3f0c1f...,91ab22...,c72de9... \
   --mlflow-tracking-uri https://mlflow.example.com
 ```
@@ -955,7 +1005,7 @@ This path:
 Filter to a subset of versions:
 
 ```bash
-bflow benchmark report \
+bflow benchmark plot comparison \
   --mlflow-run-ids 3f0c1f...,91ab22...,c72de9... \
   --mlflow-tracking-uri https://mlflow.example.com \
   --versions llm-d-v0.4.0,RHOAI-3.3
@@ -968,7 +1018,7 @@ want a specific subset in the final report.
 Rename versions in the report:
 
 ```bash
-bflow benchmark report \
+bflow benchmark plot comparison \
   --mlflow-run-ids 3f0c1f...,91ab22...,c72de9... \
   --mlflow-tracking-uri https://mlflow.example.com \
   --version-override llm-d-v0.4.0=llm-d-0.4 \
@@ -981,7 +1031,7 @@ it to rename multiple version labels in the generated charts.
 Include extra CSV data in the same report:
 
 ```bash
-bflow benchmark report \
+bflow benchmark plot comparison \
   --mlflow-run-ids 3f0c1f...,91ab22... \
   --mlflow-tracking-uri https://mlflow.example.com \
   --additional-csv ./local-baseline.csv \
@@ -994,7 +1044,7 @@ single combined comparison report.
 Write the report under a specific directory:
 
 ```bash
-bflow benchmark report \
+bflow benchmark plot comparison \
   --mlflow-run-ids 3f0c1f...,91ab22... \
   --mlflow-tracking-uri https://mlflow.example.com \
   --output-dir ./reports
@@ -1003,7 +1053,7 @@ bflow benchmark report \
 Write the report to an exact file path:
 
 ```bash
-bflow benchmark report \
+bflow benchmark plot comparison \
   --mlflow-run-ids 3f0c1f...,91ab22... \
   --mlflow-tracking-uri https://mlflow.example.com \
   --output-file ./reports/rhoai-vs-llmd.html
@@ -1025,7 +1075,7 @@ Useful notes:
 Typical workflow:
 
 ```bash
-bflow benchmark report \
+bflow benchmark plot comparison \
   --mlflow-run-ids RUN_ID_1,RUN_ID_2,RUN_ID_3 \
   --mlflow-tracking-uri https://mlflow.example.com \
   --versions llm-d-v0.4.0,RHOAI-3.3 \

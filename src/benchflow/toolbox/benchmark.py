@@ -9,6 +9,7 @@ from ..benchmark import (
     BenchmarkRunFailed,
     benchmark_version_from_plan,
     generate_report,
+    generate_run_report,
     run_benchmark,
 )
 from ..contracts import BenchmarkOutcome, ResolvedRunPlan
@@ -229,4 +230,19 @@ def generate_plan_report(
         version_overrides=version_overrides,
         additional_csv_files=additional_csv_files,
         repeat_section_legends=repeat_section_legends,
+    )
+
+
+def generate_artifacts_run_report(
+    *,
+    artifacts_dir: Path,
+    output_dir: Path | None,
+    output_file: Path | None,
+    columns: int = 3,
+) -> Path:
+    return generate_run_report(
+        artifacts_dir=artifacts_dir,
+        output_dir=output_dir,
+        output_file=output_file,
+        columns=columns,
     )

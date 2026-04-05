@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
@@ -24,9 +23,13 @@ def collect_plan_metrics(
     if context.artifacts_dir is None:
         raise ValidationError("metrics collection requires an artifacts directory")
     if plan.target_cluster.enabled():
-        direct_upload = bool(
-            mlflow_run_id and os.environ.get("MLFLOW_TRACKING_URI", "").strip()
-        )
+        remote_root_override = ""
+        artifacts_reference = context.artifacts_dir / "remote-target-artifacts.json"
+        if artifacts_reference.exists():
+            payload = json.loads(
+                artifacts_reference.read_text(encoding="utf-8") or "{}"
+            )
+            remote_root_override = str(payload.get("remote_path") or "").strip()
         remote = run_remote_job(
             plan,
             job_kind="metrics",
@@ -40,19 +43,7 @@ def collect_plan_metrics(
                 "--benchmark-end-time",
                 benchmark_end_time,
                 "--artifacts-dir",
-                remote_job_artifacts_dir(job_name),
-                *(
-                    [
-                        "--mlflow-run-id",
-                        mlflow_run_id,
-                        "--artifact-path-prefix",
-                        "metrics",
-                        "--cleanup-after-upload",
-                        "--upload-direct-to-mlflow",
-                    ]
-                    if direct_upload
-                    else []
-                ),
+                f"{(remote_root_override or remote_job_artifacts_dir(job_name))}/metrics",
             ],
             mount_results_pvc=True,
         )
@@ -62,8 +53,10 @@ def collect_plan_metrics(
             json.dumps(
                 {
                     "remote_job_name": remote.job_name,
-                    "remote_path": f"{remote_job_artifacts_dir(remote.job_name)}/metrics",
-                    "uploaded_to_mlflow": direct_upload,
+                    "remote_path": (
+                        f"{(remote_root_override or remote_job_artifacts_dir(remote.job_name))}/metrics"
+                    ),
+                    "uploaded_to_mlflow": False,
                 },
                 indent=2,
             ),

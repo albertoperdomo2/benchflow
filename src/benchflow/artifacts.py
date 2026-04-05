@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .benchmark.guidellm import benchmark_version_from_plan
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .models import ResolvedRunPlan
 from .ui import detail, step, success
@@ -379,6 +380,21 @@ def collect_artifacts(
         "namespace": namespace,
         "release": plan.deployment.release_name,
         "execution_name": execution_name,
+        "model_name": plan.model.resolved_name(),
+        "platform": plan.deployment.platform,
+        "mode": plan.deployment.mode,
+        "version": benchmark_version_from_plan(plan),
+        "accelerator": str(
+            plan.mlflow.tags.get("accelerator")
+            or plan.deployment.options.get("accelerator")
+            or ""
+        ),
+        "runtime_args": " ".join(plan.deployment.runtime.vllm_args),
+        "replicas": plan.deployment.runtime.replicas,
+        "tp": plan.deployment.runtime.tensor_parallelism,
+        "data_spec": plan.benchmark.data,
+        "profile": plan.profiles.benchmark,
+        "backend": plan.benchmark.backend_type,
         "execution_pods": execution_pod_count,
         "model_pods": model_count,
         "gaie_pods": gaie_count,

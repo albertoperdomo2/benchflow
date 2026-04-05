@@ -376,6 +376,7 @@ class BenchmarkProcessor:
         prefix_tokens: Optional[int] = None,
         prefix_count: Optional[int] = None,
         repeat_section_legends: bool = False,
+        include_plotlyjs: bool = True,
     ):
         """
         Initialize the benchmark processor.
@@ -401,6 +402,7 @@ class BenchmarkProcessor:
             prefix_tokens: Prefix tokens for prefix caching benchmarks (optional)
             prefix_count: Prefix count for prefix caching benchmarks (optional)
             repeat_section_legends: Render repeated side legends per section (optional)
+            include_plotlyjs: Inline Plotly JS in the generated HTML (optional)
         """
         self.json_path = json_path
         self.config_path = config_path
@@ -414,6 +416,7 @@ class BenchmarkProcessor:
         self.replicas = replicas
         self.output_html = output_html or "benchmark_report.html"
         self.repeat_section_legends = repeat_section_legends
+        self.include_plotlyjs = include_plotlyjs
 
         # Data profile parameters
         normalized_profile = {
@@ -1793,7 +1796,7 @@ class BenchmarkProcessor:
 
         chart_html = fig.to_html(
             full_html=False,
-            include_plotlyjs=True,
+            include_plotlyjs=self.include_plotlyjs,
             config={"responsive": False},
         )
         comparison_table_html = _render_comparison_table(filtered_data)

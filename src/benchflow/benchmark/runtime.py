@@ -660,11 +660,6 @@ def _run_and_process_benchmark(
     max_requests,
     processor: str,
     output_dir: str,
-    accelerator: str,
-    version: str,
-    tp_size: int,
-    runtime_args: str,
-    replicas: int = 1,
 ) -> tuple:
     """Helper to run guidellm and process results."""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -697,18 +692,7 @@ def _run_and_process_benchmark(
     if not Path(console_log_path).exists():
         logger.warning(f"Console log not found: {console_log_path}")
 
-    html_report = generate_visualization_report(
-        json_path=json_path,
-        model=model,
-        accelerator=accelerator,
-        version=version,
-        tp_size=tp_size,
-        runtime_args=runtime_args,
-        output_dir=output_dir,
-        replicas=replicas,
-    )
-
-    return json_path, console_log_path, benchmarks, html_report
+    return json_path, console_log_path, benchmarks
 
 
 def run_benchmark_without_mlflow(
@@ -812,7 +796,7 @@ def run_benchmark_without_mlflow(
         )
         return output_dir
 
-    json_path, console_log_path, benchmarks, html_report = _run_and_process_benchmark(
+    json_path, console_log_path, benchmarks = _run_and_process_benchmark(
         target=target,
         model=model,
         rate=rate,
@@ -824,11 +808,6 @@ def run_benchmark_without_mlflow(
         max_requests=max_requests,
         processor=processor,
         output_dir=output_dir,
-        accelerator=accelerator,
-        version=version,
-        tp_size=tp_size,
-        runtime_args=runtime_args,
-        replicas=replicas,
     )
 
     for i, benchmark in enumerate(benchmarks):
@@ -838,11 +817,6 @@ def run_benchmark_without_mlflow(
 
     if Path(console_log_path).exists():
         logger.info(f"Console log saved to: {console_log_path}")
-
-    if html_report and Path(html_report).exists():
-        logger.info(f"Visualization report saved to: {html_report}")
-    else:
-        logger.info("Visualization report not generated (continuing without it)")
 
     return json_path
 
@@ -1100,7 +1074,6 @@ def run_benchmark_with_mlflow(
                     json_path,
                     console_log_path,
                     benchmarks,
-                    html_report,
                 ) = _run_and_process_benchmark(
                     target=target,
                     model=model,
@@ -1113,11 +1086,6 @@ def run_benchmark_with_mlflow(
                     max_requests=max_requests,
                     processor=processor,
                     output_dir=output_dir or "/tmp",
-                    accelerator=accelerator,
-                    version=version,
-                    tp_size=tp_size,
-                    runtime_args=runtime_args,
-                    replicas=int(replicas) if replicas != "N/A" else 1,
                 )
 
                 if not benchmarks:
@@ -1158,14 +1126,6 @@ def run_benchmark_with_mlflow(
                 if Path(console_log_path).exists():
                     mlflow.log_artifact(console_log_path, "logs")
                     logger.info("Logged console output")
-
-                if html_report and Path(html_report).exists():
-                    mlflow.log_artifact(html_report, "reports")
-                    logger.info(f"Logged visualization report to MLflow: {html_report}")
-                else:
-                    logger.info(
-                        "Visualization report not generated (continuing without it)"
-                    )
 
             logger.info(f"Run completed: {run.info.run_id}")
             return run.info.run_id

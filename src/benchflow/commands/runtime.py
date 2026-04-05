@@ -52,6 +52,7 @@ from ..toolbox import (
     collect_plan_metrics,
     deploy_platform,
     download_cached_model,
+    generate_artifacts_run_report,
     generate_plan_report,
     resolve_run_plan_stages,
     resolve_target_url,
@@ -776,6 +777,17 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         version_overrides=parse_version_overrides(args.version_override),
         additional_csv_files=args.additional_csv or None,
         repeat_section_legends=bool(args.repeat_section_legends),
+    )
+    print(report_path)
+    return 0
+
+
+def cmd_benchmark_plot_run(args: argparse.Namespace) -> int:
+    report_path = generate_artifacts_run_report(
+        artifacts_dir=Path(args.artifacts_dir).resolve(),
+        output_dir=Path(args.output_dir).resolve() if args.output_dir else None,
+        output_file=Path(args.output_file).resolve() if args.output_file else None,
+        columns=int(args.columns),
     )
     print(report_path)
     return 0
@@ -1601,27 +1613,30 @@ def benchmark_run_command(**kwargs: object) -> int:
     return invoke_handler(cmd_benchmark_run, **kwargs)
 
 
-@benchmark_group.command(
-    "report",
-    help="Generate a report from benchmark JSON and optional MLflow metadata.",
-    short_help="Generate a benchmark report",
+@benchmark_group.group(
+    "plot",
+    help="Generate post-run and comparison benchmark plots.",
+    short_help="Benchmark plotting",
 )
-@runtime_plan_source_options
+def benchmark_plot_group() -> None:
+    pass
+
+
+@benchmark_plot_group.command(
+    "run",
+    help="Generate the post-run report from a collected artifact directory.",
+    short_help="Generate a post-run report",
+)
 @click.option(
-    "--json-path",
-    type=click.Path(dir_okay=False, path_type=Path),
-    help="Path to the benchmark JSON input.",
+    "--artifacts-dir",
+    required=True,
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="BenchFlow artifact directory containing benchmark outputs, metrics, and manifests.",
 )
-@click.option("--model-name", help="Model name to display in the report.")
-@click.option("--accelerator", help="Accelerator label to include in the report.")
-@click.option("--version", help="Version string for the report.")
-@click.option("--tp", type=int, help="Tensor parallelism to show in the report.")
-@click.option("--runtime-args", help="Runtime arguments string to show in the report.")
-@click.option("--replicas", type=int, help="Replica count to show in the report.")
 @click.option(
     "--output-dir",
     type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
-    help="Directory where the auto-generated report filename should be written.",
+    help="Directory where the report should be written.",
 )
 @click.option(
     "--output-file",
@@ -1629,39 +1644,102 @@ def benchmark_run_command(**kwargs: object) -> int:
     help="Exact output file path for the report. Overrides --output-dir.",
 )
 @click.option(
-    "--mlflow-run-ids",
-    help="Comma-separated MLflow run IDs to include in the report.",
+    "--columns",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Number of columns for the diagnostics section.",
 )
-@click.option(
-    "--mlflow-tracking-uri",
-    default=lambda: os.environ.get("MLFLOW_TRACKING_URI"),
-    show_default="env MLFLOW_TRACKING_URI",
-    help="MLflow tracking URI for report enrichment.",
+def benchmark_plot_run_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_benchmark_plot_run, **kwargs)
+
+
+def _register_comparison_report_options(command):
+    command = runtime_plan_source_options(command)
+    command = click.option(
+        "--json-path",
+        type=click.Path(dir_okay=False, path_type=Path),
+        help="Path to the benchmark JSON input.",
+    )(command)
+    command = click.option("--model-name", help="Model name to display in the report.")(
+        command
+    )
+    command = click.option(
+        "--accelerator", help="Accelerator label to include in the report."
+    )(command)
+    command = click.option("--version", help="Version string for the report.")(command)
+    command = click.option(
+        "--tp", type=int, help="Tensor parallelism to show in the report."
+    )(command)
+    command = click.option(
+        "--runtime-args", help="Runtime arguments string to show in the report."
+    )(command)
+    command = click.option(
+        "--replicas", type=int, help="Replica count to show in the report."
+    )(command)
+    command = click.option(
+        "--output-dir",
+        type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+        help="Directory where the auto-generated report filename should be written.",
+    )(command)
+    command = click.option(
+        "--output-file",
+        type=click.Path(dir_okay=False, path_type=Path),
+        help="Exact output file path for the report. Overrides --output-dir.",
+    )(command)
+    command = click.option(
+        "--mlflow-run-ids",
+        help="Comma-separated MLflow run IDs to include in the report.",
+    )(command)
+    command = click.option(
+        "--mlflow-tracking-uri",
+        default=lambda: os.environ.get("MLFLOW_TRACKING_URI"),
+        show_default="env MLFLOW_TRACKING_URI",
+        help="MLflow tracking URI for report enrichment.",
+    )(command)
+    command = click.option(
+        "--versions",
+        help="Comma-separated version list for multi-run report generation.",
+    )(command)
+    command = click.option(
+        "--version-override",
+        multiple=True,
+        metavar="OLD=NEW",
+        help="Version label override. Repeat to set multiple mappings.",
+    )(command)
+    command = click.option(
+        "--additional-csv",
+        multiple=True,
+        type=click.Path(dir_okay=False, path_type=Path),
+        help="Additional CSV inputs to include in the report.",
+    )(command)
+    command = click.option(
+        "--repeat-section-legends",
+        is_flag=True,
+        help=(
+            "Repeat right-side legends for each report section. "
+            "Useful when taking screenshots of individual sections."
+        ),
+    )(command)
+    return command
+
+
+@benchmark_plot_group.command(
+    "comparison",
+    help="Generate the comparison report from benchmark JSON and optional MLflow metadata.",
+    short_help="Generate a comparison report",
 )
-@click.option(
-    "--versions",
-    help="Comma-separated version list for multi-run report generation.",
+@_register_comparison_report_options
+def benchmark_plot_comparison_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_benchmark_report, **kwargs)
+
+
+@benchmark_group.command(
+    "report",
+    help="Compatibility alias for `bflow benchmark plot comparison`.",
+    short_help="Alias for comparison report",
 )
-@click.option(
-    "--version-override",
-    multiple=True,
-    metavar="OLD=NEW",
-    help="Version label override. Repeat to set multiple mappings.",
-)
-@click.option(
-    "--additional-csv",
-    multiple=True,
-    type=click.Path(dir_okay=False, path_type=Path),
-    help="Additional CSV inputs to include in the report.",
-)
-@click.option(
-    "--repeat-section-legends",
-    is_flag=True,
-    help=(
-        "Repeat right-side legends for each report section. "
-        "Useful when taking screenshots of individual sections."
-    ),
-)
+@_register_comparison_report_options
 def benchmark_report_command(**kwargs: object) -> int:
     return invoke_handler(cmd_benchmark_report, **kwargs)
 

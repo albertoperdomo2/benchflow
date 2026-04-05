@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 
+from .benchmark.run_report import generate_run_report
 from .cluster import require_any_command, run_command
 from .models import ResolvedRunPlan
+from .remote_jobs import copy_remote_results_directory
 from .ui import detail, step, success, warning
 
 
@@ -90,6 +94,66 @@ def _count_files(directory: Path) -> int:
     if not directory.exists():
         return 0
     return sum(1 for path in directory.rglob("*") if path.is_file())
+
+
+def _load_json_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _merge_artifact_tree(source_dir: Path, target_dir: Path) -> None:
+    for child in source_dir.iterdir():
+        target = target_dir / child.name
+        if child.is_dir():
+            shutil.copytree(child, target, dirs_exist_ok=True)
+            continue
+        if child.name == "metadata.json" and target.exists():
+            merged = {**_load_json_file(child), **_load_json_file(target)}
+            target.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(child, target)
+
+
+def _materialize_remote_artifacts_if_needed(
+    plan: ResolvedRunPlan,
+    artifacts_dir: Path,
+) -> None:
+    reference_path = artifacts_dir / "remote-target-artifacts.json"
+    if not reference_path.exists():
+        return
+
+    reference = _load_json_file(reference_path)
+    remote_path = str(reference.get("remote_path") or "").strip()
+    if not remote_path:
+        return
+
+    step(f"Copying remote collected artifacts from {remote_path}")
+    temp_root = Path(tempfile.mkdtemp(prefix="benchflow-remote-artifacts-"))
+    try:
+        copy_remote_results_directory(
+            plan,
+            remote_path=remote_path,
+            local_dir=temp_root,
+        )
+        _merge_artifact_tree(temp_root, artifacts_dir)
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def _generate_post_run_report(artifacts_dir: Path) -> Path | None:
+    try:
+        report_path = generate_run_report(artifacts_dir=artifacts_dir)
+    except Exception as exc:  # noqa: BLE001
+        warning(f"Skipping post-run report generation: {exc}")
+        return None
+    detail(f"Generated post-run report at {report_path}")
+    return report_path
 
 
 def _list_run_artifact_paths(
@@ -294,6 +358,8 @@ def upload_to_mlflow(
 
     client = mlflow.tracking.MlflowClient()
     detail(f"MLflow tracking URI: {explicit_tracking_uri}")
+    _materialize_remote_artifacts_if_needed(plan, artifacts_dir)
+    _generate_post_run_report(artifacts_dir)
     grafana_base_url = grafana_url or _discover_grafana_base_url(
         plan.deployment.namespace
     )
