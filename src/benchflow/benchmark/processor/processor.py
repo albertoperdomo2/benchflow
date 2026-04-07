@@ -1312,6 +1312,10 @@ class BenchmarkProcessor:
 
         legend_labels = list(config_to_color.keys())
         legend_entries = set()
+        axis_title_font = {"size": 13}
+        axis_tick_font = {"size": 12}
+        legend_font = {"size": 12}
+        legend_title_font = {"size": 12}
 
         if has_ttft_distribution:
             plot_positions = [
@@ -1616,7 +1620,8 @@ class BenchmarkProcessor:
                         bordercolor="#cbd5e1",
                         borderwidth=1,
                         bgcolor="rgba(255,255,255,0.94)",
-                        font={"size": 10},
+                        font=legend_font,
+                        title_font=legend_title_font,
                         groupclick="togglegroup",
                     )
                 }
@@ -1726,6 +1731,10 @@ class BenchmarkProcessor:
             plot_bgcolor="white",
             paper_bgcolor="white",
             font={"family": "Arial, sans-serif", "size": 11},
+            legend=dict(
+                font=legend_font,
+                title={"text": "<b>Configuration</b>", "font": legend_title_font},
+            ),
             margin=dict(
                 t=top_margin,
                 l=80,
@@ -1782,6 +1791,8 @@ class BenchmarkProcessor:
             linewidth=1,
             linecolor="black",
             mirror=True,
+            title_font=axis_title_font,
+            tickfont=axis_tick_font,
         )
 
         fig.update_yaxes(
@@ -1792,6 +1803,8 @@ class BenchmarkProcessor:
             linewidth=1,
             linecolor="black",
             mirror=True,
+            title_font=axis_title_font,
+            tickfont=axis_tick_font,
         )
 
         chart_html = fig.to_html(
