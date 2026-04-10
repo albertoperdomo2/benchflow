@@ -184,15 +184,17 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
 
 
 def _patch_scheduler_values(plan: ResolvedRunPlan, values_file: Path) -> None:
-    if not plan.deployment.scheduler_image:
-        return
     values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
     inference_extension = values.setdefault("inferenceExtension", {})
-    image = inference_extension.setdefault("image", {})
-    hub, name, tag = _split_image_reference(plan.deployment.scheduler_image)
-    image["hub"] = hub
-    image["name"] = name
-    image["tag"] = tag
+    monitoring = inference_extension.setdefault("monitoring", {})
+    secret = monitoring.setdefault("secret", {})
+    secret["name"] = f"{plan.deployment.release_name}-gateway-sa-metrics-reader-secret"
+    if plan.deployment.scheduler_image:
+        image = inference_extension.setdefault("image", {})
+        hub, name, tag = _split_image_reference(plan.deployment.scheduler_image)
+        image["hub"] = hub
+        image["name"] = name
+        image["tag"] = tag
     values_file.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 
 
