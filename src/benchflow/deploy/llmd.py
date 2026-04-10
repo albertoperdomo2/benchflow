@@ -187,8 +187,16 @@ def _patch_scheduler_values(plan: ResolvedRunPlan, values_file: Path) -> None:
     values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
     inference_extension = values.setdefault("inferenceExtension", {})
     monitoring = inference_extension.setdefault("monitoring", {})
+    secret_name = f"{plan.deployment.release_name}-gateway-sa-metrics-reader-secret"
+
+    # Older guide values used monitoring.secret.name, while the v1.2
+    # inferencepool chart reads monitoring.prometheus.auth.secretName.
     secret = monitoring.setdefault("secret", {})
-    secret["name"] = f"{plan.deployment.release_name}-gateway-sa-metrics-reader-secret"
+    secret["name"] = secret_name
+    prometheus = monitoring.setdefault("prometheus", {})
+    auth = prometheus.setdefault("auth", {})
+    auth["secretName"] = secret_name
+
     if plan.deployment.scheduler_image:
         image = inference_extension.setdefault("image", {})
         hub, name, tag = _split_image_reference(plan.deployment.scheduler_image)
