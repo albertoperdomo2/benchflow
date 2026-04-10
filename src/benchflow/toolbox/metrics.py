@@ -30,6 +30,10 @@ def collect_plan_metrics(
                 artifacts_reference.read_text(encoding="utf-8") or "{}"
             )
             remote_root_override = str(payload.get("remote_path") or "").strip()
+
+        def remote_artifacts_root(job_name: str) -> str:
+            return remote_root_override or remote_job_artifacts_dir(job_name)
+
         remote = run_remote_job(
             plan,
             job_kind="metrics",
@@ -43,7 +47,7 @@ def collect_plan_metrics(
                 "--benchmark-end-time",
                 benchmark_end_time,
                 "--artifacts-dir",
-                f"{(remote_root_override or remote_job_artifacts_dir(job_name))}/metrics",
+                remote_artifacts_root(job_name),
             ],
             mount_results_pvc=True,
         )
@@ -53,9 +57,7 @@ def collect_plan_metrics(
             json.dumps(
                 {
                     "remote_job_name": remote.job_name,
-                    "remote_path": (
-                        f"{(remote_root_override or remote_job_artifacts_dir(remote.job_name))}/metrics"
-                    ),
+                    "remote_path": f"{remote_artifacts_root(remote.job_name)}/metrics",
                     "uploaded_to_mlflow": False,
                 },
                 indent=2,
