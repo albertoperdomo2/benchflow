@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -103,6 +104,19 @@ def _release_match_labels(release_name: str) -> dict[str, str]:
         _LLMD_INFERENCE_SERVING_LABEL: "true",
         _LLMD_MODEL_LABEL: release_name,
     }
+
+
+def _llmd_inference_pool_backend_group(repo_ref: str) -> str:
+    # Temporary compatibility fix: llm-d v0.4.x inference-scheduling still
+    # references the legacy x-k8s InferencePool API group, while newer refs such
+    # as v0.6.0 route to the promoted inference.networking.k8s.io group.
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", repo_ref.strip())
+    if match is None:
+        return "inference.networking.k8s.io"
+    version = tuple(int(part) for part in match.groups())
+    if version <= (0, 4, 0):
+        return "inference.networking.x-k8s.io"
+    return "inference.networking.k8s.io"
 
 
 def _split_image_reference(image: str) -> tuple[str, str, str]:
@@ -271,6 +285,9 @@ def _capture_manifests(
 
 
 def _create_httproute(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    inference_pool_backend_group = _llmd_inference_pool_backend_group(
+        plan.deployment.repo_ref
+    )
     route = {
         "apiVersion": "gateway.networking.k8s.io/v1",
         "kind": "HTTPRoute",
@@ -295,7 +312,7 @@ def _create_httproute(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
                 {
                     "backendRefs": [
                         {
-                            "group": "inference.networking.x-k8s.io",
+                            "group": inference_pool_backend_group,
                             "kind": "InferencePool",
                             "name": f"gaie-{plan.deployment.release_name}",
                             "port": 8000,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 import time
@@ -176,10 +177,23 @@ def _helm_release_names(namespace: str) -> set[str]:
     return {str(item.get("name") or "") for item in payload}
 
 
-def _gateway_dependencies_present(kubectl_cmd: str) -> bool:
+def _llmd_inference_pool_crd_name(repo_ref: str) -> str:
+    # Temporary compatibility fix: llm-d v0.4.x inference-scheduling still
+    # expects the legacy x-k8s InferencePool CRD, while newer refs rely on the
+    # promoted inference.networking.k8s.io API group.
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", repo_ref.strip())
+    if match is None:
+        return "inferencepools.inference.networking.k8s.io"
+    version = tuple(int(part) for part in match.groups())
+    if version <= (0, 4, 0):
+        return "inferencepools.inference.networking.x-k8s.io"
+    return "inferencepools.inference.networking.k8s.io"
+
+
+def _gateway_dependencies_present(kubectl_cmd: str, repo_ref: str) -> bool:
     required_crds = (
         "gateways.gateway.networking.k8s.io",
-        "inferencepools.inference.networking.x-k8s.io",
+        _llmd_inference_pool_crd_name(repo_ref),
     )
     for crd_name in required_crds:
         result = run_command(
@@ -333,7 +347,9 @@ def setup_llmd(
             )
         detail(f"Gateway provider directory: {gateway_provider_dir}")
 
-        gateway_dependencies_present_before = _gateway_dependencies_present(kubectl_cmd)
+        gateway_dependencies_present_before = _gateway_dependencies_present(
+            kubectl_cmd, plan.deployment.repo_ref
+        )
         if gateway_dependencies_present_before:
             detail("Gateway API and GAIE CRD markers already present")
         else:
