@@ -18,7 +18,6 @@ from ..models import ValidationError
 from ..plotting import REPORT_COLOR_PALETTE
 from .processor.processor import _extract_intended_concurrency
 from .run_report_insights import (
-    load_benchmarks,
     parse_thresholds,
     summarize_benchmarks,
 )
@@ -56,7 +55,7 @@ SUBTITLE_WRAP = 64
 @dataclass(frozen=True, slots=True)
 class ArtifactPaths:
     root: Path
-    benchmark_json: Path
+    benchmark_jsons: tuple[Path, ...]
     metrics_root: Path
     metadata_json: Path | None
     manifest_roots: tuple[Path, ...]
@@ -86,21 +85,35 @@ def _load_json(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _resolve_artifact_paths(artifacts_dir: Path) -> ArtifactPaths:
-    root = artifacts_dir.resolve()
-    benchmark_candidates = (
+def _resolve_benchmark_jsons(root: Path) -> tuple[Path, ...]:
+    exact_candidates = (
         root / "results" / "benchmark_output.json",
         root / "benchmark" / "benchmark_output.json",
     )
-    benchmark_json = next(
-        (path for path in benchmark_candidates if path.exists()), None
-    )
-    if benchmark_json is None:
-        raise ValidationError(
-            f"could not find benchmark_output.json under {root}; expected "
-            "results/benchmark_output.json or benchmark/benchmark_output.json"
-        )
+    exact_match = next((path for path in exact_candidates if path.exists()), None)
+    if exact_match is not None:
+        return (exact_match,)
 
+    multiturn_candidate_groups = (
+        tuple(sorted((root / "results").glob("benchmark_output_rate_*.json"))),
+        tuple(sorted((root / "benchmark").glob("benchmark_output_rate_*.json"))),
+    )
+    multiturn_matches = next(
+        (group for group in multiturn_candidate_groups if group),
+        (),
+    )
+    if multiturn_matches:
+        return multiturn_matches
+
+    raise ValidationError(
+        f"could not find benchmark results under {root}; expected "
+        "results/benchmark_output.json, benchmark/benchmark_output.json, or "
+        "benchmark_output_rate_*.json in either directory"
+    )
+
+
+def _resolve_artifact_paths(artifacts_dir: Path) -> ArtifactPaths:
+    root = artifacts_dir.resolve()
     metrics_root = root / "metrics"
     if not metrics_root.exists():
         raise ValidationError(f"metrics directory not found under {root}")
@@ -114,10 +127,86 @@ def _resolve_artifact_paths(artifacts_dir: Path) -> ArtifactPaths:
 
     return ArtifactPaths(
         root=root,
-        benchmark_json=benchmark_json,
+        benchmark_jsons=_resolve_benchmark_jsons(root),
         metrics_root=metrics_root,
         metadata_json=metadata_json if metadata_json.exists() else None,
         manifest_roots=manifest_roots,
+    )
+
+
+def _merge_rate_values(values: list[object]) -> list[object]:
+    deduplicated: list[object] = []
+    seen: set[str] = set()
+    for value in values:
+        marker = str(value)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduplicated.append(value)
+    try:
+        return sorted(deduplicated, key=lambda value: float(value))
+    except (TypeError, ValueError):
+        return deduplicated
+
+
+def _benchmark_sort_key(item: dict) -> tuple[float, float]:
+    try:
+        start_time = float(item.get("start_time"))
+    except (TypeError, ValueError):
+        start_time = float("inf")
+    try:
+        concurrency = float(item["config"]["strategy"]["max_concurrency"])
+    except (KeyError, TypeError, ValueError):
+        concurrency = float("inf")
+    return (start_time, concurrency)
+
+
+def _benchmark_concurrency_key(item: dict) -> float:
+    try:
+        return float(item["config"]["strategy"]["max_concurrency"])
+    except (KeyError, TypeError, ValueError):
+        return float("inf")
+
+
+def _load_benchmark_payload(paths: ArtifactPaths) -> dict:
+    merged_args: dict[str, object] = {}
+    merged_benchmarks: list[dict] = []
+    merged_rates: list[object] = []
+
+    for benchmark_json in paths.benchmark_jsons:
+        payload = _load_json(benchmark_json)
+        if not isinstance(payload, dict):
+            raise ValidationError(f"{benchmark_json} must contain a JSON object")
+
+        args = payload.get("args")
+        if isinstance(args, dict):
+            if not merged_args:
+                merged_args = dict(args)
+            rate_values = args.get("rate")
+            if isinstance(rate_values, list):
+                merged_rates.extend(rate_values)
+            elif rate_values is not None:
+                merged_rates.append(rate_values)
+
+        benchmarks = payload.get("benchmarks", [])
+        if not isinstance(benchmarks, list):
+            raise ValidationError(f"{benchmark_json} must contain a 'benchmarks' list")
+        merged_benchmarks.extend(item for item in benchmarks if isinstance(item, dict))
+
+    if merged_rates:
+        merged_args["rate"] = _merge_rate_values(merged_rates)
+    merged_benchmarks.sort(key=_benchmark_sort_key)
+    return {"args": merged_args, "benchmarks": merged_benchmarks}
+
+
+def _load_benchmark_entries(paths: ArtifactPaths) -> list[dict]:
+    payload = _load_benchmark_payload(paths)
+    benchmarks = payload.get("benchmarks", [])
+    if not isinstance(benchmarks, list):
+        raise ValidationError("benchmark results must contain a 'benchmarks' list")
+    return sorted(
+        (item for item in benchmarks if isinstance(item, dict)),
+        key=_benchmark_concurrency_key,
     )
 
 
@@ -348,9 +437,7 @@ def _load_report_metadata(paths: ArtifactPaths) -> RunReportMetadata:
         if isinstance(payload, dict):
             metadata = payload
 
-    benchmark = _load_json(paths.benchmark_json)
-    if not isinstance(benchmark, dict):
-        raise ValidationError("benchmark_output.json must contain a JSON object")
+    benchmark = _load_benchmark_payload(paths)
 
     metrics_summary = _load_json(paths.metrics_root / "metrics_summary.json")
     if not isinstance(metrics_summary, dict):
@@ -358,6 +445,12 @@ def _load_report_metadata(paths: ArtifactPaths) -> RunReportMetadata:
 
     args = benchmark.get("args", {}) or {}
     backend_kwargs = args.get("backend_kwargs", {}) or {}
+    benchmark_entries = benchmark.get("benchmarks", [])
+    fallback_rates = [
+        item.get("config", {}).get("strategy", {}).get("max_concurrency")
+        for item in benchmark_entries
+        if isinstance(item, dict)
+    ]
 
     replicas = _required_int(metadata, "replicas")
     tp = _required_int(metadata, "tp")
@@ -380,7 +473,7 @@ def _load_report_metadata(paths: ArtifactPaths) -> RunReportMetadata:
     version = str(metadata.get("version") or "unknown")
     accelerator = str(metadata.get("accelerator") or "unknown")
 
-    rates = args.get("rate") or []
+    rates = args.get("rate") or fallback_rates
     try:
         load_points = ", ".join(
             str(int(value)) for value in sorted(float(v) for v in rates)
@@ -426,9 +519,7 @@ def _load_report_metadata(paths: ArtifactPaths) -> RunReportMetadata:
 def _load_benchmark_phase_segments(
     paths: ArtifactPaths,
 ) -> list[dict[str, float | int | str]]:
-    payload = _load_json(paths.benchmark_json)
-    if not isinstance(payload, dict):
-        return []
+    payload = _load_benchmark_payload(paths)
     benchmarks = payload.get("benchmarks", [])
     if not isinstance(benchmarks, list) or not benchmarks:
         return []
@@ -848,7 +939,7 @@ def _build_benchmark_figures(
     metadata: RunReportMetadata,
 ) -> list[go.Figure]:
     benchmark_rows = summarize_benchmarks(
-        load_benchmarks(paths.benchmark_json),
+        _load_benchmark_entries(paths),
         strict_slo=(200.0, 25.0),
         relaxed_slo=(500.0, 40.0),
         gpu_count=float(metadata.total_gpus),

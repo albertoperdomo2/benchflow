@@ -390,7 +390,6 @@ def upload_to_mlflow(
     detail(f"MLflow tracking URI: {explicit_tracking_uri}")
     _materialize_remote_artifacts_if_needed(plan, artifacts_dir)
     _materialize_remote_metrics_if_needed(plan, artifacts_dir)
-    _generate_post_run_report(artifacts_dir)
     grafana_base_url = grafana_url or _discover_grafana_base_url(
         plan.deployment.namespace
     )
@@ -425,6 +424,7 @@ def upload_to_mlflow(
                     "No fallback benchmark artifacts were needed; MLflow already "
                     "contained the benchmark results and console output"
                 )
+        _generate_post_run_report(artifacts_dir)
         before_cleanup = _count_files(artifacts_dir)
         upload_artifact_directory_to_mlflow(
             mlflow_run_id=mlflow_run_id,
