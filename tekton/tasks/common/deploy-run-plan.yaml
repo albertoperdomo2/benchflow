@@ -32,6 +32,7 @@ spec:
   steps:
     - name: deploy
       image: $(params.IMAGE)
+      imagePullPolicy: Always
       env:
         - name: BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE
           value: $(workspaces.target-kubeconfig.path)

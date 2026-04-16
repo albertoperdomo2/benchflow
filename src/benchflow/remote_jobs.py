@@ -126,6 +126,7 @@ def _create_remote_job(
                         {
                             "name": "main",
                             "image": _remote_image(),
+                            "imagePullPolicy": "Always",
                             "command": ["bflow"],
                             "args": args,
                             "env": _remote_env(env),

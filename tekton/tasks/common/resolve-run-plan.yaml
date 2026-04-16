@@ -22,6 +22,7 @@ spec:
   steps:
     - name: resolve
       image: $(params.IMAGE)
+      imagePullPolicy: Always
       command:
         - bflow
       args:

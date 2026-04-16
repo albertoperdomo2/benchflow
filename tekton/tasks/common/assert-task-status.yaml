@@ -21,6 +21,7 @@ spec:
   steps:
     - name: assert
       image: $(params.IMAGE)
+      imagePullPolicy: Always
       command:
         - bflow
       args:

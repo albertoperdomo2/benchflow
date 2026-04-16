@@ -36,6 +36,7 @@ spec:
   steps:
     - name: run-guidellm-benchmark
       image: $(params.IMAGE)
+      imagePullPolicy: Always
       env:
         - name: HF_TOKEN
           valueFrom:

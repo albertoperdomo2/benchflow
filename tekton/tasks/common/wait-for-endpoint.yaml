@@ -22,6 +22,7 @@ spec:
   steps:
     - name: wait-for-ready
       image: $(params.IMAGE)
+      imagePullPolicy: Always
       env:
         - name: BENCHFLOW_REMOTE_IMAGE
           value: $(params.IMAGE)
