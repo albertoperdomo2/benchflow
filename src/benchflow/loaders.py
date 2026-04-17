@@ -486,6 +486,7 @@ def load_benchmark_profile(path: Path) -> BenchmarkProfile:
         if spec.get("max_requests") is not None
         else None,
         env=env,
+        options=dict(spec.get("options") or {}),
         requirements=_benchmark_requirements_from_dict(spec.get("requirements")),
     )
     return BenchmarkProfile(
@@ -592,6 +593,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
             str(key): str(value)
             for key, value in (benchmark_raw.get("env") or {}).items()
         },
+        options=dict(benchmark_raw.get("options") or {}),
         requirements=_benchmark_requirements_from_dict(
             benchmark_raw.get("requirements")
         ),

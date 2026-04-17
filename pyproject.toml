@@ -19,6 +19,7 @@ dependencies = [
   "certifi==2025.7.9",
   "mistral-common",
   "rich>=13.9.0",
+  "aiperf==0.7.0",
 ]
 
 [project.scripts]
