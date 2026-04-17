@@ -8,6 +8,8 @@ spec:
   rate_type: fixed_schedule # unused for now, kept for shared BenchmarkProfile contract
   rates: [] # unused for now, kept for shared BenchmarkProfile contract
   max_seconds: 7200 # unused for now, kept for shared BenchmarkProfile contract
+  env:
+    AIPERF_HTTP_SSL_VERIFY: "false"
   requirements:
     min_max_model_len: 131072
   options:
