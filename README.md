@@ -8,7 +8,7 @@
 > [!NOTE]
 > This project is experimental and for learning purposes mainly, but the implemented execution paths today are `llm-d` and `RHOAI`. Expect some parts to still be highly coupled.
 
-BenchFlow is a packaged control plane for running benchmark scenarios, not a loose collection of scripts. It resolves an experiment into one immutable `RunPlan`, executes it through Tekton `PipelineRun`s, captures metrics and artifacts, and pushes the result to MLflow. It is powered by [vllm-project/guidellm](https://github.com/vllm-project/guidellm).
+BenchFlow is a packaged control plane for running benchmark scenarios, not a loose collection of scripts. It resolves an experiment into one immutable `RunPlan`, executes it through Tekton `PipelineRun`s, captures metrics and artifacts, and pushes the result to MLflow. The current benchmark backends are [vllm-project/guidellm](https://github.com/vllm-project/guidellm) and one narrow [AIPerf](https://github.com/ai-dynamo/aiperf) Mooncake trace replay path.
 
 > [!WARNING]
 > BenchFlow now locks shared `llm-d` and `RHOAI` platform mutations per target cluster by setup key. Same-key runs can share a wave and use spare GPUs in parallel; different-key runs wait until the current admitted wave finishes. Shared platform prerequisites stay installed until a different setup key is requested or you explicitly tear them down.
@@ -74,6 +74,8 @@ For the full command surface, RunPlan PipelineRun flow, matrix execution, and lo
 
 ## Known Limitations
 
+- The current AIPerf support is intentionally narrow: one `aiperf-mooncake-trace` benchmark profile that downloads the Mooncake conversation trace, optionally caps it, and benchmarks an existing chat-style endpoint. It is not generic AIPerf support.
+- Comparison reports do not mix benchmark tools. `bflow benchmark plot comparison` can compare multiple GuideLLM runs or multiple AIPerf runs, but not both in one report.
 - Legacy target clusters without BenchFlow platform state are adopted heuristically; the first mutating run after upgrading BenchFlow may reset and reinstall shared `llm-d` or `RHOAI` prerequisites.
 - BenchFlow coordinates only the shared platform state it manages itself. Manual or out-of-band cluster mutations are not version-reconciled.
 - `llm-d` matrix children depend on release-scoped chart values; use the current BenchFlow image when testing parallel llm-d runs.

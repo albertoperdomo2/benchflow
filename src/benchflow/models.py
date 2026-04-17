@@ -357,6 +357,7 @@ class BenchmarkProfileSpec:
     max_seconds: int = 600
     max_requests: str | None = None
     env: dict[str, str] = field(default_factory=dict)
+    options: dict[str, Any] = field(default_factory=dict)
     requirements: BenchmarkRequirementsSpec = field(
         default_factory=BenchmarkRequirementsSpec
     )
