@@ -670,9 +670,9 @@ def cmd_wait_completions(args: argparse.Namespace) -> int:
 
 def cmd_benchmark_run(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    if plan.benchmark.tool != "guidellm":
+    if plan.benchmark.tool not in {"guidellm", "aiperf"}:
         raise ValidationError(
-            f"unsupported benchmark tool: {plan.benchmark.tool}; only guidellm is implemented"
+            f"unsupported benchmark tool: {plan.benchmark.tool}; supported tools are guidellm and aiperf"
         )
     output_dir = Path(args.output_dir).resolve() if args.output_dir else None
     benchmark_target, _ = resolve_target_url(plan, target_url=args.target_url)

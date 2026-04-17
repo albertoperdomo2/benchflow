@@ -9,7 +9,7 @@ from pathlib import Path
 
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 
-from .benchmark.run_report import generate_run_report
+from .benchmark import generate_run_report
 from .cluster import require_any_command, run_command
 from .models import ResolvedRunPlan
 from .remote_jobs import copy_remote_results_directory

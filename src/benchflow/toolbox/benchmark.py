@@ -216,6 +216,7 @@ def generate_plan_report(
     )
 
     return generate_report(
+        plan=plan,
         json_path=json_path,
         model=model,
         accelerator=accelerator,

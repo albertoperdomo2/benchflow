@@ -1,0 +1,22 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: aiperf-mooncake-trace
+spec:
+  tool: aiperf
+  backend_type: openai_http # unused for now, kept for shared BenchmarkProfile contract
+  rate_type: fixed_schedule # unused for now, kept for shared BenchmarkProfile contract
+  rates: [] # unused for now, kept for shared BenchmarkProfile contract
+  max_seconds: 7200 # unused for now, kept for shared BenchmarkProfile contract
+  requirements:
+    min_max_model_len: 131072
+  options:
+    dataset_url: https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/conversation_trace.jsonl
+    dataset_name: conversation_trace.jsonl
+    dataset_type: mooncake_trace
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    fixed_schedule: true
+    fixed_schedule_auto_offset: true
+    synthesis_max_isl: 131072
