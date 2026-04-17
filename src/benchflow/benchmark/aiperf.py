@@ -14,9 +14,12 @@ import mlflow
 import plotly.graph_objects as go
 import requests
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
+from plotly.offline import get_plotlyjs
+from plotly.subplots import make_subplots
 
 from ..cluster import CommandError, require_command
 from ..models import ResolvedRunPlan, ValidationError
+from ..plotting import REPORT_COLOR_PALETTE
 from ..ui import detail, step, success
 from .common import (
     BenchmarkRunFailed,
@@ -31,6 +34,20 @@ _AIPERF_SUMMARY_CANDIDATES = (
 )
 _AIPERF_ARTIFACT_ROOT = "benchmark"
 _PLOTLY_CONFIG = {"displaylogo": False, "responsive": True}
+_COLORS = {
+    "black": "#222222",
+    "gray": "#6f6f6f",
+    "grid": "#e8e8e8",
+    "paper": "white",
+    "blue": REPORT_COLOR_PALETTE[0],
+    "orange": REPORT_COLOR_PALETTE[1],
+    "green": REPORT_COLOR_PALETTE[2],
+    "red": REPORT_COLOR_PALETTE[3],
+    "purple": REPORT_COLOR_PALETTE[4],
+}
+_HEADER_WIDTH = 1440
+_REPORT_FONT = "Arial, Helvetica, sans-serif"
+_TITLE_FONT = "Times New Roman, Georgia, serif"
 
 
 def _iso8601_now() -> str:
@@ -483,12 +500,38 @@ def _label_for_run(run_payload: dict[str, Any]) -> str:
     return f"{version} | {accelerator} | tp={tp} | r={replicas}"
 
 
+def _apply_axis_style(figure: go.Figure) -> None:
+    figure.update_xaxes(
+        showgrid=True,
+        gridcolor=_COLORS["grid"],
+        zeroline=False,
+        showline=True,
+        linewidth=1,
+        linecolor=_COLORS["black"],
+        mirror=True,
+        title_font={"size": 14},
+        tickfont={"size": 12},
+    )
+    figure.update_yaxes(
+        showgrid=True,
+        gridcolor=_COLORS["grid"],
+        zeroline=False,
+        showline=True,
+        linewidth=1,
+        linecolor=_COLORS["black"],
+        mirror=True,
+        title_font={"size": 14},
+        tickfont={"size": 12},
+    )
+
+
 def _comparison_bar_figure(
     *,
     title: str,
     x_labels: list[str],
     metric_label: str,
     values: list[float],
+    color: str,
 ) -> go.Figure:
     figure = go.Figure(
         data=[
@@ -497,29 +540,90 @@ def _comparison_bar_figure(
                 y=values,
                 text=[f"{value:.2f}" for value in values],
                 textposition="outside",
-                marker_color="#3366cc",
+                marker_color=color,
+                marker_line={"color": color, "width": 1},
             )
         ]
     )
     figure.update_layout(
         title=title,
-        height=520,
-        margin=dict(l=40, r=20, t=60, b=140),
+        width=_HEADER_WIDTH,
+        height=500,
+        paper_bgcolor=_COLORS["paper"],
+        plot_bgcolor=_COLORS["paper"],
+        font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
+        margin=dict(l=75, r=35, t=80, b=140),
         xaxis=dict(title="", tickangle=-20),
         yaxis=dict(title=metric_label),
+        showlegend=False,
+    )
+    _apply_axis_style(figure)
+    return figure
+
+
+def _subtitle_text(lines: list[str]) -> str:
+    return "<br>".join(
+        f"<span style='font-size:13px;color:{_COLORS['gray']}'>{line}</span>"
+        for line in lines
+    )
+
+
+def _build_header_figure(*, title: str, subtitle_lines: list[str]) -> go.Figure:
+    figure = go.Figure()
+    figure.update_layout(
+        width=_HEADER_WIDTH,
+        height=120,
+        paper_bgcolor=_COLORS["paper"],
+        plot_bgcolor=_COLORS["paper"],
+        margin={"l": 8, "r": 8, "t": 8, "b": 8},
+        xaxis={"visible": False},
+        yaxis={"visible": False},
+        showlegend=False,
+        annotations=[
+            {
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0.0,
+                "y": 0.78,
+                "xanchor": "left",
+                "yanchor": "middle",
+                "showarrow": False,
+                "align": "left",
+                "text": title,
+                "font": {
+                    "family": _TITLE_FONT,
+                    "size": 28,
+                    "color": _COLORS["black"],
+                },
+            },
+            {
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0.0,
+                "y": 0.28,
+                "xanchor": "left",
+                "yanchor": "middle",
+                "showarrow": False,
+                "align": "left",
+                "text": _subtitle_text(subtitle_lines),
+                "font": {
+                    "family": _REPORT_FONT,
+                    "size": 13,
+                    "color": _COLORS["gray"],
+                },
+            },
+        ],
     )
     return figure
 
 
-def _render_html(
+def _render_report_html(
     *,
     title: str,
     subtitle_lines: list[str],
     figures: list[go.Figure],
     output_path: Path,
 ) -> None:
-    from plotly.offline import get_plotlyjs
-
     parts = [
         "<!DOCTYPE html>",
         "<html>",
@@ -528,21 +632,135 @@ def _render_html(
         f"<title>{title}</title>",
         f"<script type='text/javascript'>{get_plotlyjs()}</script>",
         "</head>",
-        "<body style='background: white; margin: 12px; font-family: sans-serif;'>",
-        f"<h1 style='margin-bottom: 4px;'>{title}</h1>",
+        "<body style='background: white; margin: 12px;'>",
+        "<div style='overflow-x: auto;'>",
+        "<table cellspacing='12' cellpadding='0' style='border-collapse: separate;'>",
     ]
-    for line in subtitle_lines:
-        parts.append(f"<div style='color: #555; margin-bottom: 4px;'>{line}</div>")
+    header_html = _build_header_figure(
+        title=title,
+        subtitle_lines=subtitle_lines,
+    ).to_html(
+        include_plotlyjs=False,
+        full_html=False,
+        config=_PLOTLY_CONFIG,
+    )
+    parts.append(f"<tr><td style='vertical-align: top;'>{header_html}</td></tr>")
     for figure in figures:
+        parts.append("<tr>")
         parts.append(
-            figure.to_html(
+            "<td style='vertical-align: top;'>"
+            + figure.to_html(
                 include_plotlyjs=False,
                 full_html=False,
                 config=_PLOTLY_CONFIG,
             )
+            + "</td>"
         )
-    parts.extend(["</body>", "</html>"])
+        parts.append("</tr>")
+    parts.extend(["</table>", "</div>", "</body>", "</html>"])
     output_path.write_text("\n".join(parts), encoding="utf-8")
+
+
+def _render_comparison_figure(
+    *,
+    labels: list[str],
+    metrics: list[tuple[str, str, list[float], str]],
+) -> go.Figure:
+    figure = make_subplots(
+        rows=3,
+        cols=2,
+        subplot_titles=[item[0] for item in metrics],
+        vertical_spacing=0.16,
+        horizontal_spacing=0.10,
+    )
+    for index, (_, y_axis_title, values, color) in enumerate(metrics, start=1):
+        row = ((index - 1) // 2) + 1
+        col = ((index - 1) % 2) + 1
+        figure.add_trace(
+            go.Bar(
+                x=labels,
+                y=values,
+                text=[f"{value:.2f}" for value in values],
+                textposition="outside",
+                marker_color=color,
+                marker_line={"color": color, "width": 1},
+                showlegend=False,
+            ),
+            row=row,
+            col=col,
+        )
+        figure.update_yaxes(title_text=y_axis_title, row=row, col=col)
+        figure.update_xaxes(tickangle=-18, row=row, col=col)
+
+    figure.update_layout(
+        width=_HEADER_WIDTH,
+        height=1380,
+        paper_bgcolor=_COLORS["paper"],
+        plot_bgcolor=_COLORS["paper"],
+        font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
+        margin=dict(l=75, r=35, t=70, b=60),
+        showlegend=False,
+    )
+    _apply_axis_style(figure)
+    for annotation in figure.layout.annotations:
+        annotation.font = {"size": 14, "color": _COLORS["black"]}
+    return figure
+
+
+def _summary_table_figure(summary: dict[str, Any]) -> go.Figure:
+    rows = [
+        ("Request throughput", _nested_metric_value(summary, "request_throughput")),
+        (
+            "Output token throughput",
+            _nested_metric_value(summary, "output_token_throughput"),
+        ),
+        (
+            "Total token throughput",
+            _nested_metric_value(summary, "total_token_throughput"),
+        ),
+        ("TTFT avg", _nested_metric_value(summary, "time_to_first_token")),
+        ("TTFT p95", _nested_metric_value(summary, "time_to_first_token", "p95")),
+        ("ITL avg", _nested_metric_value(summary, "inter_token_latency")),
+        ("ITL p95", _nested_metric_value(summary, "inter_token_latency", "p95")),
+        ("Latency p95", _nested_metric_value(summary, "request_latency", "p95")),
+    ]
+    labels = [item[0] for item in rows]
+    values = ["—" if item[1] is None else f"{item[1]:.2f}" for item in rows]
+    figure = go.Figure(
+        data=[
+            go.Table(
+                header={
+                    "values": ["Metric", "Value"],
+                    "fill_color": _COLORS["blue"],
+                    "font": {
+                        "color": "white",
+                        "size": 13,
+                        "family": _REPORT_FONT,
+                    },
+                    "align": "left",
+                    "height": 34,
+                },
+                cells={
+                    "values": [labels, values],
+                    "fill_color": [["#f7f7f7", "white"] * 4, ["#f7f7f7", "white"] * 4],
+                    "font": {
+                        "color": _COLORS["black"],
+                        "size": 12,
+                        "family": _REPORT_FONT,
+                    },
+                    "align": "left",
+                    "height": 30,
+                },
+            )
+        ]
+    )
+    figure.update_layout(
+        width=_HEADER_WIDTH,
+        height=360,
+        paper_bgcolor=_COLORS["paper"],
+        margin=dict(l=20, r=20, t=25, b=10),
+    )
+    return figure
 
 
 def generate_report(
@@ -601,53 +819,75 @@ def generate_report(
 
     labels = [_label_for_run(item) for item in runs_data]
     figures = [
-        _comparison_bar_figure(
-            title="Request Throughput",
-            x_labels=labels,
-            metric_label="requests/sec",
-            values=[
-                _nested_metric_value(item["summary"], "request_throughput") or 0.0
-                for item in runs_data
+        _render_comparison_figure(
+            labels=labels,
+            metrics=[
+                (
+                    "Request Throughput",
+                    "requests/sec",
+                    [
+                        _nested_metric_value(item["summary"], "request_throughput")
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["blue"],
+                ),
+                (
+                    "Output Token Throughput",
+                    "tokens/sec",
+                    [
+                        _nested_metric_value(item["summary"], "output_token_throughput")
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["orange"],
+                ),
+                (
+                    "Total Token Throughput",
+                    "tokens/sec",
+                    [
+                        _nested_metric_value(item["summary"], "total_token_throughput")
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["green"],
+                ),
+                (
+                    "TTFT P95",
+                    "ms",
+                    [
+                        _nested_metric_value(
+                            item["summary"], "time_to_first_token", "p95"
+                        )
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["purple"],
+                ),
+                (
+                    "ITL P95",
+                    "ms",
+                    [
+                        _nested_metric_value(
+                            item["summary"], "inter_token_latency", "p95"
+                        )
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["red"],
+                ),
+                (
+                    "Request Latency P95",
+                    "ms",
+                    [
+                        _nested_metric_value(item["summary"], "request_latency", "p95")
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["blue"],
+                ),
             ],
-        ),
-        _comparison_bar_figure(
-            title="Output Token Throughput",
-            x_labels=labels,
-            metric_label="tokens/sec",
-            values=[
-                _nested_metric_value(item["summary"], "output_token_throughput") or 0.0
-                for item in runs_data
-            ],
-        ),
-        _comparison_bar_figure(
-            title="TTFT P95",
-            x_labels=labels,
-            metric_label="ms",
-            values=[
-                _nested_metric_value(item["summary"], "time_to_first_token", "p95")
-                or 0.0
-                for item in runs_data
-            ],
-        ),
-        _comparison_bar_figure(
-            title="ITL P95",
-            x_labels=labels,
-            metric_label="ms",
-            values=[
-                _nested_metric_value(item["summary"], "inter_token_latency", "p95")
-                or 0.0
-                for item in runs_data
-            ],
-        ),
-        _comparison_bar_figure(
-            title="Request Latency P95",
-            x_labels=labels,
-            metric_label="ms",
-            values=[
-                _nested_metric_value(item["summary"], "request_latency", "p95") or 0.0
-                for item in runs_data
-            ],
-        ),
+        )
     ]
     output_path = _resolve_output_path(
         default_filename="benchmark-comparison-aiperf.html",
@@ -657,7 +897,7 @@ def generate_report(
     subtitle = [f"MLflow runs: {', '.join(mlflow_run_ids)}"]
     if notes:
         subtitle.extend([f"Notes: {notes[0]}", *notes[1:]])
-    _render_html(
+    _render_report_html(
         title="BenchFlow AIPerf Comparison Report",
         subtitle_lines=subtitle,
         figures=figures,
@@ -700,22 +940,7 @@ def generate_run_report(
     summary = _load_json(summary_path)
     distributions = _load_jsonl_metrics(jsonl_path) if jsonl_path else {}
 
-    figures = [
-        _comparison_bar_figure(
-            title="Run Summary",
-            x_labels=[
-                "request throughput",
-                "output token throughput",
-                "total token throughput",
-            ],
-            metric_label="value",
-            values=[
-                _nested_metric_value(summary, "request_throughput") or 0.0,
-                _nested_metric_value(summary, "output_token_throughput") or 0.0,
-                _nested_metric_value(summary, "total_token_throughput") or 0.0,
-            ],
-        )
-    ]
+    figures = [_summary_table_figure(summary)]
     for metric_name, title in (
         ("time_to_first_token", "TTFT Distribution"),
         ("inter_token_latency", "ITL Distribution"),
@@ -724,14 +949,29 @@ def generate_run_report(
         values = list(distributions.get(metric_name) or [])
         if not values:
             continue
-        figure = go.Figure(data=[go.Histogram(x=values, marker_color="#3366cc")])
+        figure = go.Figure(
+            data=[
+                go.Histogram(
+                    x=values,
+                    marker_color=_COLORS["blue"],
+                    marker_line={"color": _COLORS["blue"], "width": 1},
+                )
+            ]
+        )
         figure.update_layout(
             title=title,
-            height=480,
-            margin=dict(l=40, r=20, t=60, b=60),
+            width=_HEADER_WIDTH,
+            height=460,
+            paper_bgcolor=_COLORS["paper"],
+            plot_bgcolor=_COLORS["paper"],
+            font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
+            margin=dict(l=75, r=35, t=80, b=60),
             xaxis=dict(title="ms"),
             yaxis=dict(title="count"),
+            bargap=0.08,
+            showlegend=False,
         )
+        _apply_axis_style(figure)
         figures.append(figure)
 
     output_path = _resolve_output_path(
@@ -744,7 +984,7 @@ def generate_run_report(
         f"Model: {summary.get('input_config', {}).get('model') or 'unknown'}",
         f"Requests: {summary.get('request_count', 'unknown')}",
     ]
-    _render_html(
+    _render_report_html(
         title="BenchFlow AIPerf Run Report",
         subtitle_lines=subtitle,
         figures=figures,
