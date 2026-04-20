@@ -500,6 +500,46 @@ def _label_for_run(run_payload: dict[str, Any]) -> str:
     return f"{version} | {accelerator} | tp={tp} | r={replicas}"
 
 
+def _composed_version_from_mlflow_run(run: mlflow.entities.Run) -> str:
+    base_version = str(
+        run.data.params.get("version") or run.data.tags.get("version") or "unknown"
+    ).strip()
+    suffix = str(
+        run.data.tags.get("epp") or run.data.tags.get("deployment_type") or ""
+    ).strip()
+    if suffix:
+        return f"{base_version}-{suffix}"
+    return base_version
+
+
+def _comparison_model_name(runs_data: list[dict[str, Any]]) -> str:
+    if not runs_data:
+        return "unknown"
+    input_config = runs_data[0].get("summary", {}).get("input_config", {}) or {}
+    endpoint = input_config.get("endpoint", {}) or {}
+    model_names = endpoint.get("model_names") or []
+    if isinstance(model_names, list) and model_names:
+        return str(model_names[0]).strip() or "unknown"
+    return "unknown"
+
+
+def _comparison_dataset_label(runs_data: list[dict[str, Any]]) -> str:
+    if not runs_data:
+        return "unknown"
+    input_config = runs_data[0].get("summary", {}).get("input_config", {}) or {}
+    input_section = input_config.get("input", {}) or {}
+    dataset_file = str(input_section.get("file") or "").strip()
+    dataset_type = str(input_section.get("custom_dataset_type") or "").strip()
+    dataset_name = Path(dataset_file).name if dataset_file else ""
+    if dataset_name and dataset_type:
+        return f"{dataset_name} ({dataset_type})"
+    if dataset_name:
+        return dataset_name
+    if dataset_type:
+        return dataset_type
+    return "unknown"
+
+
 def _apply_axis_style(figure: go.Figure) -> None:
     figure.update_xaxes(
         showgrid=True,
@@ -684,6 +724,7 @@ def _render_comparison_figure(
                 textposition="outside",
                 marker_color=color,
                 marker_line={"color": color, "width": 1},
+                cliponaxis=False,
                 showlegend=False,
             ),
             row=row,
@@ -691,14 +732,17 @@ def _render_comparison_figure(
         )
         figure.update_yaxes(title_text=y_axis_title, row=row, col=col)
         figure.update_xaxes(tickangle=-18, row=row, col=col)
+        max_value = max(values) if values else 0.0
+        upper_bound = 1.0 if max_value <= 0 else max_value * 1.18
+        figure.update_yaxes(range=[0, upper_bound], row=row, col=col)
 
     figure.update_layout(
         width=_HEADER_WIDTH,
-        height=1380,
+        height=1460,
         paper_bgcolor=_COLORS["paper"],
         plot_bgcolor=_COLORS["paper"],
         font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
-        margin=dict(l=75, r=35, t=70, b=60),
+        margin=dict(l=75, r=35, t=90, b=60),
         showlegend=False,
     )
     _apply_axis_style(figure)
@@ -769,6 +813,7 @@ def generate_report(
     mlflow_tracking_uri: str | None,
     output_dir: Path | None,
     output_file: Path | None,
+    version_overrides: dict[str, str] | None = None,
     notes: list[str] | None = None,
 ) -> Path:
     if not mlflow_run_ids:
@@ -782,9 +827,11 @@ def generate_report(
     client = mlflow.tracking.MlflowClient()
     cache_dir = Path(tempfile.mkdtemp(prefix="benchflow-aiperf-report-"))
     runs_data: list[dict[str, Any]] = []
+    overrides = dict(version_overrides or {})
     try:
         for run_id in mlflow_run_ids:
             run = client.get_run(run_id)
+            composed_version = _composed_version_from_mlflow_run(run)
             summary_artifact = _resolve_artifact_file(
                 run.info.artifact_uri,
                 _AIPERF_SUMMARY_CANDIDATES,
@@ -800,11 +847,7 @@ def generate_report(
                 {
                     "run_id": run_id,
                     "summary": summary,
-                    "version": str(
-                        run.data.params.get("version")
-                        or run.data.tags.get("version")
-                        or "unknown"
-                    ),
+                    "version": overrides.get(composed_version, composed_version),
                     "accelerator": str(
                         run.data.params.get("accelerator")
                         or run.data.tags.get("accelerator")
@@ -894,11 +937,15 @@ def generate_report(
         output_dir=output_dir,
         output_file=output_file,
     )
-    subtitle = [f"MLflow runs: {', '.join(mlflow_run_ids)}"]
+    subtitle = [
+        f"Model: {_comparison_model_name(runs_data)}",
+        f"Dataset: {_comparison_dataset_label(runs_data)}",
+        f"MLflow runs: {', '.join(mlflow_run_ids)}",
+    ]
     if notes:
         subtitle.extend([f"Notes: {notes[0]}", *notes[1:]])
     _render_report_html(
-        title="BenchFlow AIPerf Comparison Report",
+        title="AIPerf Mooncake Comparison Report",
         subtitle_lines=subtitle,
         figures=figures,
         output_path=output_path,

@@ -126,6 +126,7 @@ def generate_report(
             mlflow_tracking_uri=mlflow_tracking_uri,
             output_dir=output_dir,
             output_file=output_file,
+            version_overrides=version_overrides,
             notes=notes,
         )
     return guidellm_backend.generate_report(
