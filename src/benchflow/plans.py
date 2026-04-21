@@ -375,6 +375,7 @@ def resolve_run_plan(
         repo_url=deployment_profile.spec.repo_url,
         repo_ref=repo_ref,
         platform_version=platform_version,
+        platform_channel=deployment_profile.spec.platform_channel,
         gateway=deployment_profile.spec.gateway,
         scheduler_profile=deployment_profile.spec.scheduler_profile,
         scheduler_image=scheduler_image,

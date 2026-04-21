@@ -495,6 +495,8 @@ spec:
   namespace: benchflow # overridden by Experiment spec.namespace or --namespace
   repo_url: https://github.com/llm-d/llm-d.git # no CLI override
   repo_ref: v0.4.0 # overridden by spec.overrides.llm_d.repo_ref or --llmd-repo-ref
+  platform_version: RHOAI-3.4.0-ea.2 # rhoai only, used for setup key and requested operator CSV
+  platform_channel: beta # rhoai only, defaults to fast-3.x when omitted
   gateway: istio # llm-d only, no CLI override
   endpoint_path: /v1/models # no CLI override
   scheduler_profile: "" # no CLI override

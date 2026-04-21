@@ -42,6 +42,7 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
         "mode": plan.deployment.mode,
         "namespace": plan.deployment.namespace,
         "repoRef": plan.deployment.repo_ref,
+        "platformChannel": plan.deployment.platform_channel,
         "gateway": plan.deployment.gateway,
         "schedulerProfile": plan.deployment.scheduler_profile,
         "schedulerImage": plan.deployment.scheduler_image,

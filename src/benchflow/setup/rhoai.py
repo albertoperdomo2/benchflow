@@ -23,7 +23,7 @@ RHOAI_OPERATOR_NAMESPACE = "redhat-ods-operator"
 RHOAI_OPERATOR_SUBSCRIPTION_NAME = "rhods-operator"
 RHOAI_OPERATORGROUP_NAME = "redhat-ods-operator"
 RHOAI_OPERATOR_PACKAGE_NAME = "rhods-operator"
-RHOAI_CHANNEL = "fast-3.x"
+DEFAULT_RHOAI_CHANNEL = "fast-3.x"
 DEFAULT_RHOAI_PLATFORM_VERSION = "RHOAI-3.3"
 RHOAI_DSC_NAME = "default-dsc"
 RHOAI_APPLICATIONS_NAMESPACE = "redhat-ods-applications"
@@ -267,7 +267,13 @@ def discover_rhoai_mlflow_version(kubeconfig: str | Path | None = None) -> str:
     )
 
 
-def _resolve_rhoai_starting_csv(kubectl_cmd: str, requested_version: str) -> str:
+def _rhoai_channel(plan: ResolvedRunPlan) -> str:
+    return str(plan.deployment.platform_channel or "").strip() or DEFAULT_RHOAI_CHANNEL
+
+
+def _resolve_rhoai_starting_csv(
+    kubectl_cmd: str, requested_version: str, channel_name: str
+) -> str:
     package = run_json_command(
         [
             kubectl_cmd,
@@ -283,12 +289,11 @@ def _resolve_rhoai_starting_csv(kubectl_cmd: str, requested_version: str) -> str
     channels = package.get("status", {}).get("channels", []) or []
     requested_series, requested_ea = _requested_rhoai_version(requested_version)
     channel = next(
-        (item for item in channels if item.get("name") == RHOAI_CHANNEL),
-        None,
+        (item for item in channels if item.get("name") == channel_name), None
     )
     if not isinstance(channel, dict):
         raise CommandError(
-            f"packagemanifest/{RHOAI_OPERATOR_PACKAGE_NAME} does not expose channel {RHOAI_CHANNEL}"
+            f"packagemanifest/{RHOAI_OPERATOR_PACKAGE_NAME} does not expose channel {channel_name}"
         )
 
     entries = channel.get("entries", []) or []
@@ -330,7 +335,7 @@ def _resolve_rhoai_starting_csv(kubectl_cmd: str, requested_version: str) -> str
 
     if not candidates:
         raise CommandError(
-            f"channel {RHOAI_CHANNEL} for {RHOAI_OPERATOR_PACKAGE_NAME} does not expose "
+            f"channel {channel_name} for {RHOAI_OPERATOR_PACKAGE_NAME} does not expose "
             f"a CSV matching {normalize_rhoai_platform_version(requested_version)}"
         )
 
@@ -673,7 +678,9 @@ def setup_rhoai(
     requested_version = normalize_rhoai_platform_version(
         str(plan.deployment.platform_version or "")
     )
+    channel_name = _rhoai_channel(plan)
     state = _empty_state(requested_version)
+    state["platform_channel"] = channel_name
     _persist_state(state, state_path)
 
     if _operator_subscription_exists(kubectl_cmd):
@@ -687,9 +694,11 @@ def setup_rhoai(
         source, source_namespace = _catalog_source_for_package(
             kubectl_cmd, RHOAI_OPERATOR_PACKAGE_NAME
         )
-        starting_csv = _resolve_rhoai_starting_csv(kubectl_cmd, requested_version)
+        starting_csv = _resolve_rhoai_starting_csv(
+            kubectl_cmd, requested_version, channel_name
+        )
         detail(
-            f"Installing {RHOAI_OPERATOR_PACKAGE_NAME} from {RHOAI_CHANNEL} "
+            f"Installing {RHOAI_OPERATOR_PACKAGE_NAME} from {channel_name} "
             f"with startingCSV {starting_csv}"
         )
         documents = render_yaml_documents(
@@ -697,6 +706,7 @@ def setup_rhoai(
             {
                 "SOURCE": source,
                 "SOURCE_NAMESPACE": source_namespace,
+                "CHANNEL": channel_name,
                 "STARTING_CSV": starting_csv,
             },
         )
