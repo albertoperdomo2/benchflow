@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .cluster import CommandError
 from .ui import detail, step
 
@@ -88,6 +90,95 @@ def apply_cluster_monitoring_rbac(installer: Any) -> None:
     )
 
 
+def apply_cluster_monitoring_config(installer: Any) -> None:
+    step("Enabling user workload monitoring")
+    if not installer._resource_exists("get", "namespace", "openshift-monitoring"):
+        raise CommandError(
+            "required namespace not found: openshift-monitoring. "
+            "BenchFlow expects OpenShift cluster monitoring to be available."
+        )
+
+    data: dict[str, str] = {}
+    if installer._resource_exists(
+        "get",
+        "configmap",
+        "cluster-monitoring-config",
+        "-n",
+        "openshift-monitoring",
+    ):
+        configmap = installer._oc_json(
+            "get",
+            "configmap",
+            "cluster-monitoring-config",
+            "-n",
+            "openshift-monitoring",
+            retry=True,
+            description="reading cluster monitoring config",
+        )
+        data = dict(configmap.get("data") or {})
+
+    config = yaml.safe_load(data.get("config.yaml") or "{}") or {}
+    if not isinstance(config, dict):
+        raise CommandError(
+            "openshift-monitoring/cluster-monitoring-config data.config.yaml must be a YAML mapping"
+        )
+
+    if config.get("enableUserWorkload") is True:
+        detail("User workload monitoring is already enabled")
+    else:
+        config["enableUserWorkload"] = True
+        data["config.yaml"] = yaml.safe_dump(config, sort_keys=False)
+        installer._apply_documents(
+            [
+                {
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "metadata": {
+                        "name": "cluster-monitoring-config",
+                        "namespace": "openshift-monitoring",
+                    },
+                    "data": data,
+                }
+            ],
+            namespace=None,
+            description="enabling user workload monitoring",
+        )
+
+
+def apply_gpu_metrics_monitoring(installer: Any) -> None:
+    if not installer._resource_exists(
+        "get", "crd", "servicemonitors.monitoring.coreos.com"
+    ):
+        detail("Skipping DCGM ServiceMonitor because ServiceMonitor CRD is unavailable")
+        return
+    if not installer._resource_exists(
+        "get", "namespace", installer.gpu_operator_namespace
+    ):
+        detail(
+            f"Skipping DCGM ServiceMonitor because namespace {installer.gpu_operator_namespace} does not exist"
+        )
+        return
+    if not installer._resource_exists(
+        "get",
+        "service",
+        "nvidia-dcgm-exporter",
+        "-n",
+        installer.gpu_operator_namespace,
+    ):
+        detail(
+            "Skipping DCGM ServiceMonitor because service/nvidia-dcgm-exporter does not exist"
+        )
+        return
+
+    step("Applying DCGM metrics ServiceMonitor")
+    installer._apply_asset_documents(
+        "monitoring/nvidia-dcgm-exporter-servicemonitor.yaml",
+        namespace=None,
+        description="applying DCGM metrics ServiceMonitor",
+        variables=installer._base_asset_variables(),
+    )
+
+
 def apply_runner_rbac(installer: Any) -> None:
     step("Applying runner RBAC")
     installer._apply_asset_documents(
@@ -125,6 +216,8 @@ def apply_namespaced_resources(installer: Any) -> None:
     )
     apply_runner_rbac(installer)
     apply_cluster_monitoring_rbac(installer)
+    apply_cluster_monitoring_config(installer)
+    apply_gpu_metrics_monitoring(installer)
     apply_workspace_pvcs(installer)
     if installer.options.install_tekton:
         apply_manifest_tree(
