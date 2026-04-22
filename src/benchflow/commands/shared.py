@@ -755,4 +755,4 @@ def load_profile_document(profiles_dir: Path, name: str, kind: str | None) -> di
         raise ValidationError(
             f"profile name {name!r} is ambiguous; specify --kind (matches: {kinds})"
         )
-    return load_yaml_file(Path(matches[0].path))
+    return load_yaml_file(profiles_dir / matches[0].path)
