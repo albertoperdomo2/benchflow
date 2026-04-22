@@ -457,11 +457,11 @@ class BenchmarkProcessor:
             compare_versions.append(version)
 
         self.compare_versions = compare_versions
-
-        session = (
-            boto3.Session(profile_name=aws_profile) if aws_profile else boto3.Session()
-        )
-        self.s3_client = session.client("s3")
+        if s3_key and s3_bucket:
+            session = (
+                boto3.Session(profile_name=aws_profile) if aws_profile else boto3.Session()
+            )
+            self.s3_client = session.client("s3")
 
         self.consolidated_df: Optional[pd.DataFrame] = None
         self.new_data_df: Optional[pd.DataFrame] = None

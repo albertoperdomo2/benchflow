@@ -1357,6 +1357,7 @@ def generate_plot_only_report(
     output_file: str = None,
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
+    download_external_data: bool = True
 ) -> str:
     """
     Generate HTML report from existing MLflow runs without running benchmarks.
@@ -1417,47 +1418,52 @@ def generate_plot_only_report(
     # Process each run's JSON individually to get CSV data, then combine
     logger.info(f"Processing {len(runs_data)} runs individually to extract CSV data")
 
-    # Get S3 configuration from environment
-    s3_bucket = os.environ.get("S3_BUCKET", "psap-dashboard-data")
-    s3_key = os.environ.get(
-        "S3_KEY", "main/llmd-dashboard/llmd-dashboard.csv"
-    )  # Primary key (legacy env var, not used when downloading both)
-
-    # Download and merge consolidated CSVs from S3
-    logger.info(
-        "Downloading consolidated CSVs from S3 (llmd-dashboard + rhaiis-dashboard)"
-    )
     from .processor import BenchmarkProcessor
     import pandas as pd
 
-    # Create a temporary processor just to download S3 CSV
-    temp_processor = BenchmarkProcessor(
-        json_path=runs_data[0]["artifact_path"],  # dummy, won't use it yet
-        s3_bucket=s3_bucket,
-        s3_key=s3_key,
-        accelerator="dummy",
-        model_name=model,
-        version="dummy",
-        tp_size=1,
-        runtime_args="",
-        replicas=1,  # dummy value
-        data_profile=data_profile_params,
-        repeat_section_legends=repeat_section_legends,
-    )
-    consolidated_df = temp_processor.download_s3_csv()
-    logger.info(f"Downloaded consolidated CSV with {len(consolidated_df)} rows")
+    s3_bucket=None
+    s3_key=None
 
-    # Mark CSV data with source column for filtering logic
-    if not consolidated_df.empty:
-        consolidated_df["_data_source"] = "csv"
+    if download_external_data:
+        # Get S3 configuration from environment
+        s3_bucket = os.environ.get("S3_BUCKET", "psap-dashboard-data")
+        s3_key = os.environ.get(
+            "S3_KEY", "main/llmd-dashboard/llmd-dashboard.csv"
+        )  # Primary key (legacy env var, not used when downloading both)
 
-    # Load and merge additional CSV files using processor method
-    if additional_csv_files:
-        temp_processor.consolidated_df = consolidated_df
-        consolidated_df = temp_processor.load_additional_csvs(additional_csv_files)
-        # Mark additional CSV data as well
-        if not consolidated_df.empty and "_data_source" not in consolidated_df.columns:
+        # Download and merge consolidated CSVs from S3
+        logger.info(
+            "Downloading consolidated CSVs from S3 (llmd-dashboard + rhaiis-dashboard)"
+        )
+
+        # Create a temporary processor just to download S3 CSV
+        temp_processor = BenchmarkProcessor(
+            json_path=runs_data[0]["artifact_path"],  # dummy, won't use it yet
+            s3_bucket=s3_bucket,
+            s3_key=s3_key,
+            accelerator="dummy",
+            model_name=model,
+            version="dummy",
+            tp_size=1,
+            runtime_args="",
+            replicas=1,  # dummy value
+            data_profile=data_profile_params,
+            repeat_section_legends=repeat_section_legends,
+        )
+        consolidated_df = temp_processor.download_s3_csv()
+        logger.info(f"Downloaded consolidated CSV with {len(consolidated_df)} rows")
+
+        # Mark CSV data with source column for filtering logic
+        if not consolidated_df.empty:
             consolidated_df["_data_source"] = "csv"
+
+        # Load and merge additional CSV files using processor method
+        if additional_csv_files:
+            temp_processor.consolidated_df = consolidated_df
+            consolidated_df = temp_processor.load_additional_csvs(additional_csv_files)
+            # Mark additional CSV data as well
+            if not consolidated_df.empty and "_data_source" not in consolidated_df.columns:
+                consolidated_df["_data_source"] = "csv"
 
     # Process each run to get its CSV data
     all_run_dataframes = []
@@ -1522,24 +1528,26 @@ def generate_plot_only_report(
         else pd.DataFrame()
     )
 
+    final_df = combined_runs_df
     # Use BenchmarkProcessor's merge_data logic to properly combine
     logger.info("Merging with consolidated CSV using processor's merge logic")
-    temp_processor.consolidated_df = consolidated_df
-    temp_processor.new_data_df = combined_runs_df
-    final_df = temp_processor.merge_data()
-    logger.info(f"Final merged DataFrame has {len(final_df)} rows")
+    if download_external_data:
+        temp_processor.consolidated_df = consolidated_df
+        temp_processor.new_data_df = combined_runs_df
+        final_df = temp_processor.merge_data()
+        logger.info(f"Final merged DataFrame has {len(final_df)} rows")
 
-    # Re-add _data_source column after merge (it gets dropped by merge_data fieldnames filter)
-    # Identify which rows came from MLflow vs CSV by checking if version exists in our MLflow runs
-    mlflow_versions = set(run_data["composed_version"] for run_data in runs_data)
-    final_df["_data_source"] = final_df["version"].apply(
-        lambda v: "mlflow" if v in mlflow_versions else "csv"
-    )
-    logger.info(
-        f"Restored _data_source column: "
-        f"{(final_df['_data_source'] == 'mlflow').sum()} MLflow rows, "
-        f"{(final_df['_data_source'] == 'csv').sum()} CSV rows"
-    )
+        # Re-add _data_source column after merge (it gets dropped by merge_data fieldnames filter)
+        # Identify which rows came from MLflow vs CSV by checking if version exists in our MLflow runs
+        mlflow_versions = set(run_data["composed_version"] for run_data in runs_data)
+        final_df["_data_source"] = final_df["version"].apply(
+            lambda v: "mlflow" if v in mlflow_versions else "csv"
+        )
+        logger.info(
+            f"Restored _data_source column: "
+            f"{(final_df['_data_source'] == 'mlflow').sum()} MLflow rows, "
+            f"{(final_df['_data_source'] == 'csv').sum()} CSV rows"
+        )
 
     # Filter by versions if specified (different logic for CSV vs MLflow data)
     if versions:
