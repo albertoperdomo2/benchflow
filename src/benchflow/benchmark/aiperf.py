@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import html
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -601,6 +602,178 @@ def _comparison_bar_figure(
     return figure
 
 
+def _metric_stat(
+    summary: dict[str, Any], metric_name: str, stat_name: str = "avg"
+) -> float | None:
+    metric = summary.get(metric_name)
+    if not isinstance(metric, dict):
+        return None
+    value = metric.get(stat_name)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_number(value: float | None, *, precision: int = 0) -> str:
+    if value is None:
+        return "—"
+    if precision <= 0:
+        return f"{value:,.0f}"
+    return f"{value:,.{precision}f}"
+
+
+def _format_compact(value: float | None) -> str:
+    if value is None:
+        return "—"
+    absolute = abs(value)
+    if absolute >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}B"
+    if absolute >= 1_000_000:
+        return f"{value / 1_000_000:.2f}M"
+    if absolute >= 1_000:
+        return f"{value / 1_000:.2f}K"
+    return f"{value:.0f}"
+
+
+def _render_mooncake_stats_table(runs_data: list[dict[str, Any]]) -> str:
+    if not runs_data:
+        return ""
+    headers = [
+        "Run",
+        "Requests",
+        "ISL avg",
+        "ISL stddev",
+        "ISL p50",
+        "ISL p95",
+        "ISL max",
+        "OSL avg",
+        "OSL stddev",
+        "OSL p50",
+        "OSL p95",
+        "OSL max",
+        "Total ISL",
+        "Total OSL",
+    ]
+    metric_column_width = (100 - 30) / (len(headers) - 1)
+    colgroup = (
+        "<colgroup>"
+        "<col style='width: 30%;'>"
+        + "".join(
+            f"<col style='width: {metric_column_width:.3f}%;'>" for _ in headers[1:]
+        )
+        + "</colgroup>"
+    )
+    header_cells = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+    table_rows: list[str] = []
+    for run_data in runs_data:
+        summary = run_data["summary"]
+        isl = "input_sequence_length"
+        osl = "output_sequence_length"
+        values = [
+            _label_for_run(run_data),
+            _format_number(_nested_metric_value(summary, "request_count")),
+            _format_number(_metric_stat(summary, isl, "avg")),
+            _format_number(_metric_stat(summary, isl, "std")),
+            _format_number(_metric_stat(summary, isl, "p50")),
+            _format_number(_metric_stat(summary, isl, "p95")),
+            _format_number(_metric_stat(summary, isl, "max")),
+            _format_number(_metric_stat(summary, osl, "avg")),
+            _format_number(_metric_stat(summary, osl, "std")),
+            _format_number(_metric_stat(summary, osl, "p50")),
+            _format_number(_metric_stat(summary, osl, "p95")),
+            _format_number(_metric_stat(summary, osl, "max")),
+            _format_compact(_nested_metric_value(summary, "total_isl")),
+            _format_compact(_nested_metric_value(summary, "total_osl")),
+        ]
+        value_cells = "".join(f"<td>{html.escape(value)}</td>" for value in values[1:])
+        table_rows.append(f"<tr><td>{html.escape(values[0])}</td>{value_cells}</tr>")
+
+    return f"""
+<section class="benchflow-report-table-section">
+  <details class="benchflow-report-table-details">
+    <summary>Mooncake Trace Data Profile</summary>
+    <p>Raw input and output sequence length statistics from the AIPerf Mooncake trace artifacts.</p>
+    <div class="benchflow-report-table-shell">
+      <table class="benchflow-report-table">
+        {colgroup}
+        <thead>
+          <tr>{header_cells}</tr>
+        </thead>
+        <tbody>
+          {"".join(table_rows)}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+"""
+
+
+def _report_table_css() -> str:
+    return """
+    .benchflow-report-table-section {
+      width: 100%;
+      margin: 24px 0 48px;
+    }
+    .benchflow-report-table-details {
+      background: white;
+    }
+    .benchflow-report-table-details summary {
+      padding: 10px 12px;
+      font-size: 20px;
+      font-weight: 700;
+      cursor: pointer;
+      list-style-position: inside;
+    }
+    .benchflow-report-table-details[open] summary {
+      border-bottom: none;
+    }
+    .benchflow-report-table-section p {
+      margin: 12px 0 14px;
+      font-size: 12px;
+      text-align: center;
+    }
+    .benchflow-report-table-shell {
+      overflow-x: auto;
+      padding: 0 10px 10px;
+    }
+    .benchflow-report-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 11px;
+      background: white;
+    }
+    .benchflow-report-table th,
+    .benchflow-report-table td {
+      border: 1px solid #1f2a44;
+      padding: 6px 7px;
+      vertical-align: top;
+    }
+    .benchflow-report-table thead th {
+      background: #f4f6f8;
+      font-weight: 700;
+      text-align: left;
+    }
+    .benchflow-report-table th:first-child,
+    .benchflow-report-table td:first-child {
+      word-break: break-word;
+      white-space: normal;
+    }
+    .benchflow-report-table tbody td {
+      text-align: right;
+    }
+    .benchflow-report-table tbody td:first-child,
+    .benchflow-report-table tbody th {
+      text-align: left;
+    }
+    .benchflow-report-table tbody tr:nth-child(even) td {
+      background: #fafbfc;
+    }
+"""
+
+
 def _subtitle_text(lines: list[str]) -> str:
     return "<br>".join(
         f"<span style='font-size:13px;color:{_COLORS['gray']}'>{line}</span>"
@@ -662,6 +835,7 @@ def _render_report_html(
     title: str,
     subtitle_lines: list[str],
     figures: list[go.Figure],
+    raw_sections: list[str] | None = None,
     output_path: Path,
 ) -> None:
     parts = [
@@ -671,6 +845,9 @@ def _render_report_html(
         "<meta charset='utf-8'>",
         f"<title>{title}</title>",
         f"<script type='text/javascript'>{get_plotlyjs()}</script>",
+        "<style>",
+        _report_table_css(),
+        "</style>",
         "</head>",
         "<body style='background: white; margin: 12px;'>",
         "<div style='overflow-x: auto;'>",
@@ -695,6 +872,14 @@ def _render_report_html(
                 config=_PLOTLY_CONFIG,
             )
             + "</td>"
+        )
+        parts.append("</tr>")
+    for section in raw_sections or []:
+        if not section:
+            continue
+        parts.append("<tr>")
+        parts.append(
+            f"<td style='vertical-align: top; width: {_HEADER_WIDTH}px;'>{section}</td>"
         )
         parts.append("</tr>")
     parts.extend(["</table>", "</div>", "</body>", "</html>"])
@@ -930,7 +1115,7 @@ def generate_report(
                     _COLORS["blue"],
                 ),
             ],
-        )
+        ),
     ]
     output_path = _resolve_output_path(
         default_filename="benchmark-comparison-aiperf.html",
@@ -948,6 +1133,7 @@ def generate_report(
         title="AIPerf Mooncake Comparison Report",
         subtitle_lines=subtitle,
         figures=figures,
+        raw_sections=[_render_mooncake_stats_table(runs_data)],
         output_path=output_path,
     )
     return output_path
