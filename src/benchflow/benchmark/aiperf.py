@@ -305,6 +305,11 @@ def _build_command(
         command.append("--fixed-schedule")
     if _parse_bool(options.get("fixed_schedule_auto_offset"), default=True):
         command.append("--fixed-schedule-auto-offset")
+    export_level = str(options.get("export_level") or "").strip()
+    if export_level:
+        command.extend(["--export-level", export_level])
+    if _parse_bool(options.get("export_http_trace"), default=False):
+        command.append("--export-http-trace")
     synthesis_max_isl = _parse_positive_int(
         options.get("synthesis_max_isl"),
         field_name="benchmark.options.synthesis_max_isl",
@@ -393,6 +398,11 @@ def run_benchmark(
                 mlflow.log_param(
                     "endpoint_type", _required_option(options, "endpoint_type")
                 )
+                export_level = str(options.get("export_level") or "").strip()
+                if export_level:
+                    mlflow.log_param("export_level", export_level)
+                if _parse_bool(options.get("export_http_trace"), default=False):
+                    mlflow.log_param("export_http_trace", "true")
                 mlflow.log_param("target", benchmark_target)
                 mlflow.log_param("model", plan.model.name)
                 mlflow.log_param("tp", plan.deployment.runtime.tensor_parallelism)
