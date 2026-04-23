@@ -348,7 +348,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         ),
         namespace,
     )
-    print(name)
+    print(f"workflow/{name}")
 
     if args.follow:
         return 0 if follow_execution(namespace, name) else 1

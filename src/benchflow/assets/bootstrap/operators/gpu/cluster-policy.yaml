@@ -62,3 +62,5 @@ spec:
     enabled: false
   toolkit:
     enabled: true
+  nodeStatusExporter:
+    enabled: true
