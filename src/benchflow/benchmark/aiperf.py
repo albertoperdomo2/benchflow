@@ -493,12 +493,19 @@ def _resolve_output_path(
     return path
 
 
-def _label_for_run(run_payload: dict[str, Any]) -> str:
+def _full_label_for_run(run_payload: dict[str, Any]) -> str:
     version = str(run_payload.get("version") or "unknown").strip()
     accelerator = str(run_payload.get("accelerator") or "unknown").strip()
     tp = run_payload.get("tp")
     replicas = run_payload.get("replicas")
     return f"{version} | {accelerator} | tp={tp} | r={replicas}"
+
+
+def _label_for_run(run_payload: dict[str, Any]) -> str:
+    version = str(run_payload.get("version") or "unknown").strip()
+    tp = run_payload.get("tp")
+    replicas = run_payload.get("replicas")
+    return f"{version}<br>tp={tp} | r={replicas}"
 
 
 def _composed_version_from_mlflow_run(run: mlflow.entities.Run) -> str:
@@ -889,14 +896,16 @@ def _render_report_html(
 def _render_comparison_figure(
     *,
     labels: list[str],
+    hover_labels: list[str],
     metrics: list[tuple[str, str, list[float], str]],
 ) -> go.Figure:
+    rows = max(1, (len(metrics) + 1) // 2)
     figure = make_subplots(
-        rows=3,
+        rows=rows,
         cols=2,
         subplot_titles=[item[0] for item in metrics],
-        vertical_spacing=0.16,
-        horizontal_spacing=0.10,
+        vertical_spacing=0.08,
+        horizontal_spacing=0.08,
     )
     for index, (_, y_axis_title, values, color) in enumerate(metrics, start=1):
         row = ((index - 1) // 2) + 1
@@ -907,6 +916,8 @@ def _render_comparison_figure(
                 y=values,
                 text=[f"{value:.2f}" for value in values],
                 textposition="outside",
+                customdata=hover_labels,
+                hovertemplate="%{customdata}<br>%{y:.2f}<extra></extra>",
                 marker_color=color,
                 marker_line={"color": color, "width": 1},
                 cliponaxis=False,
@@ -923,11 +934,11 @@ def _render_comparison_figure(
 
     figure.update_layout(
         width=_HEADER_WIDTH,
-        height=1460,
+        height=360 * rows + 140,
         paper_bgcolor=_COLORS["paper"],
         plot_bgcolor=_COLORS["paper"],
         font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
-        margin=dict(l=75, r=35, t=90, b=60),
+        margin=dict(l=75, r=35, t=70, b=40),
         showlegend=False,
     )
     _apply_axis_style(figure)
@@ -1046,9 +1057,11 @@ def generate_report(
         shutil.rmtree(cache_dir, ignore_errors=True)
 
     labels = [_label_for_run(item) for item in runs_data]
+    hover_labels = [_full_label_for_run(item) for item in runs_data]
     figures = [
         _render_comparison_figure(
             labels=labels,
+            hover_labels=hover_labels,
             metrics=[
                 (
                     "Request Throughput",
@@ -1113,6 +1126,72 @@ def generate_report(
                         for item in runs_data
                     ],
                     _COLORS["blue"],
+                ),
+                (
+                    "Input Sequence Length",
+                    "tokens",
+                    [
+                        _nested_metric_value(item["summary"], "input_sequence_length")
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["green"],
+                ),
+                (
+                    "Output Sequence Length",
+                    "tokens",
+                    [
+                        _nested_metric_value(item["summary"], "output_sequence_length")
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["orange"],
+                ),
+                (
+                    "Prefill Throughput Per User",
+                    "tokens/sec/user",
+                    [
+                        _nested_metric_value(
+                            item["summary"], "prefill_throughput_per_user"
+                        )
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["purple"],
+                ),
+                (
+                    "Output Token Throughput Per User",
+                    "tokens/sec/user",
+                    [
+                        _nested_metric_value(
+                            item["summary"], "output_token_throughput_per_user"
+                        )
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["blue"],
+                ),
+                (
+                    "Time to Second Token P95",
+                    "ms",
+                    [
+                        _nested_metric_value(
+                            item["summary"], "time_to_second_token", "p95"
+                        )
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["red"],
+                ),
+                (
+                    "Error Request Count",
+                    "requests",
+                    [
+                        _nested_metric_value(item["summary"], "error_request_count")
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["red"],
                 ),
             ],
         ),
