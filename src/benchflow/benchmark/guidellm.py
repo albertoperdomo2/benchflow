@@ -70,6 +70,10 @@ def benchmark_version_from_plan(plan: ResolvedRunPlan) -> str:
         except CommandError:
             pass
         return normalize_rhoai_platform_version(plan.deployment.platform_version)
+    if plan.deployment.platform == "rhaiis":
+        resolved_version = str(plan.deployment.platform_version or "").strip()
+        if resolved_version:
+            return resolved_version
     return f"{plan.deployment.platform}-{plan.deployment.mode}"
 
 

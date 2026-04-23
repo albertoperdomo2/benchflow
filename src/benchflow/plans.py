@@ -31,6 +31,25 @@ _UNSUPPORTED_BENCHMARK_ENV = {
 }
 
 
+def _image_tag(image: str) -> str:
+    cleaned = str(image).strip()
+    if not cleaned:
+        return ""
+    without_digest = cleaned.split("@", 1)[0]
+    last_slash = without_digest.rfind("/")
+    last_colon = without_digest.rfind(":")
+    if last_colon <= last_slash:
+        return ""
+    return without_digest[last_colon + 1 :].strip()
+
+
+def _rhaiis_platform_version(image: str) -> str:
+    tag = _image_tag(image)
+    if not tag:
+        return ""
+    return f"RHAIIS-{tag}"
+
+
 def _validate_profiling_support(*, platform: str, profiling_enabled: bool) -> None:
     if not profiling_enabled:
         return
@@ -314,6 +333,8 @@ def resolve_run_plan(
             repo_ref = str(repo_ref_override)
         if not platform_version:
             platform_version = repo_ref
+    elif deployment_profile.spec.platform == "rhaiis" and not platform_version:
+        platform_version = _rhaiis_platform_version(runtime.image)
 
     scheduler_image = str(
         scheduler_image_override or deployment_profile.spec.scheduler_image

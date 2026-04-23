@@ -835,6 +835,8 @@ version label:
   to labels like `RHOAI-3.3` or `RHOAI-3.4-EA1`
 - if that live RHOAI lookup fails, BenchFlow falls back to its pinned RHOAI
   series label
+- `rhaiis` uses `RHAIIS-<runtime image tag>` when the deployment runtime image
+  has an explicit tag
 
 The benchmark runtime adds:
 
