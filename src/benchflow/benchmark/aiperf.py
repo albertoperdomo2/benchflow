@@ -1138,7 +1138,7 @@ def generate_report(
                     _COLORS["blue"],
                 ),
                 (
-                    "Input Sequence Length",
+                    "Input Sequence Length Avg",
                     "tokens",
                     [
                         _nested_metric_value(item["summary"], "input_sequence_length")
@@ -1148,7 +1148,7 @@ def generate_report(
                     _COLORS["green"],
                 ),
                 (
-                    "Output Sequence Length",
+                    "Output Sequence Length Avg",
                     "tokens",
                     [
                         _nested_metric_value(item["summary"], "output_sequence_length")
@@ -1158,7 +1158,7 @@ def generate_report(
                     _COLORS["orange"],
                 ),
                 (
-                    "Prefill Throughput Per User",
+                    "Prefill Throughput Per User Avg",
                     "tokens/sec/user",
                     [
                         _nested_metric_value(
@@ -1170,7 +1170,7 @@ def generate_report(
                     _COLORS["purple"],
                 ),
                 (
-                    "Output Token Throughput Per User",
+                    "Output Token Throughput Per User Avg",
                     "tokens/sec/user",
                     [
                         _nested_metric_value(
