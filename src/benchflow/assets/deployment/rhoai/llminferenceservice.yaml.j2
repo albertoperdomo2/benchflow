@@ -85,6 +85,10 @@ spec:
                       tokenizersPoolConfig:
                         hf:
                           tokenizersCacheDir: /mnt/tokenizers
+                    uds:
+                      socketFile: /tmp/tokenizer/tokenizer-uds.socket
+                      modelTokenizerMap:
+                        base: {{ precise_prefix_cache_tokenizer_model_path | tojson }}
                 - type: kv-cache-utilization-scorer
                 - type: queue-scorer
                 - type: max-score-picker

@@ -100,6 +100,10 @@ def _rhoai_vllm_args(plan: ResolvedRunPlan) -> list[str]:
     ] + plan.deployment.runtime.vllm_args
 
 
+def _rhoai_precise_tokenizer_model_path(plan: ResolvedRunPlan) -> str:
+    return f"/mnt/models/base{_model_path(plan)}"
+
+
 def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
     _validate_rhoai_profiling(plan)
     custom_scheduler_enabled = plan.deployment.mode in {
@@ -128,6 +132,9 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
             plan.deployment.mode == "approximate-prefix-cache"
         ),
         "precise_prefix_cache_enabled": plan.deployment.mode == "precise-prefix-cache",
+        "precise_prefix_cache_tokenizer_model_path": (
+            _rhoai_precise_tokenizer_model_path(plan)
+        ),
         "profiling_enabled": plan.execution.profiling.enabled,
         "profiler_call_ranges": plan.execution.profiling.call_ranges,
         "profiler_configmap_name": rhoai_profiler_configmap_name(plan),
