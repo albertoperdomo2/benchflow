@@ -18,7 +18,7 @@ USER root
 
 RUN mkdir -p /tmp/.huggingface && chmod -R 777 /tmp/.huggingface
 
-RUN dnf install -y ca-certificates curl git tar gzip \
+RUN dnf install -y ca-certificates curl git rsync tar gzip \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,7 @@ from .cluster import (
     CommandError,
     create_manifest,
     require_any_command,
+    require_command,
     run_command,
     run_json_command,
     use_kubeconfig,
@@ -349,6 +351,72 @@ def _wait_for_reader_pod(
     raise CommandError(f"timed out waiting for remote reader pod {pod_name}")
 
 
+def _reader_supports_rsync(plan: ResolvedRunPlan, *, pod_name: str) -> bool:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    with use_kubeconfig(plan.target_cluster.kubeconfig):
+        result = run_command(
+            [
+                kubectl_cmd,
+                "exec",
+                "-n",
+                plan.deployment.namespace,
+                pod_name,
+                "-c",
+                "main",
+                "--",
+                "sh",
+                "-c",
+                "command -v rsync >/dev/null 2>&1",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    return result.returncode == 0
+
+
+def _copy_remote_results_directory_with_rsync(
+    plan: ResolvedRunPlan,
+    *,
+    reader_pod: str,
+    remote_path: str,
+    local_dir: Path,
+) -> None:
+    require_command("oc")
+    require_command("rsync")
+    source = f"{reader_pod}:{remote_path.rstrip('/')}/"
+    with use_kubeconfig(plan.target_cluster.kubeconfig):
+        run_command(
+            [
+                "rsync",
+                "-a",
+                "-z",
+                "--blocking-io",
+                f"--rsh=oc rsh -n {plan.deployment.namespace} -c main",
+                source,
+                str(local_dir),
+            ]
+        )
+
+
+def _copy_remote_results_directory_with_oc_cp(
+    plan: ResolvedRunPlan,
+    *,
+    reader_pod: str,
+    remote_path: str,
+    local_dir: Path,
+) -> None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    with use_kubeconfig(plan.target_cluster.kubeconfig):
+        run_command(
+            [
+                kubectl_cmd,
+                "cp",
+                f"{plan.deployment.namespace}/{reader_pod}:{remote_path}/.",
+                str(local_dir),
+            ]
+        )
+
+
 def copy_remote_results_directory(
     plan: ResolvedRunPlan,
     *,
@@ -356,21 +424,53 @@ def copy_remote_results_directory(
     local_dir: Path,
     cleanup: bool = True,
 ) -> None:
-    kubectl_cmd = require_any_command("oc", "kubectl")
     reader_pod = _generate_remote_job_name(plan, "reader")
     local_dir.mkdir(parents=True, exist_ok=True)
     _create_reader_pod(plan, pod_name=reader_pod)
     try:
         _wait_for_reader_pod(plan, pod_name=reader_pod)
-        with use_kubeconfig(plan.target_cluster.kubeconfig):
-            run_command(
-                [
-                    kubectl_cmd,
-                    "cp",
-                    f"{plan.deployment.namespace}/{reader_pod}:{remote_path}/.",
-                    str(local_dir),
-                ]
+        used_rsync = False
+        attempted_rsync = False
+        rsync_available = shutil.which("rsync") is not None
+        oc_available = shutil.which("oc") is not None
+        if (
+            rsync_available
+            and oc_available
+            and _reader_supports_rsync(plan, pod_name=reader_pod)
+        ):
+            attempted_rsync = True
+            try:
+                detail(
+                    f"Copying remote results from {reader_pod} with rsync over oc rsh"
+                )
+                _copy_remote_results_directory_with_rsync(
+                    plan,
+                    reader_pod=reader_pod,
+                    remote_path=remote_path,
+                    local_dir=local_dir,
+                )
+                used_rsync = True
+            except CommandError as exc:
+                detail(f"rsync copy failed, falling back to oc cp: {exc}")
+        if not used_rsync:
+            if attempted_rsync:
+                pass
+            elif not rsync_available:
+                detail("rsync not available locally, falling back to oc cp")
+            elif not oc_available:
+                detail(
+                    "oc not available locally for rsync transport, falling back to oc cp"
+                )
+            else:
+                detail("reader pod does not have rsync, falling back to oc cp")
+            _copy_remote_results_directory_with_oc_cp(
+                plan,
+                reader_pod=reader_pod,
+                remote_path=remote_path,
+                local_dir=local_dir,
             )
+        kubectl_cmd = require_any_command("oc", "kubectl")
+        with use_kubeconfig(plan.target_cluster.kubeconfig):
             if cleanup:
                 run_command(
                     [
