@@ -46,6 +46,14 @@ _COLORS = {
     "red": REPORT_COLOR_PALETTE[3],
     "purple": REPORT_COLOR_PALETTE[4],
 }
+_AIPERF_COMPARISON_VERSION_PALETTE = [
+    *REPORT_COLOR_PALETTE,
+    "#8c564b",
+    "#17becf",
+    "#bcbd22",
+    "#7f7f7f",
+    "#e377c2",
+]
 _HEADER_WIDTH = 1440
 _REPORT_FONT = "Arial, Helvetica, sans-serif"
 _TITLE_FONT = "Times New Roman, Georgia, serif"
@@ -907,7 +915,8 @@ def _render_comparison_figure(
     *,
     labels: list[str],
     hover_labels: list[str],
-    metrics: list[tuple[str, str, list[float], str]],
+    series_labels: list[str],
+    metrics: list[tuple[str, str, list[float]]],
 ) -> go.Figure:
     rows = max(1, (len(metrics) + 1) // 2)
     figure = make_subplots(
@@ -917,25 +926,42 @@ def _render_comparison_figure(
         vertical_spacing=0.06,
         horizontal_spacing=0.08,
     )
-    for index, (_, y_axis_title, values, color) in enumerate(metrics, start=1):
+    version_colors: dict[str, str] = {}
+    for version in series_labels:
+        if version not in version_colors:
+            version_colors[version] = _AIPERF_COMPARISON_VERSION_PALETTE[
+                len(version_colors) % len(_AIPERF_COMPARISON_VERSION_PALETTE)
+            ]
+
+    legend_versions: set[str] = set()
+    for index, (_, y_axis_title, values) in enumerate(metrics, start=1):
         row = ((index - 1) // 2) + 1
         col = ((index - 1) % 2) + 1
-        figure.add_trace(
-            go.Bar(
-                x=labels,
-                y=values,
-                text=[f"{value:.2f}" for value in values],
-                textposition="outside",
-                customdata=hover_labels,
-                hovertemplate="%{customdata}<br>%{y:.2f}<extra></extra>",
-                marker_color=color,
-                marker_line={"color": color, "width": 1},
-                cliponaxis=False,
-                showlegend=False,
-            ),
-            row=row,
-            col=col,
-        )
+        for label, hover_label, series_label, value in zip(
+            labels, hover_labels, series_labels, values, strict=True
+        ):
+            showlegend = index == 1 and series_label not in legend_versions
+            if showlegend:
+                legend_versions.add(series_label)
+            color = version_colors[series_label]
+            figure.add_trace(
+                go.Bar(
+                    x=[label],
+                    y=[value],
+                    text=[f"{value:.2f}"],
+                    textposition="outside",
+                    customdata=[hover_label],
+                    hovertemplate="%{customdata}<br>%{y:.2f}<extra></extra>",
+                    marker_color=color,
+                    marker_line={"color": color, "width": 1},
+                    cliponaxis=False,
+                    showlegend=showlegend,
+                    name=series_label,
+                    legendgroup=series_label,
+                ),
+                row=row,
+                col=col,
+            )
         figure.update_yaxes(title_text=y_axis_title, row=row, col=col)
         figure.update_xaxes(tickangle=-18, row=row, col=col)
         max_value = max(values) if values else 0.0
@@ -949,7 +975,15 @@ def _render_comparison_figure(
         plot_bgcolor=_COLORS["paper"],
         font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
         margin=dict(l=75, r=35, t=70, b=40),
-        showlegend=False,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0.0,
+            font={"size": 12, "color": _COLORS["black"]},
+        ),
     )
     _apply_axis_style(figure)
     for annotation in figure.layout.annotations:
@@ -1068,10 +1102,12 @@ def generate_report(
 
     labels = [_label_for_run(item) for item in runs_data]
     hover_labels = [_full_label_for_run(item) for item in runs_data]
+    series_labels = [item["version"] for item in runs_data]
     figures = [
         _render_comparison_figure(
             labels=labels,
             hover_labels=hover_labels,
+            series_labels=series_labels,
             metrics=[
                 (
                     "Request Throughput",
@@ -1081,7 +1117,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["blue"],
                 ),
                 (
                     "Output Token Throughput",
@@ -1091,7 +1126,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["orange"],
                 ),
                 (
                     "Total Token Throughput",
@@ -1101,7 +1135,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["green"],
                 ),
                 (
                     "TTFT P50",
@@ -1113,7 +1146,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["purple"],
                 ),
                 (
                     "TTFT P95",
@@ -1125,7 +1157,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["purple"],
                 ),
                 (
                     "ITL P50",
@@ -1137,7 +1168,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["red"],
                 ),
                 (
                     "ITL P95",
@@ -1149,7 +1179,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["red"],
                 ),
                 (
                     "Request Latency P50",
@@ -1159,7 +1188,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["blue"],
                 ),
                 (
                     "Request Latency P95",
@@ -1169,7 +1197,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["blue"],
                 ),
                 (
                     "Input Sequence Length Avg",
@@ -1179,7 +1206,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["green"],
                 ),
                 (
                     "Output Sequence Length Avg",
@@ -1189,7 +1215,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["orange"],
                 ),
                 (
                     "Prefill Throughput Per User Avg",
@@ -1201,7 +1226,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["purple"],
                 ),
                 (
                     "Output Token Throughput Per User Avg",
@@ -1213,7 +1237,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["blue"],
                 ),
                 (
                     "Time to Second Token P95",
@@ -1225,7 +1248,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["red"],
                 ),
                 (
                     "Error Request Count",
@@ -1235,7 +1257,6 @@ def generate_report(
                         or 0.0
                         for item in runs_data
                     ],
-                    _COLORS["red"],
                 ),
             ],
         ),
