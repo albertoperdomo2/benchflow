@@ -914,7 +914,7 @@ def _render_comparison_figure(
         rows=rows,
         cols=2,
         subplot_titles=[item[0] for item in metrics],
-        vertical_spacing=0.08,
+        vertical_spacing=0.06,
         horizontal_spacing=0.08,
     )
     for index, (_, y_axis_title, values, color) in enumerate(metrics, start=1):
@@ -944,7 +944,7 @@ def _render_comparison_figure(
 
     figure.update_layout(
         width=_HEADER_WIDTH,
-        height=360 * rows + 140,
+        height=430 * rows + 140,
         paper_bgcolor=_COLORS["paper"],
         plot_bgcolor=_COLORS["paper"],
         font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
@@ -1104,6 +1104,18 @@ def generate_report(
                     _COLORS["green"],
                 ),
                 (
+                    "TTFT P50",
+                    "ms",
+                    [
+                        _nested_metric_value(
+                            item["summary"], "time_to_first_token", "p50"
+                        )
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["purple"],
+                ),
+                (
                     "TTFT P95",
                     "ms",
                     [
@@ -1116,6 +1128,18 @@ def generate_report(
                     _COLORS["purple"],
                 ),
                 (
+                    "ITL P50",
+                    "ms",
+                    [
+                        _nested_metric_value(
+                            item["summary"], "inter_token_latency", "p50"
+                        )
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["red"],
+                ),
+                (
                     "ITL P95",
                     "ms",
                     [
@@ -1126,6 +1150,16 @@ def generate_report(
                         for item in runs_data
                     ],
                     _COLORS["red"],
+                ),
+                (
+                    "Request Latency P50",
+                    "ms",
+                    [
+                        _nested_metric_value(item["summary"], "request_latency", "p50")
+                        or 0.0
+                        for item in runs_data
+                    ],
+                    _COLORS["blue"],
                 ),
                 (
                     "Request Latency P95",
