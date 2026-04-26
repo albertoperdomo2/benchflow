@@ -106,7 +106,7 @@ spec:
                   - pluginRef: kv-cache-utilization-scorer
                     weight: 2.0
                   - pluginRef: queue-scorer
-                    weight: 5.0
+                    weight: 2.0
                   - pluginRef: max-score-picker
 {% else %}
                 plugins:
@@ -117,7 +117,7 @@ spec:
                 - name: default
                   plugins:
                   - pluginRef: queue-scorer
-                    weight: 2.0
+                    weight: 5.0
                   - pluginRef: kv-cache-utilization-scorer
                     weight: 2.0
                   - pluginRef: prefix-cache-scorer
