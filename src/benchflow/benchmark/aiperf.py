@@ -129,7 +129,10 @@ def _cap_dataset_entries(dataset_path: Path, *, dataset_cap: int | None) -> Path
     capped_path = dataset_path.with_name(
         f"{dataset_path.stem}-cap{dataset_cap}{dataset_path.suffix}"
     )
-    step(f"Capping AIPerf dataset to {dataset_cap} entries")
+    if capped_path.exists():
+        detail(f"Using cached trimmed AIPerf dataset {capped_path.name}")
+        return capped_path
+    step(f"Trimming AIPerf dataset to {dataset_cap} entries")
     written = 0
     with (
         dataset_path.open("r", encoding="utf-8") as src,

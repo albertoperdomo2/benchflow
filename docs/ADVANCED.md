@@ -583,7 +583,7 @@ spec:
     max_requests: null # overridden by spec.overrides.benchmark.max_requests
   aiperf:
     dataset_url: "" # required when tool: aiperf
-    dataset_name: "" # optional local/cache filename and report label
+    dataset_name: "" # optional local/cache filename; defaults to the URL basename
     dataset_type: mooncake_trace # required when tool: aiperf
     endpoint_type: chat # required when tool: aiperf
     endpoint_path: /v1/chat/completions
@@ -593,7 +593,7 @@ spec:
     fixed_schedule_auto_offset: true
     synthesis_max_isl: 131072
     fixed_schedule_end_offset: null
-    dataset_cap: null
+    dataset_cap: null # optional; trim JSONL input to the first N non-empty records
     export_level: "" # optional; for example records
     export_http_trace: false
     max_seconds: 7200 # remote benchmark job timeout hint
@@ -619,6 +619,15 @@ spec:
 
 `data` is intentionally not overrideable. It is treated as part of what defines
 the benchmark profile itself.
+
+For AIPerf profiles, `dataset_name` is optional. When omitted, BenchFlow derives
+the cached file name from `dataset_url`, for example `toolagent_trace.jsonl`.
+Use `dataset_name` only when the URL does not have a useful basename or when a
+stable local/report label is needed.
+
+Use `aiperf.dataset_cap` to trim large JSONL datasets. BenchFlow downloads the
+full dataset once, writes a cached `-cap<N>` JSONL containing the first `N`
+non-empty records, and passes that trimmed file to `aiperf profile`.
 
 Full `MetricsProfile` schema:
 
