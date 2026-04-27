@@ -3,11 +3,12 @@ kind: BenchmarkProfile
 metadata:
   name: guidellm-multi-turn
 spec:
-  backend_type: openai_http
-  rate_type: concurrent
-  rates: [32, 64, 128, 256, 512]
-  data: prompt_tokens=128,output_tokens=128,turns=5,prefix_tokens=10000,prefix_count=2*concurrency 
-  max_requests: 10*concurrency
+  guidellm:
+    backend_type: openai_http
+    rate_type: concurrent
+    rates: [32, 64, 128, 256, 512]
+    data: prompt_tokens=128,output_tokens=128,turns=5,prefix_tokens=10000,prefix_count=2*concurrency
+    max_requests: 10*concurrency
   requirements:
     min_max_model_len: 40960
   env:

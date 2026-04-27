@@ -84,7 +84,7 @@ def deploy_rhaiis(
         manifests_dir.mkdir(parents=True, exist_ok=True)
         for manifest, name in zip(
             manifests,
-            ["deployment.yaml", "service.yaml"],
+            ["deployment.yaml", "service.yaml", "servicemonitor.yaml"],
             strict=True,
         ):
             target = manifests_dir / name
@@ -103,7 +103,7 @@ def deploy_rhaiis(
             input_text=yaml.safe_dump(manifest, sort_keys=False),
         )
     success(
-        f"Applied Deployment {deployment_name} and Service {plan.deployment.release_name} in namespace {namespace}"
+        f"Applied Deployment {deployment_name}, Service {plan.deployment.release_name}, and ServiceMonitor in namespace {namespace}"
     )
 
     if verify:

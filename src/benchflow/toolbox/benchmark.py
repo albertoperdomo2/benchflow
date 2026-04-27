@@ -29,6 +29,33 @@ def _read_optional_text(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
+def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
+    if plan.benchmark.tool == "aiperf":
+        aiperf = plan.benchmark.aiperf
+        detail(
+            f"AIPerf dataset: {aiperf.dataset_name or aiperf.dataset_url} "
+            f"({aiperf.dataset_type})"
+        )
+        detail(
+            "AIPerf endpoint: "
+            f"{aiperf.endpoint_type} "
+            f"{aiperf.endpoint_path or plan.deployment.target.path}"
+        )
+        detail(
+            "AIPerf mode: "
+            f"streaming={aiperf.streaming}, fixed_schedule={aiperf.fixed_schedule}"
+        )
+        return
+
+    guidellm = plan.benchmark.guidellm
+    detail(
+        "Rates: "
+        + ",".join(str(rate) for rate in guidellm.rates)
+        + f", rate type: {guidellm.rate_type}, backend: {guidellm.backend_type}"
+    )
+    detail(f"Benchmark data: {guidellm.data}")
+
+
 def run_plan_benchmark(
     plan: ResolvedRunPlan,
     *,
@@ -44,12 +71,7 @@ def run_plan_benchmark(
             f"Running {plan.benchmark.tool} benchmark against {target_url} "
             "via a remote target-cluster Job"
         )
-        detail(
-            "Rates: "
-            + ",".join(str(rate) for rate in plan.benchmark.rates)
-            + f", rate type: {plan.benchmark.rate_type}, backend: {plan.benchmark.backend_type}"
-        )
-        detail(f"Benchmark data: {plan.benchmark.data}")
+        _log_benchmark_details(plan)
         detail(
             f"MLflow: {'enabled' if enable_mlflow else 'disabled'}, "
             f"output dir: {str(output_dir) if output_dir is not None else 'not requested'}"
@@ -140,12 +162,7 @@ def run_plan_benchmark(
                 shutil.rmtree(staging_dir, ignore_errors=True)
 
     step(f"Running {plan.benchmark.tool} benchmark against {target_url}")
-    detail(
-        "Rates: "
-        + ",".join(str(rate) for rate in plan.benchmark.rates)
-        + f", rate type: {plan.benchmark.rate_type}, backend: {plan.benchmark.backend_type}"
-    )
-    detail(f"Benchmark data: {plan.benchmark.data}")
+    _log_benchmark_details(plan)
     detail(
         f"MLflow: {'enabled' if enable_mlflow else 'disabled'}, "
         f"output dir: {str(output_dir) if output_dir is not None else 'not requested'}"
@@ -216,6 +233,7 @@ def generate_plan_report(
     )
 
     return generate_report(
+        plan=plan,
         json_path=json_path,
         model=model,
         accelerator=accelerator,

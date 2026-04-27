@@ -219,6 +219,10 @@ def rhaiis_raw_vllm_service_name(plan: ResolvedRunPlan) -> str:
     return plan.deployment.release_name
 
 
+def rhaiis_raw_vllm_servicemonitor_name(plan: ResolvedRunPlan) -> str:
+    return f"{plan.deployment.release_name}-vllm"
+
+
 def _rhaiis_raw_vllm_labels(plan: ResolvedRunPlan) -> dict[str, str]:
     return {
         **_base_labels(plan),
@@ -344,7 +348,28 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
         },
     }
 
-    return [deployment, service]
+    servicemonitor = {
+        "apiVersion": "monitoring.coreos.com/v1",
+        "kind": "ServiceMonitor",
+        "metadata": {
+            "name": rhaiis_raw_vllm_servicemonitor_name(plan),
+            "namespace": plan.deployment.namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "selector": {"matchLabels": selector_labels},
+            "namespaceSelector": {"matchNames": [plan.deployment.namespace]},
+            "endpoints": [
+                {
+                    "path": "/metrics",
+                    "port": "http",
+                    "scheme": "http",
+                }
+            ],
+        },
+    }
+
+    return [deployment, service, servicemonitor]
 
 
 def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Path]:
@@ -377,7 +402,7 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
 
     if plan.deployment.platform == "rhaiis":
         manifests = render_rhaiis_raw_vllm_manifests(plan)
-        names = ["deployment.yaml", "service.yaml"]
+        names = ["deployment.yaml", "service.yaml", "servicemonitor.yaml"]
         for manifest, name in zip(manifests, names, strict=True):
             target = output_dir / name
             target.write_text(

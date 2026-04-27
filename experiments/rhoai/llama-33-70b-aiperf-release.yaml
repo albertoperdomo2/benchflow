@@ -1,0 +1,22 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: llama-33-70b-aiperf-release
+spec:
+  model:
+    name:
+      - RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic
+  deployment_profile:
+    - rhaiis-raw-vllm
+    - rhoai-distributed-default
+    - rhoai-approximate-prefix-cache
+    - rhoai-precise-prefix-cache
+  benchmark_profile:
+    - aiperf-mooncake-trace
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H200
+  namespace: benchflow
+  execution:
+    timeout: 8h

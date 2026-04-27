@@ -7,6 +7,7 @@ from ..models import ResolvedRunPlan, ValidationError
 from ..renderers.deployment import (
     rhaiis_raw_vllm_deployment_name,
     rhaiis_raw_vllm_service_name,
+    rhaiis_raw_vllm_servicemonitor_name,
 )
 
 
@@ -30,6 +31,7 @@ def cleanup_rhaiis(
     namespace = plan.deployment.namespace
     deployment_name = rhaiis_raw_vllm_deployment_name(plan)
     service_name = rhaiis_raw_vllm_service_name(plan)
+    servicemonitor_name = rhaiis_raw_vllm_servicemonitor_name(plan)
 
     exists = run_command(
         [
@@ -50,6 +52,18 @@ def cleanup_rhaiis(
             [
                 kubectl_cmd,
                 "delete",
+                "servicemonitor",
+                servicemonitor_name,
+                "-n",
+                namespace,
+                "--ignore-not-found",
+            ],
+            check=False,
+        )
+        run_command(
+            [
+                kubectl_cmd,
+                "delete",
                 "service",
                 service_name,
                 "-n",
@@ -64,6 +78,18 @@ def cleanup_rhaiis(
             f"Deployment {deployment_name} not found in namespace {namespace}"
         )
 
+    run_command(
+        [
+            kubectl_cmd,
+            "delete",
+            "servicemonitor",
+            servicemonitor_name,
+            "-n",
+            namespace,
+            "--ignore-not-found",
+        ],
+        check=False,
+    )
     run_command(
         [
             kubectl_cmd,

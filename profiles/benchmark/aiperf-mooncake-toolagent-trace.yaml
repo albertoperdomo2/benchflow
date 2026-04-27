@@ -1,0 +1,25 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: aiperf-mooncake-toolagent-trace
+spec:
+  tool: aiperf
+  env:
+    AIPERF_HTTP_SSL_VERIFY: "false"
+  requirements:
+    min_max_model_len: 131072
+  aiperf:
+    dataset_url: https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/toolagent_trace.jsonl
+    dataset_type: mooncake_trace
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    fixed_schedule: true
+    fixed_schedule_auto_offset: true
+    synthesis_max_isl: 131072
+    # Optional: trim the downloaded JSONL to the first N non-empty records.
+    # dataset_cap: 1000
+    max_seconds: 7200
+    # Optional debug exports for broken/truncated streamed responses.
+    # export_level: records
+    # export_http_trace: true

@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .benchmark.guidellm import benchmark_version_from_plan
+from .benchmark import benchmark_version_from_plan
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .models import ResolvedRunPlan
 from .ui import detail, step, success

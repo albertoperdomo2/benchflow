@@ -19,9 +19,9 @@ def resolve_run_plan_stages(
     stage_cleanup_path,
     verify_completions_path,
 ) -> None:
-    if plan.benchmark.tool != "guidellm":
+    if plan.benchmark.tool not in {"guidellm", "aiperf"}:
         raise ValidationError(
-            f"unsupported benchmark tool: {plan.benchmark.tool}; only guidellm is implemented"
+            f"unsupported benchmark tool: {plan.benchmark.tool}; supported tools are guidellm and aiperf"
         )
     step(
         f"Resolved RunPlan for {plan.metadata.name} "
