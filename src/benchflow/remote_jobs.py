@@ -391,6 +391,7 @@ def _copy_remote_results_directory_with_rsync(
                 "-a",
                 "-z",
                 "--blocking-io",
+                "--omit-dir-times",
                 f"--rsh=oc rsh -n {plan.deployment.namespace} -c main",
                 source,
                 str(local_dir),
