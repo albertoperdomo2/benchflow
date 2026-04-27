@@ -65,6 +65,11 @@ spec:
               - /var/run/kserve/tls
               - --config-text
               - |
+{% if custom_epp_config_lines %}
+{% for line in custom_epp_config_lines %}
+                {{ line }}
+{% endfor %}
+{% else %}
                 apiVersion: inference.networking.x-k8s.io/v1alpha1
                 kind: EndpointPickerConfig
 {% if precise_prefix_cache_enabled %}
@@ -117,6 +122,7 @@ spec:
                     weight: 2.0
                   - pluginRef: prefix-cache-scorer
                     weight: 3.0
+{% endif %}
 {% endif %}
 {% if precise_prefix_cache_enabled %}
             env:

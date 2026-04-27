@@ -1,0 +1,39 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-approximate-prefix-cache-custom
+spec:
+  platform: rhoai
+  mode: approximate-prefix-cache
+  platform_version: RHOAI-3.3
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 4
+    tensor_parallelism: 2
+    vllm_args:
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.92
+      - --trust-remote-code
+      - --disable-log-requests
+      - --enable-prefix-caching
+  options:
+    enable_auth: false
+    epp_config: |
+      apiVersion: inference.networking.x-k8s.io/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+      - type: queue-scorer
+      - type: kv-cache-utilization-scorer
+      - type: prefix-cache-scorer
+      schedulingProfiles:
+      - name: default
+        plugins:
+        - pluginRef: queue-scorer
+          weight: 5.0
+        - pluginRef: kv-cache-utilization-scorer
+          weight: 2.0
+        - pluginRef: prefix-cache-scorer
+          weight: 3.0

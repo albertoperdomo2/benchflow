@@ -503,6 +503,61 @@ spec:
   scheduler_image: "" # overridden by spec.overrides.images.scheduler or --scheduler-image
   options:
     enable_auth: false # rhoai only, overridden by spec.overrides.rhoai.enable_auth or --rhoai-auth
+    epp_config: "" # rhoai only, optional EndpointPickerConfig rendered with Jinja
+```
+
+RHOAI deployment profiles can provide a custom EPP configuration with
+`spec.options.epp_config`. BenchFlow renders this YAML with the same Jinja context
+used for the `LLMInferenceService` manifest, validates that it renders an
+`EndpointPickerConfig`, enables the custom scheduler path, and places it directly
+in the scheduler `--config-text`.
+
+This is intended for deployment-profile variants, not experiment overrides:
+
+```yaml
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-approximate-prefix-cache-queue-heavy
+spec:
+  platform: rhoai
+  mode: approximate-prefix-cache
+  platform_version: RHOAI-3.3
+  runtime:
+    replicas: 4
+    tensor_parallelism: 2
+    vllm_args:
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.92
+      - --trust-remote-code
+      - --disable-log-requests
+      - --enable-prefix-caching
+  options:
+    enable_auth: false
+    epp_config: |
+      apiVersion: inference.networking.x-k8s.io/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+      - type: queue-scorer
+      - type: kv-cache-utilization-scorer
+      - type: prefix-cache-scorer
+      schedulingProfiles:
+      - name: default
+        plugins:
+        - pluginRef: queue-scorer
+          weight: 5.0
+        - pluginRef: kv-cache-utilization-scorer
+          weight: 2.0
+        - pluginRef: prefix-cache-scorer
+          weight: 3.0
+```
+
+For precise prefix-cache variants, the custom config can reference the derived
+tokenizer path:
+
+```yaml
+modelTokenizerMap:
+  base: "{{ precise_prefix_cache_tokenizer_model_path }}"
 ```
 
 Full `BenchmarkProfile` schema:

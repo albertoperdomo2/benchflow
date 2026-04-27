@@ -58,16 +58,23 @@ def render_yaml_documents(
     return [document for document in rendered if document is not None]
 
 
-def render_jinja_yaml_document(
-    relative_path: str | Path, variables: dict[str, Any]
-) -> dict[str, Any]:
-    environment = Environment(
+def _jinja_environment() -> Environment:
+    return Environment(
         undefined=StrictUndefined,
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    template = environment.from_string(asset_text(relative_path))
-    rendered = template.render(**variables)
+
+
+def render_jinja_text(source: str, variables: dict[str, Any]) -> str:
+    template = _jinja_environment().from_string(source)
+    return template.render(**variables)
+
+
+def render_jinja_yaml_document(
+    relative_path: str | Path, variables: dict[str, Any]
+) -> dict[str, Any]:
+    rendered = render_jinja_text(asset_text(relative_path), variables)
     document = yaml.safe_load(rendered)
     if not isinstance(document, dict):
         raise ValueError(f"{relative_path} did not render to a YAML mapping document")

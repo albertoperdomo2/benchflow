@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from ..assets import asset_text, render_jinja_yaml_document
+from ..assets import asset_text, render_jinja_text, render_jinja_yaml_document
 from ..models import ResolvedRunPlan, ValidationError
 
 RHOAI_PROFILER_CONFIGMAP_SUFFIX = "vllm-profiler"
@@ -104,13 +104,44 @@ def _rhoai_precise_tokenizer_model_path(plan: ResolvedRunPlan) -> str:
     return f"/mnt/models/base{_model_path(plan)}"
 
 
+def _rhoai_custom_epp_config_lines(
+    plan: ResolvedRunPlan, context: dict[str, Any]
+) -> list[str]:
+    raw_config = plan.deployment.options.get("epp_config")
+    if raw_config is None or str(raw_config).strip() == "":
+        return []
+    if not isinstance(raw_config, str):
+        raise ValidationError(
+            "deployment profile options.epp_config must be a YAML string"
+        )
+
+    rendered = render_jinja_text(raw_config, context).strip()
+    parsed = yaml.safe_load(rendered)
+    if not isinstance(parsed, dict):
+        raise ValidationError(
+            "deployment profile options.epp_config must render to a YAML mapping"
+        )
+    if parsed.get("kind") != "EndpointPickerConfig":
+        raise ValidationError(
+            "deployment profile options.epp_config must render an EndpointPickerConfig"
+        )
+    return rendered.splitlines()
+
+
 def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
     _validate_rhoai_profiling(plan)
-    custom_scheduler_enabled = plan.deployment.mode in {
-        "approximate-prefix-cache",
-        "precise-prefix-cache",
-    }
-    return {
+    has_custom_epp_config = bool(
+        str(plan.deployment.options.get("epp_config") or "").strip()
+    )
+    custom_scheduler_enabled = (
+        plan.deployment.mode
+        in {
+            "approximate-prefix-cache",
+            "precise-prefix-cache",
+        }
+        or has_custom_epp_config
+    )
+    context: dict[str, Any] = {
         "release_name": plan.deployment.release_name,
         "namespace": plan.deployment.namespace,
         "labels": _base_labels(plan),
@@ -140,6 +171,8 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
         "profiler_configmap_name": rhoai_profiler_configmap_name(plan),
         "profiler_mount_path": RHOAI_PROFILER_MOUNT_PATH,
     }
+    context["custom_epp_config_lines"] = _rhoai_custom_epp_config_lines(plan, context)
+    return context
 
 
 def render_rhoai_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
