@@ -1,0 +1,22 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: gpt-120b-aiperf-release
+spec:
+  model:
+    name:
+      - openai/gpt-oss-120b
+  deployment_profile:
+    - rhaiis-raw-vllm
+    - rhoai-distributed-default
+    - rhoai-approximate-prefix-cache
+    - rhoai-precise-prefix-cache
+  benchmark_profile:
+    - aiperf-mooncake-trace
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H200
+  namespace: benchflow
+  execution:
+    timeout: 8h
