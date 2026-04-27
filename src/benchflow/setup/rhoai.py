@@ -64,9 +64,36 @@ def _resource_exists(argv: list[str]) -> bool:
     return result.returncode == 0
 
 
+def _namespace_manifest(kubectl_cmd: str, name: str) -> dict[str, Any] | None:
+    result = run_command(
+        [kubectl_cmd, "get", "namespace", name, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return json.loads(result.stdout or "{}")
+
+
+def _wait_for_namespace_absent(
+    kubectl_cmd: str, name: str, *, timeout_seconds: int
+) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if _namespace_manifest(kubectl_cmd, name) is None:
+            return
+        time.sleep(5)
+    raise CommandError(f"timed out waiting for namespace {name} to be deleted")
+
+
 def _ensure_namespace(kubectl_cmd: str, name: str) -> bool:
-    if _resource_exists([kubectl_cmd, "get", "namespace", name, "-o", "name"]):
-        return False
+    manifest = _namespace_manifest(kubectl_cmd, name)
+    if manifest is not None:
+        deletion_timestamp = manifest.get("metadata", {}).get("deletionTimestamp") or ""
+        if not deletion_timestamp:
+            return False
+        detail(f"Waiting for namespace {name} to finish terminating")
+        _wait_for_namespace_absent(kubectl_cmd, name, timeout_seconds=900)
     run_command([kubectl_cmd, "create", "namespace", name])
     return True
 
@@ -496,6 +523,10 @@ def reset_rhoai_platform() -> None:
             "--wait=false",
         ],
         check=False,
+    )
+    detail(f"Waiting for namespace {RHOAI_OPERATOR_NAMESPACE} to be deleted")
+    _wait_for_namespace_absent(
+        kubectl_cmd, RHOAI_OPERATOR_NAMESPACE, timeout_seconds=900
     )
     success("RHOAI platform prerequisites have been reset")
 
