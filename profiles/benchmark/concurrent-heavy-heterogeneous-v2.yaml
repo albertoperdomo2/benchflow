@@ -5,7 +5,7 @@ metadata:
 spec:
   backend_type: openai_http
   rate_type: concurrent
-  rates: [650, 500, 300, 200, 100, 50, 1]
+  rates: [300, 200, 100, 50, 1]
   data: '{"prompt_tokens":5500,"prompt_tokens_stdev":3000,"prompt_tokens_min":200,"prompt_tokens_max":24000,"output_tokens":600,"output_tokens_stdev":350,"output_tokens_min":50,"output_tokens_max":3500,"prefix_buckets":[{"bucket_weight":20,"prefix_count":1,"prefix_tokens":0},{"bucket_weight":45,"prefix_count":8,"prefix_tokens":1024},{"bucket_weight":25,"prefix_count":4,"prefix_tokens":4096},{"bucket_weight":10,"prefix_count":2,"prefix_tokens":8192}]}'
   max_seconds: 600
   requirements:

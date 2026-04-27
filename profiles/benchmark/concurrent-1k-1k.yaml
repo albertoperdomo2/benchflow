@@ -5,7 +5,7 @@ metadata:
 spec:
   backend_type: openai_http
   rate_type: concurrent
-  rates: [650, 500, 300, 200, 100, 50, 1]
+  rates: [300, 200, 100, 50, 1]
   data: prompt_tokens=1000,output_tokens=1000
   max_seconds: 600
   env:
