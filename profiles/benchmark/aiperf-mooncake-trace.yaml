@@ -4,15 +4,11 @@ metadata:
   name: aiperf-mooncake-trace
 spec:
   tool: aiperf
-  backend_type: openai_http # unused for now, kept for shared BenchmarkProfile contract
-  rate_type: fixed_schedule # unused for now, kept for shared BenchmarkProfile contract
-  rates: [] # unused for now, kept for shared BenchmarkProfile contract
-  max_seconds: 7200 # unused for now, kept for shared BenchmarkProfile contract
   env:
     AIPERF_HTTP_SSL_VERIFY: "false"
   requirements:
     min_max_model_len: 131072
-  options:
+  aiperf:
     dataset_url: https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/conversation_trace.jsonl
     dataset_name: conversation_trace.jsonl
     dataset_type: mooncake_trace
@@ -22,6 +18,7 @@ spec:
     fixed_schedule: true
     fixed_schedule_auto_offset: true
     synthesis_max_isl: 131072
+    max_seconds: 7200
     # Optional debug exports for broken/truncated streamed responses.
     # export_level: records
     # export_http_trace: true

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
 
 from .loaders import ProfileCatalog
 from .models import (
@@ -352,7 +351,7 @@ def resolve_run_plan(
     ):
         options["enable_auth"] = overrides.rhoai.enable_auth
 
-    benchmark = replace(benchmark_profile.spec)
+    benchmark = deepcopy(benchmark_profile.spec)
     if overrides.benchmark.rates is not None:
         benchmark.rates = list(overrides.benchmark.rates)
     if overrides.benchmark.max_seconds is not None:

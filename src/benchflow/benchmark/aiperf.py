@@ -19,7 +19,7 @@ from plotly.offline import get_plotlyjs
 from plotly.subplots import make_subplots
 
 from ..cluster import CommandError, require_command
-from ..models import ResolvedRunPlan, ValidationError
+from ..models import AiperfBenchmarkSpec, ResolvedRunPlan, ValidationError
 from ..plotting import REPORT_COLOR_PALETTE
 from ..ui import detail, step, success
 from .common import (
@@ -84,45 +84,10 @@ def _configure_aiperf_runtime() -> dict[str, str]:
     }
 
 
-def _aiperf_options(plan: ResolvedRunPlan) -> dict[str, Any]:
-    options = dict(plan.benchmark.options or {})
-    if not options:
-        raise ValidationError(
-            "aiperf benchmark profile requires spec.options to be configured"
-        )
-    return options
-
-
-def _required_option(options: dict[str, Any], key: str) -> str:
-    value = str(options.get(key, "") or "").strip()
-    if not value:
-        raise ValidationError(f"aiperf benchmark profile is missing option {key!r}")
-    return value
-
-
-def _parse_bool(value: Any, *, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    lowered = str(value).strip().lower()
-    if lowered in {"1", "true", "yes", "on"}:
-        return True
-    if lowered in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
-def _parse_positive_int(value: Any, *, field_name: str) -> int | None:
-    if value is None or str(value).strip() == "":
-        return None
-    try:
-        parsed = int(str(value).strip())
-    except ValueError as exc:
-        raise ValidationError(f"{field_name} must be a positive integer") from exc
-    if parsed <= 0:
-        raise ValidationError(f"{field_name} must be a positive integer")
-    return parsed
+def _aiperf_spec(plan: ResolvedRunPlan) -> AiperfBenchmarkSpec:
+    if plan.benchmark.tool != "aiperf":
+        raise ValidationError("AIPerf benchmark runner requires tool: aiperf")
+    return plan.benchmark.aiperf
 
 
 def _dataset_cache_root() -> Path:
@@ -275,16 +240,12 @@ def _build_command(
     target: str,
     artifact_dir: Path,
     dataset_path: Path,
-    options: dict[str, Any],
+    aiperf: AiperfBenchmarkSpec,
 ) -> list[str]:
-    endpoint_type = _required_option(options, "endpoint_type")
-    dataset_type = _required_option(options, "dataset_type")
-    endpoint_path = str(
-        options.get("endpoint_path")
-        or plan.deployment.target.path
-        or "/v1/chat/completions"
-    ).strip()
-    tokenizer = str(options.get("tokenizer") or plan.model.name).strip()
+    endpoint_path = (
+        aiperf.endpoint_path or plan.deployment.target.path or "/v1/chat/completions"
+    )
+    tokenizer = aiperf.tokenizer or plan.model.name
     command = [
         "aiperf",
         "profile",
@@ -293,13 +254,13 @@ def _build_command(
         "--url",
         target,
         "--endpoint-type",
-        endpoint_type,
+        aiperf.endpoint_type,
         "--endpoint",
         endpoint_path,
         "--input-file",
         str(dataset_path),
         "--custom-dataset-type",
-        dataset_type,
+        aiperf.dataset_type,
         "--tokenizer",
         tokenizer,
         "--artifact-dir",
@@ -307,29 +268,22 @@ def _build_command(
         "--ui",
         "none",
     ]
-    if _parse_bool(options.get("streaming"), default=True):
+    if aiperf.streaming:
         command.append("--streaming")
-    if _parse_bool(options.get("fixed_schedule"), default=True):
+    if aiperf.fixed_schedule:
         command.append("--fixed-schedule")
-    if _parse_bool(options.get("fixed_schedule_auto_offset"), default=True):
+    if aiperf.fixed_schedule_auto_offset:
         command.append("--fixed-schedule-auto-offset")
-    export_level = str(options.get("export_level") or "").strip()
-    if export_level:
-        command.extend(["--export-level", export_level])
-    if _parse_bool(options.get("export_http_trace"), default=False):
+    if aiperf.export_level:
+        command.extend(["--export-level", aiperf.export_level])
+    if aiperf.export_http_trace:
         command.append("--export-http-trace")
-    synthesis_max_isl = _parse_positive_int(
-        options.get("synthesis_max_isl"),
-        field_name="benchmark.options.synthesis_max_isl",
-    )
-    if synthesis_max_isl is not None:
-        command.extend(["--synthesis-max-isl", str(synthesis_max_isl)])
-    fixed_schedule_end_offset = _parse_positive_int(
-        options.get("fixed_schedule_end_offset"),
-        field_name="benchmark.options.fixed_schedule_end_offset",
-    )
-    if fixed_schedule_end_offset is not None:
-        command.extend(["--fixed-schedule-end-offset", str(fixed_schedule_end_offset)])
+    if aiperf.synthesis_max_isl is not None:
+        command.extend(["--synthesis-max-isl", str(aiperf.synthesis_max_isl)])
+    if aiperf.fixed_schedule_end_offset is not None:
+        command.extend(
+            ["--fixed-schedule-end-offset", str(aiperf.fixed_schedule_end_offset)]
+        )
     return command
 
 
@@ -343,14 +297,8 @@ def run_benchmark(
     extra_tags: dict[str, str] | None = None,
 ) -> tuple[str, str, str]:
     require_command("aiperf")
-    options = _aiperf_options(plan)
+    aiperf = _aiperf_spec(plan)
     benchmark_target = target or plan.deployment.target.base_url
-    dataset_url = _required_option(options, "dataset_url")
-    dataset_name = str(options.get("dataset_name") or "").strip()
-    dataset_cap = _parse_positive_int(
-        options.get("dataset_cap"),
-        field_name="benchmark.options.dataset_cap",
-    )
     artifact_dir = _artifact_dir(output_dir)
     remove_artifact_dir = output_dir is None
     start_time = _iso8601_now()
@@ -361,15 +309,18 @@ def run_benchmark(
     if output_dir is not None:
         benchmark_env["AIPERF_ARTIFACT_DIR"] = str(output_dir)
     dataset_path = _cap_dataset_entries(
-        _download_dataset(dataset_url=dataset_url, dataset_name=dataset_name),
-        dataset_cap=dataset_cap,
+        _download_dataset(
+            dataset_url=aiperf.dataset_url,
+            dataset_name=aiperf.dataset_name,
+        ),
+        dataset_cap=aiperf.dataset_cap,
     )
     command = _build_command(
         plan=plan,
         target=benchmark_target,
         artifact_dir=artifact_dir,
         dataset_path=dataset_path,
-        options=options,
+        aiperf=aiperf,
     )
 
     tags = dict(plan.mlflow.tags)
@@ -397,19 +348,14 @@ def run_benchmark(
                 run_id = run.info.run_id
                 mlflow.log_param("benchmark_tool", "aiperf")
                 mlflow.log_param("backend_type", plan.benchmark.backend_type)
-                mlflow.log_param("dataset_url", dataset_url)
-                if dataset_cap is not None:
-                    mlflow.log_param("dataset_cap", dataset_cap)
-                mlflow.log_param(
-                    "dataset_type", _required_option(options, "dataset_type")
-                )
-                mlflow.log_param(
-                    "endpoint_type", _required_option(options, "endpoint_type")
-                )
-                export_level = str(options.get("export_level") or "").strip()
-                if export_level:
-                    mlflow.log_param("export_level", export_level)
-                if _parse_bool(options.get("export_http_trace"), default=False):
+                mlflow.log_param("dataset_url", aiperf.dataset_url)
+                if aiperf.dataset_cap is not None:
+                    mlflow.log_param("dataset_cap", aiperf.dataset_cap)
+                mlflow.log_param("dataset_type", aiperf.dataset_type)
+                mlflow.log_param("endpoint_type", aiperf.endpoint_type)
+                if aiperf.export_level:
+                    mlflow.log_param("export_level", aiperf.export_level)
+                if aiperf.export_http_trace:
                     mlflow.log_param("export_http_trace", "true")
                 mlflow.log_param("target", benchmark_target)
                 mlflow.log_param("model", plan.model.name)

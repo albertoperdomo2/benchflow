@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from .models import (
+    AiperfBenchmarkSpec,
     BenchmarkProfile,
     BenchmarkRequirementsSpec,
     BenchmarkProfileSpec,
@@ -17,6 +18,7 @@ from .models import (
     Experiment,
     ExperimentSpec,
     ExperimentTargetSpec,
+    GuidellmBenchmarkSpec,
     MetricsProfile,
     MetricsProfileSpec,
     MlflowSpec,
@@ -43,6 +45,12 @@ from .models import (
     parse_metadata,
     parse_model_spec,
 )
+
+_AIPERF_REQUIRED_FIELDS = {
+    "dataset_url",
+    "dataset_type",
+    "endpoint_type",
+}
 
 
 def _string_or_list(raw: Any, field_name: str) -> str | list[str] | None:
@@ -130,6 +138,12 @@ def _positive_int(raw: Any, field_name: str) -> int | None:
     if parsed <= 0:
         raise ValidationError(f"{field_name} must be a positive integer")
     return parsed
+
+
+def _optional_positive_int(raw: Any, field_name: str) -> int | None:
+    if raw is None or str(raw).strip() == "":
+        return None
+    return _positive_int(raw, field_name)
 
 
 def _nonempty_string(raw: Any, field_name: str) -> str | None:
@@ -429,6 +443,95 @@ def load_experiment(path: Path) -> Experiment:
     )
 
 
+def _guidellm_benchmark_from_dict(raw: dict[str, Any]) -> GuidellmBenchmarkSpec:
+    return GuidellmBenchmarkSpec(
+        backend_type=str(raw.get("backend_type", "openai_http")),
+        request_type=str(raw.get("request_type", "") or "").strip(),
+        rate_type=str(raw.get("rate_type", "concurrent")),
+        rates=[int(item) for item in (raw.get("rates") or [])],
+        data=str(raw.get("data", "prompt_tokens=1000,output_tokens=1000")),
+        max_seconds=int(raw.get("max_seconds", 600)),
+        max_requests=str(raw["max_requests"]).strip()
+        if raw.get("max_requests") is not None
+        else None,
+    )
+
+
+def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
+    missing = [
+        field_name
+        for field_name in sorted(_AIPERF_REQUIRED_FIELDS)
+        if not str(raw.get(field_name, "") or "").strip()
+    ]
+    if missing:
+        joined = ", ".join(f"spec.aiperf.{field_name}" for field_name in missing)
+        raise ValidationError(f"aiperf benchmark profile is missing {joined}")
+
+    return AiperfBenchmarkSpec(
+        dataset_url=str(raw.get("dataset_url", "") or "").strip(),
+        dataset_name=str(raw.get("dataset_name", "") or "").strip(),
+        dataset_type=str(raw.get("dataset_type", "") or "").strip(),
+        endpoint_type=str(raw.get("endpoint_type", "") or "").strip(),
+        endpoint_path=str(raw.get("endpoint_path", "") or "").strip(),
+        tokenizer=str(raw.get("tokenizer", "") or "").strip(),
+        streaming=_as_bool(raw.get("streaming"), True),
+        fixed_schedule=_as_bool(raw.get("fixed_schedule"), True),
+        fixed_schedule_auto_offset=_as_bool(
+            raw.get("fixed_schedule_auto_offset"), True
+        ),
+        synthesis_max_isl=_optional_positive_int(
+            raw.get("synthesis_max_isl"), "spec.aiperf.synthesis_max_isl"
+        ),
+        fixed_schedule_end_offset=_optional_positive_int(
+            raw.get("fixed_schedule_end_offset"),
+            "spec.aiperf.fixed_schedule_end_offset",
+        ),
+        dataset_cap=_optional_positive_int(
+            raw.get("dataset_cap"), "spec.aiperf.dataset_cap"
+        ),
+        export_level=str(raw.get("export_level", "") or "").strip(),
+        export_http_trace=_as_bool(raw.get("export_http_trace"), False),
+        max_seconds=int(raw.get("max_seconds", 7200)),
+    )
+
+
+def _benchmark_profile_spec_from_dict(raw: dict[str, Any]) -> BenchmarkProfileSpec:
+    tool = str(raw.get("tool", "guidellm") or "guidellm").strip()
+    if tool not in {"guidellm", "aiperf"}:
+        raise ValidationError(
+            f"unsupported benchmark tool: {tool}; supported tools are guidellm and aiperf"
+        )
+    env = {str(key): str(value) for key, value in (raw.get("env") or {}).items()}
+    guidellm_raw = raw.get("guidellm")
+    if guidellm_raw is None:
+        guidellm_raw = raw
+    if not isinstance(guidellm_raw, dict):
+        raise ValidationError("spec.guidellm must be a mapping")
+
+    aiperf_raw = raw.get("aiperf")
+    if aiperf_raw is None and raw.get("options") is not None:
+        aiperf_raw = {
+            **dict(raw.get("options") or {}),
+            "max_seconds": raw.get("max_seconds", 7200),
+        }
+    if aiperf_raw is None:
+        aiperf_raw = {}
+    if not isinstance(aiperf_raw, dict):
+        raise ValidationError("spec.aiperf must be a mapping")
+
+    return BenchmarkProfileSpec(
+        tool=tool,
+        env=env,
+        guidellm=_guidellm_benchmark_from_dict(guidellm_raw),
+        aiperf=(
+            _aiperf_benchmark_from_dict(aiperf_raw)
+            if tool == "aiperf" or aiperf_raw
+            else AiperfBenchmarkSpec()
+        ),
+        requirements=_benchmark_requirements_from_dict(raw.get("requirements")),
+    )
+
+
 def load_deployment_profile(path: Path) -> DeploymentProfile:
     raw = load_yaml_file(path)
     if raw.get("kind") != "DeploymentProfile":
@@ -472,23 +575,7 @@ def load_benchmark_profile(path: Path) -> BenchmarkProfile:
 
     metadata = parse_metadata(raw)
     spec = raw.get("spec") or {}
-    rates = [int(item) for item in (spec.get("rates") or [])]
-    env = {str(key): str(value) for key, value in (spec.get("env") or {}).items()}
-    profile_spec = BenchmarkProfileSpec(
-        tool=str(spec.get("tool", "guidellm")),
-        backend_type=str(spec.get("backend_type", "openai_http")),
-        request_type=str(spec.get("request_type", "") or "").strip(),
-        rate_type=str(spec.get("rate_type", "concurrent")),
-        rates=rates,
-        data=str(spec.get("data", "prompt_tokens=1000,output_tokens=1000")),
-        max_seconds=int(spec.get("max_seconds", 600)),
-        max_requests=str(spec["max_requests"]).strip()
-        if spec.get("max_requests") is not None
-        else None,
-        env=env,
-        options=dict(spec.get("options") or {}),
-        requirements=_benchmark_requirements_from_dict(spec.get("requirements")),
-    )
+    profile_spec = _benchmark_profile_spec_from_dict(spec)
     return BenchmarkProfile(
         api_version=str(raw.get("apiVersion", "benchflow.io/v1alpha1")),
         kind="BenchmarkProfile",
@@ -578,26 +665,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
     )
 
     benchmark_raw = raw.get("benchmark") or {}
-    benchmark = BenchmarkProfileSpec(
-        tool=str(benchmark_raw.get("tool", "guidellm")),
-        backend_type=str(benchmark_raw.get("backend_type", "openai_http")),
-        request_type=str(benchmark_raw.get("request_type", "") or "").strip(),
-        rate_type=str(benchmark_raw.get("rate_type", "concurrent")),
-        rates=[int(item) for item in (benchmark_raw.get("rates") or [])],
-        data=str(benchmark_raw.get("data", "prompt_tokens=1000,output_tokens=1000")),
-        max_seconds=int(benchmark_raw.get("max_seconds", 600)),
-        max_requests=str(benchmark_raw["max_requests"]).strip()
-        if benchmark_raw.get("max_requests") is not None
-        else None,
-        env={
-            str(key): str(value)
-            for key, value in (benchmark_raw.get("env") or {}).items()
-        },
-        options=dict(benchmark_raw.get("options") or {}),
-        requirements=_benchmark_requirements_from_dict(
-            benchmark_raw.get("requirements")
-        ),
-    )
+    benchmark = _benchmark_profile_spec_from_dict(benchmark_raw)
 
     metrics_raw = raw.get("metrics") or {}
     metrics = MetricsProfileSpec(
@@ -671,10 +739,17 @@ def list_profile_entries(profiles_dir: Path) -> list[ProfileIndexEntry]:
                 )
             )
         elif kind == "BenchmarkProfile":
-            details = {
-                "tool": str(spec.get("tool", "")),
-                "rate_type": str(spec.get("rate_type", "")),
-            }
+            tool = str(spec.get("tool", "guidellm") or "guidellm")
+            guidellm = spec.get("guidellm") or {}
+            aiperf = spec.get("aiperf") or {}
+            details = {"tool": tool}
+            if tool == "aiperf":
+                details["endpoint_type"] = str(aiperf.get("endpoint_type", ""))
+                details["dataset_type"] = str(aiperf.get("dataset_type", ""))
+            else:
+                details["rate_type"] = str(
+                    guidellm.get("rate_type", spec.get("rate_type", ""))
+                )
             entries.append(
                 ProfileIndexEntry(
                     name=name, kind="benchmark", path=relative_path, details=details

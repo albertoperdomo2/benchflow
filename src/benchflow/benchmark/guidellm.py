@@ -98,6 +98,7 @@ def run_benchmark(
 
     start_time = _iso8601_now()
     run_id = ""
+    guidellm = plan.benchmark.guidellm
     benchmark_env = _configure_benchmark_runtime()
     benchmark_env.update(plan.benchmark.env)
     accelerator = resolved_accelerator(plan)
@@ -106,9 +107,9 @@ def run_benchmark(
     step(f"Preparing benchmark run for {plan.model.name}")
     detail(f"Target: {benchmark_target}")
     detail(
-        f"Rates: {','.join(str(rate) for rate in plan.benchmark.rates)}, "
-        f"duration: {plan.benchmark.max_seconds}s, max requests: "
-        f"{plan.benchmark.max_requests if plan.benchmark.max_requests is not None else 'unbounded'}"
+        f"Rates: {','.join(str(rate) for rate in guidellm.rates)}, "
+        f"duration: {guidellm.max_seconds}s, max requests: "
+        f"{guidellm.max_requests if guidellm.max_requests is not None else 'unbounded'}"
     )
     detail(f"Benchmark output mode: {'MLflow' if enable_mlflow else 'local artifacts'}")
     detail(f"Runtime HOME: {benchmark_env['HOME']}")
@@ -123,13 +124,13 @@ def run_benchmark(
                 run_id = module.run_benchmark_with_mlflow(
                     target=benchmark_target,
                     model=plan.model.name,
-                    rate=",".join(str(rate) for rate in plan.benchmark.rates),
-                    backend_type=plan.benchmark.backend_type,
-                    request_type=plan.benchmark.request_type or None,
-                    rate_type=plan.benchmark.rate_type,
-                    data=plan.benchmark.data,
-                    max_seconds=plan.benchmark.max_seconds,
-                    max_requests=plan.benchmark.max_requests,
+                    rate=",".join(str(rate) for rate in guidellm.rates),
+                    backend_type=guidellm.backend_type,
+                    request_type=guidellm.request_type or None,
+                    rate_type=guidellm.rate_type,
+                    data=guidellm.data,
+                    max_seconds=guidellm.max_seconds,
+                    max_requests=guidellm.max_requests,
                     accelerator=accelerator,
                     experiment_name=plan.mlflow.experiment,
                     mlflow_tracking_uri=mlflow_tracking_uri
@@ -150,13 +151,13 @@ def run_benchmark(
                 module.run_benchmark_without_mlflow(
                     target=benchmark_target,
                     model=plan.model.name,
-                    rate=",".join(str(rate) for rate in plan.benchmark.rates),
-                    backend_type=plan.benchmark.backend_type,
-                    request_type=plan.benchmark.request_type or None,
-                    rate_type=plan.benchmark.rate_type,
-                    data=plan.benchmark.data,
-                    max_seconds=plan.benchmark.max_seconds,
-                    max_requests=plan.benchmark.max_requests,
+                    rate=",".join(str(rate) for rate in guidellm.rates),
+                    backend_type=guidellm.backend_type,
+                    request_type=guidellm.request_type or None,
+                    rate_type=guidellm.rate_type,
+                    data=guidellm.data,
+                    max_seconds=guidellm.max_seconds,
+                    max_requests=guidellm.max_requests,
                     output_dir=str(output_dir),
                     accelerator=accelerator,
                     version=benchmark_version_from_plan(plan),

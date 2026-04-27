@@ -562,29 +562,49 @@ modelTokenizerMap:
 
 Full `BenchmarkProfile` schema:
 
+Only the section that matches `spec.tool` is required for a profile. The other
+tool section is shown here to document the supported contract.
+
 ```yaml
 apiVersion: benchflow.io/v1alpha1
 kind: BenchmarkProfile
 metadata:
   name: smoke # no direct CLI override
 spec:
-  tool: guidellm # implemented value today
-  backend_type: openai_http # no CLI override today
-  rate_type: concurrent # no CLI override
-  rates:
-    - 1 # overridden by spec.overrides.benchmark.rates
-  request_type: "" # optional; if empty BenchFlow defers to GuideLLM's internal default
-  data: prompt_tokens=1000,output_tokens=1000 # no CLI override today
-  max_seconds: 600 # overridden by spec.overrides.benchmark.max_seconds
-  max_requests: null # overridden by spec.overrides.benchmark.max_requests
+  tool: guidellm # supported values: guidellm, aiperf
+  guidellm:
+    backend_type: openai_http # no CLI override today
+    rate_type: concurrent # no CLI override
+    rates:
+      - 1 # overridden by spec.overrides.benchmark.rates
+    request_type: "" # optional; if empty BenchFlow defers to GuideLLM's internal default
+    data: prompt_tokens=1000,output_tokens=1000 # no CLI override today
+    max_seconds: 600 # overridden by spec.overrides.benchmark.max_seconds
+    max_requests: null # overridden by spec.overrides.benchmark.max_requests
+  aiperf:
+    dataset_url: "" # required when tool: aiperf
+    dataset_name: "" # optional local/cache filename and report label
+    dataset_type: mooncake_trace # required when tool: aiperf
+    endpoint_type: chat # required when tool: aiperf
+    endpoint_path: /v1/chat/completions
+    tokenizer: "" # defaults to spec.model.name when empty
+    streaming: true
+    fixed_schedule: true
+    fixed_schedule_auto_offset: true
+    synthesis_max_isl: 131072
+    fixed_schedule_end_offset: null
+    dataset_cap: null
+    export_level: "" # optional; for example records
+    export_http_trace: false
+    max_seconds: 7200 # remote benchmark job timeout hint
   requirements:
     min_max_model_len: 8192 # no CLI override; raises the resolved deployment max-model-len when needed
   env:
     LOG_LEVEL: INFO # no CLI override today
 ```
 
-Safe benchmark overrides can be applied from the `Experiment` without changing
-the benchmark profile identity:
+Safe GuideLLM benchmark overrides can be applied from the `Experiment` without
+changing the benchmark profile identity:
 
 ```yaml
 spec:
