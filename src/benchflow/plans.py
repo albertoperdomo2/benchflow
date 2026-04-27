@@ -310,6 +310,7 @@ def resolve_run_plan(
             if experiment.spec.overrides.runtime.tolerations is not None
             else deepcopy(deployment_profile.spec.runtime.tolerations)
         ),
+        image_pull_secrets=deepcopy(deployment_profile.spec.runtime.image_pull_secrets),
         resources=(
             _resolve_runtime_resources(
                 deployment_profile.spec.runtime.resources,

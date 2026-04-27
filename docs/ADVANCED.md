@@ -407,6 +407,7 @@ Override semantics:
 - `runtime.env` merges by key and override values win on collisions
 - `runtime.resources.requests` and `runtime.resources.limits` merge by resource name and override values win; CPU request and limit can also be set with `--runtime-cpu-request` and `--runtime-cpu-limit`
 - `runtime.node_selector`, `runtime.affinity`, and `runtime.tolerations` replace the profile value when set in `spec.overrides.runtime`
+- `runtime.image_pull_secrets` is profile-owned and currently rendered for RHOAI runtime pods
 - `benchmark.env` merges by key and override values win on collisions
 - benchmark `requirements` can raise the effective deployment runtime settings for a given child `RunPlan`
 - today `requirements.min_max_model_len` raises the effective `--max-model-len` for that resolved run when the benchmark needs a larger context window than the deployment default
@@ -488,6 +489,8 @@ spec:
       - key: nvidia.com/gpu
         operator: Exists
         effect: NoSchedule
+    image_pull_secrets:
+      - name: rh-ee-aperdomo-pull-secret # rhoai only, rendered as runtime pod imagePullSecrets
   model_storage:
     pvc_name: models-storage # no CLI override
     cache_dir: /models # no CLI override

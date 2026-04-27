@@ -144,6 +144,9 @@ spec:
 {% if runtime_tolerations %}
     tolerations: {{ runtime_tolerations | tojson }}
 {% endif %}
+{% if runtime_image_pull_secrets %}
+    imagePullSecrets: {{ runtime_image_pull_secrets | tojson }}
+{% endif %}
     containers:
       - name: main
 {% if runtime_image %}

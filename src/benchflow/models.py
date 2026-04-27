@@ -314,6 +314,7 @@ class RuntimeSpec:
     node_selector: dict[str, str] = field(default_factory=dict)
     affinity: dict[str, Any] = field(default_factory=dict)
     tolerations: list[dict[str, Any]] = field(default_factory=list)
+    image_pull_secrets: list[dict[str, str]] = field(default_factory=list)
     resources: RuntimeResourcesSpec = field(default_factory=RuntimeResourcesSpec)
 
 

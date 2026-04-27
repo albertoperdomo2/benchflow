@@ -214,6 +214,17 @@ def _mapping_list(raw: Any, field_name: str) -> list[dict[str, Any]]:
     return values
 
 
+def _local_object_reference_list(raw: Any, field_name: str) -> list[dict[str, str]]:
+    values = _mapping_list(raw, field_name)
+    refs: list[dict[str, str]] = []
+    for index, item in enumerate(values):
+        name = str(item.get("name", "") or "").strip()
+        if not name:
+            raise ValidationError(f"{field_name}[{index}].name must not be empty")
+        refs.append({"name": name})
+    return refs
+
+
 def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
     raw = raw or {}
     images = raw.get("images") or {}
@@ -359,6 +370,9 @@ def load_yaml_file(path: Path) -> dict[str, Any]:
 def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
     raw = raw or {}
     env = {str(key): str(value) for key, value in (raw.get("env") or {}).items()}
+    image_pull_secrets = raw.get("image_pull_secrets")
+    if image_pull_secrets is None:
+        image_pull_secrets = raw.get("imagePullSecrets")
     return RuntimeSpec(
         image=str(raw.get("image", "")),
         replicas=int(raw.get("replicas", 1)),
@@ -370,6 +384,9 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
         ),
         affinity=_mapping(raw.get("affinity"), "spec.runtime.affinity"),
         tolerations=_mapping_list(raw.get("tolerations"), "spec.runtime.tolerations"),
+        image_pull_secrets=_local_object_reference_list(
+            image_pull_secrets, "spec.runtime.image_pull_secrets"
+        ),
         resources=_runtime_resources_from_dict(
             raw.get("resources"), "spec.runtime.resources"
         ),
