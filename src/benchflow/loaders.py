@@ -523,11 +523,9 @@ def _benchmark_profile_spec_from_dict(raw: dict[str, Any]) -> BenchmarkProfileSp
         tool=tool,
         env=env,
         guidellm=_guidellm_benchmark_from_dict(guidellm_raw),
-        aiperf=(
-            _aiperf_benchmark_from_dict(aiperf_raw)
-            if tool == "aiperf" or aiperf_raw
-            else AiperfBenchmarkSpec()
-        ),
+        aiperf=_aiperf_benchmark_from_dict(aiperf_raw)
+        if tool == "aiperf"
+        else AiperfBenchmarkSpec(),
         requirements=_benchmark_requirements_from_dict(raw.get("requirements")),
     )
 
