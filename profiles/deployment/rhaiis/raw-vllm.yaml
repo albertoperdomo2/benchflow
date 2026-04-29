@@ -19,4 +19,4 @@ spec:
       - --enable-prefix-caching
       - --trust-remote-code
       - --gpu-memory-utilization=0.92
-      - --disable-log-requests
+      - --no-enable-log-requests

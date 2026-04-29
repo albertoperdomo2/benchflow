@@ -17,7 +17,7 @@ spec:
       - --max-model-len=8192
       - --gpu-memory-utilization=0.92
       - --trust-remote-code
-      - --disable-log-requests
+      - --no-enable-log-requests
       - --enable-prefix-caching
   options:
     enable_auth: false
