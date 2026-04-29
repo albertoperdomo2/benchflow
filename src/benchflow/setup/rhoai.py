@@ -592,6 +592,7 @@ def _wait_for_csv_succeeded(
     kubectl_cmd: str, *, namespace: str, csv_name: str, timeout_seconds: int
 ) -> None:
     deadline = time.time() + timeout_seconds
+    approved_expected_installplan = False
     while time.time() < deadline:
         result = run_command(
             [kubectl_cmd, "get", "csv", csv_name, "-n", namespace, "-o", "json"],
@@ -602,18 +603,27 @@ def _wait_for_csv_succeeded(
             payload = json.loads(result.stdout or "{}")
             if str(payload.get("status", {}).get("phase") or "") == "Succeeded":
                 return
-        _approve_pending_installplan(
-            kubectl_cmd,
-            namespace=namespace,
-            expected_csv_name=csv_name,
+        approved_expected_installplan = (
+            _approve_pending_installplan(
+                kubectl_cmd,
+                namespace=namespace,
+                expected_csv_name=csv_name,
+                ignore_unexpected=approved_expected_installplan
+                or result.returncode == 0,
+            )
+            or approved_expected_installplan
         )
         time.sleep(5)
     raise CommandError(f"timed out waiting for CSV {csv_name} to reach Succeeded")
 
 
 def _approve_pending_installplan(
-    kubectl_cmd: str, *, namespace: str, expected_csv_name: str
-) -> None:
+    kubectl_cmd: str,
+    *,
+    namespace: str,
+    expected_csv_name: str,
+    ignore_unexpected: bool = False,
+) -> bool:
     subscription = run_json_command(
         [
             kubectl_cmd,
@@ -640,13 +650,13 @@ def _approve_pending_installplan(
         or pending.get("status") != "True"
         or pending.get("reason") != "RequiresApproval"
     ):
-        return
+        return False
 
     installplan_name = (
         subscription.get("status", {}).get("installPlanRef", {}) or {}
     ).get("name")
     if not installplan_name:
-        return
+        return False
 
     installplan = run_json_command(
         [
@@ -663,6 +673,12 @@ def _approve_pending_installplan(
     csv_names = installplan.get("spec", {}).get("clusterServiceVersionNames", []) or []
     for csv_name in csv_names:
         if str(csv_name) != expected_csv_name:
+            if ignore_unexpected:
+                detail(
+                    f"Ignoring pending InstallPlan {installplan_name} for {csv_name} "
+                    f"while waiting for {expected_csv_name}"
+                )
+                return False
             raise CommandError(
                 f"refusing to auto-approve InstallPlan {installplan_name}: "
                 f"expected {expected_csv_name}, got {csv_name}"
@@ -683,6 +699,7 @@ def _approve_pending_installplan(
             '{"spec":{"approved":true}}',
         ]
     )
+    return True
 
 
 def _wait_for_resource(
