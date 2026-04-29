@@ -164,13 +164,16 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
             "precise-prefix-cache",
         }
         or has_custom_epp_config
+        or epp_verbosity is not None
     )
-    if epp_verbosity is not None and not custom_scheduler_enabled:
-        raise ValidationError(
-            "deployment profile options.epp_verbosity requires a RHOAI mode with "
-            "a rendered scheduler template, such as approximate-prefix-cache, "
-            "precise-prefix-cache, or a custom options.epp_config"
-        )
+    scheduler_config_enabled = (
+        plan.deployment.mode
+        in {
+            "approximate-prefix-cache",
+            "precise-prefix-cache",
+        }
+        or has_custom_epp_config
+    )
     context: dict[str, Any] = {
         "release_name": plan.deployment.release_name,
         "namespace": plan.deployment.namespace,
@@ -190,6 +193,7 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
         "gpu_count": str(plan.deployment.runtime.tensor_parallelism),
         "custom_scheduler_enabled": custom_scheduler_enabled,
+        "scheduler_config_enabled": scheduler_config_enabled,
         "epp_verbosity": epp_verbosity,
         "approximate_prefix_cache_enabled": (
             plan.deployment.mode == "approximate-prefix-cache"

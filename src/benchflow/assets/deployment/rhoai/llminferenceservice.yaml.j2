@@ -66,6 +66,7 @@ spec:
 {% endif %}
               - --cert-path
               - /var/run/kserve/tls
+{% if scheduler_config_enabled %}
               - --config-text
               - |
 {% if custom_epp_config_lines %}
@@ -125,6 +126,7 @@ spec:
                     weight: 2.0
                   - pluginRef: prefix-cache-scorer
                     weight: 3.0
+{% endif %}
 {% endif %}
 {% endif %}
 {% if precise_prefix_cache_enabled %}

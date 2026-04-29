@@ -527,9 +527,9 @@ Deployment profiles can also set `spec.options.epp_verbosity` to control EPP
 scheduler log verbosity. For upstream `llm-d`, BenchFlow writes the value to
 `inferenceExtension.flags.v`, which the guide renders as the EPP `--v` flag. For
 RHOAI, BenchFlow adds `--v=<value>` to the rendered scheduler container args.
-RHOAI verbosity is supported only for profiles that already render a scheduler
-template, such as approximate prefix cache, precise prefix cache, or a custom
-`options.epp_config`.
+When RHOAI verbosity is set without a custom EPP config, BenchFlow renders the
+scheduler template with the default scheduler configuration and only adds the
+verbosity flag.
 
 This is intended for deployment-profile variants, not experiment overrides:
 
