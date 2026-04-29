@@ -285,6 +285,29 @@ def _requested_rhoai_version(
 def discover_rhoai_mlflow_version(kubeconfig: str | Path | None = None) -> str:
     kubectl_cmd = require_any_command("oc", "kubectl")
     with use_kubeconfig(kubeconfig):
+        dsc_result = run_command(
+            [
+                kubectl_cmd,
+                "get",
+                "datasciencecluster",
+                RHOAI_DSC_NAME,
+                "-o",
+                "json",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        dsc_release_version = ""
+        if dsc_result.returncode == 0:
+            try:
+                dsc = json.loads(dsc_result.stdout or "{}")
+            except json.JSONDecodeError:
+                dsc = {}
+            dsc_release_version = str(
+                ((dsc.get("status", {}) or {}).get("release", {}) or {}).get(
+                    "version", ""
+                )
+            )
         subscription = run_json_command(
             [
                 kubectl_cmd,
@@ -298,10 +321,13 @@ def discover_rhoai_mlflow_version(kubeconfig: str | Path | None = None) -> str:
             ]
         )
 
+    # In manual approval mode, currentCSV can point at a pending upgrade. Use the
+    # running platform/installed CSV first, and only fall back to currentCSV.
     candidates = (
+        dsc_release_version,
+        subscription.get("status", {}).get("installedCSV"),
         (subscription.get("status", {}).get("currentCSVDesc", {}) or {}).get("version"),
         subscription.get("status", {}).get("currentCSV"),
-        subscription.get("status", {}).get("installedCSV"),
     )
     for candidate in candidates:
         version = _normalize_rhoai_mlflow_version(str(candidate or ""))
