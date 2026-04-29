@@ -129,11 +129,34 @@ def _rhoai_custom_epp_config_lines(
     return rendered.splitlines()
 
 
+def _rhoai_epp_verbosity(plan: ResolvedRunPlan) -> int | None:
+    raw_value = plan.deployment.options.get("epp_verbosity")
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    if isinstance(raw_value, bool):
+        raise ValidationError(
+            "deployment profile options.epp_verbosity must be an integer"
+        )
+    try:
+        verbosity = int(str(raw_value).strip())
+    except ValueError as exc:
+        raise ValidationError(
+            "deployment profile options.epp_verbosity must be an integer"
+        ) from exc
+    if verbosity < 0:
+        raise ValidationError(
+            "deployment profile options.epp_verbosity must be greater than or "
+            "equal to 0"
+        )
+    return verbosity
+
+
 def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
     _validate_rhoai_profiling(plan)
     has_custom_epp_config = bool(
         str(plan.deployment.options.get("epp_config") or "").strip()
     )
+    epp_verbosity = _rhoai_epp_verbosity(plan)
     custom_scheduler_enabled = (
         plan.deployment.mode
         in {
@@ -142,6 +165,12 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
         }
         or has_custom_epp_config
     )
+    if epp_verbosity is not None and not custom_scheduler_enabled:
+        raise ValidationError(
+            "deployment profile options.epp_verbosity requires a RHOAI mode with "
+            "a rendered scheduler template, such as approximate-prefix-cache, "
+            "precise-prefix-cache, or a custom options.epp_config"
+        )
     context: dict[str, Any] = {
         "release_name": plan.deployment.release_name,
         "namespace": plan.deployment.namespace,
@@ -161,6 +190,7 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
         "gpu_count": str(plan.deployment.runtime.tensor_parallelism),
         "custom_scheduler_enabled": custom_scheduler_enabled,
+        "epp_verbosity": epp_verbosity,
         "approximate_prefix_cache_enabled": (
             plan.deployment.mode == "approximate-prefix-cache"
         ),

@@ -350,6 +350,28 @@ def _render_llmd_custom_epp_config(plan: ResolvedRunPlan) -> str:
     return rendered + "\n"
 
 
+def _llmd_epp_verbosity(plan: ResolvedRunPlan) -> int | None:
+    raw_value = plan.deployment.options.get("epp_verbosity")
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    if isinstance(raw_value, bool):
+        raise CommandError(
+            "deployment profile options.epp_verbosity must be an integer"
+        )
+    try:
+        verbosity = int(str(raw_value).strip())
+    except ValueError as exc:
+        raise CommandError(
+            "deployment profile options.epp_verbosity must be an integer"
+        ) from exc
+    if verbosity < 0:
+        raise CommandError(
+            "deployment profile options.epp_verbosity must be greater than or "
+            "equal to 0"
+        )
+    return verbosity
+
+
 def _patch_scheduler_values(plan: ResolvedRunPlan, values_file: Path) -> None:
     values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
     inference_extension = values.setdefault("inferenceExtension", {})
@@ -379,6 +401,14 @@ def _patch_scheduler_values(plan: ResolvedRunPlan, values_file: Path) -> None:
         match_labels = {}
         model_servers["matchLabels"] = match_labels
     match_labels.update(_release_match_labels(plan.deployment.release_name))
+
+    epp_verbosity = _llmd_epp_verbosity(plan)
+    if epp_verbosity is not None:
+        flags = inference_extension.get("flags")
+        if not isinstance(flags, dict):
+            flags = {}
+            inference_extension["flags"] = flags
+        flags["v"] = epp_verbosity
 
     custom_epp_config = _render_llmd_custom_epp_config(plan)
     if custom_epp_config:

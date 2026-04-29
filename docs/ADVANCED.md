@@ -507,6 +507,7 @@ spec:
   options:
     enable_auth: false # rhoai only, overridden by spec.overrides.rhoai.enable_auth or --rhoai-auth
     epp_config: "" # rhoai/llm-d only, optional EndpointPickerConfig rendered with Jinja
+    epp_verbosity: 4 # rhoai/llm-d only, optional EPP scheduler verbosity
 ```
 
 RHOAI deployment profiles can provide a custom EPP configuration with
@@ -521,6 +522,14 @@ the guide scheduler values by setting `inferenceExtension.pluginsConfigFile` to
 `benchflow-epp-config.yaml` and placing the rendered YAML in
 `inferenceExtension.pluginsCustomConfig`. The upstream guide still creates the
 EPP ConfigMap through Helm.
+
+Deployment profiles can also set `spec.options.epp_verbosity` to control EPP
+scheduler log verbosity. For upstream `llm-d`, BenchFlow writes the value to
+`inferenceExtension.flags.v`, which the guide renders as the EPP `--v` flag. For
+RHOAI, BenchFlow adds `--v=<value>` to the rendered scheduler container args.
+RHOAI verbosity is supported only for profiles that already render a scheduler
+template, such as approximate prefix cache, precise prefix cache, or a custom
+`options.epp_config`.
 
 This is intended for deployment-profile variants, not experiment overrides:
 
