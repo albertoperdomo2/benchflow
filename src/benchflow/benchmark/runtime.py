@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import subprocess
 import sys
 import shutil
@@ -215,6 +216,75 @@ def _get_nested(d: Dict[str, Any], *keys: str, default: Any = None) -> Any:
             return default
         d = d.get(key, default)
     return d
+
+
+def _sequence_value(value: Any, index: int) -> Any:
+    if isinstance(value, list):
+        if index < len(value):
+            return value[index]
+        return value[0] if value else None
+    return value
+
+
+def _mlflow_step_from_value(value: Any) -> int | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(numeric) or numeric < 0:
+        return None
+
+    if numeric.is_integer():
+        return int(numeric)
+
+    rounded = max(1, int(math.ceil(numeric)))
+    logger.warning(
+        "MLflow metric steps must be integers; rounded load value %s to step %s",
+        value,
+        rounded,
+    )
+    return rounded
+
+
+def _extract_guidellm_load_step(
+    benchmark: Dict[str, Any],
+    benchmark_index: int,
+    *,
+    rate_type: str,
+) -> tuple[int, str, Any] | None:
+    config = benchmark.get("config") or {}
+    args = benchmark.get("args") or {}
+    strategy = (
+        config.get("strategy")
+        or _get_nested(benchmark, "scheduler", "strategy")
+        or args.get("strategy")
+        or {}
+    )
+    profile = config.get("profile") or args.get("profile") or {}
+
+    if rate_type == "concurrent":
+        field_order = ("streams", "rate", "max_concurrency")
+    elif rate_type == "throughput":
+        field_order = ("max_concurrency", "streams", "rate")
+    else:
+        field_order = ("rate", "streams", "max_concurrency")
+
+    field_labels = {
+        "streams": "concurrency",
+        "rate": "request_rate",
+        "max_concurrency": "max_concurrency",
+    }
+
+    for field_name in field_order:
+        value = strategy.get(field_name) if isinstance(strategy, dict) else None
+        if value is None and isinstance(profile, dict):
+            value = _sequence_value(profile.get(field_name), benchmark_index)
+        step = _mlflow_step_from_value(value)
+        if step is not None:
+            return step, field_labels[field_name], value
+
+    return None
 
 
 def parse_multiturn_expression(expression: str, concurrency: int) -> str:
@@ -1095,32 +1165,30 @@ def run_benchmark_with_mlflow(
                 if not benchmarks:
                     logger.warning("No benchmarks found in JSON output")
 
-                for benchmark in benchmarks:
-                    concurrency_step = 0
-                    config_or_args = benchmark.get("config") or benchmark.get(
-                        "args", {}
+                for benchmark_index, benchmark in enumerate(benchmarks):
+                    load_step = _extract_guidellm_load_step(
+                        benchmark,
+                        benchmark_index,
+                        rate_type=rate_type,
                     )
-                    try:
-                        concurrency_step = int(config_or_args["strategy"]["streams"])
-                    except (KeyError, TypeError, IndexError):
-                        try:
-                            concurrency_step = int(
-                                config_or_args["profile"]["streams"][0]
-                            )
-                        except (KeyError, TypeError, IndexError):
-                            logger.warning(
-                                "Could not find concurrency 'streams'. "
-                                "Metrics will be logged without a step."
-                            )
+                    if load_step is None:
+                        step_value, load_label, load_value = 0, "load_step", 0
+                        logger.warning(
+                            "Could not find GuideLLM load value for rate_type=%s. "
+                            "Metrics will be logged at step 0.",
+                            rate_type,
+                        )
+                    else:
+                        step_value, load_label, load_value = load_step
 
                     metrics = extract_metrics_from_benchmark(benchmark)
                     if metrics:
-                        metrics["concurrency"] = concurrency_step
+                        metrics[load_label] = load_value
                         for key, value in _metrics_for_mlflow(metrics).items():
-                            mlflow.log_metric(key, value, step=concurrency_step)
+                            mlflow.log_metric(key, value, step=step_value)
                         logger.info(
-                            f"Logged {len(metrics)} metrics for step "
-                            f"(concurrency={concurrency_step})"
+                            f"Logged {len(metrics)} metrics for step {step_value} "
+                            f"({load_label}={load_value})"
                         )
 
                 if Path(json_path).exists():
