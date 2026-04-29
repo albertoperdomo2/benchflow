@@ -33,6 +33,7 @@ RHOAI_GATEWAY_NAMESPACE = "openshift-ingress"
 RHOAI_GATEWAY_DEFAULT_TLS_SECRET = "default-gateway-tls"
 RHOAI_GATEWAY_FALLBACK_TLS_SECRET = "data-science-gateway-service-tls"
 _RHOAI_VERSION_RE = re.compile(r"(?P<major>\d+)\.(?P<minor>\d+)")
+_RHOAI_EXACT_VERSION_RE = re.compile(r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)")
 _RHOAI_EA_RE = re.compile(r"(?i)(?:^|[-_.])ea[-_.]?(?P<index>\d+)(?:$|[-_.])")
 
 
@@ -260,14 +261,23 @@ def normalize_rhoai_platform_version(value: str) -> str:
     return normalized or DEFAULT_RHOAI_PLATFORM_VERSION
 
 
-def _requested_rhoai_version(value: str) -> tuple[str, str | None]:
-    normalized = normalize_rhoai_platform_version(value)
-    version_match = _RHOAI_VERSION_RE.search(normalized)
+def _requested_rhoai_version(
+    value: str,
+) -> tuple[str, tuple[int, ...] | None, str | None]:
+    requested = str(value or "").strip() or DEFAULT_RHOAI_PLATFORM_VERSION
+    version_match = _RHOAI_VERSION_RE.search(requested)
     if version_match is None:
         raise CommandError(f"invalid requested RHOAI version: {value!r}")
-    ea_match = _RHOAI_EA_RE.search(normalized)
+    exact_match = _RHOAI_EXACT_VERSION_RE.search(requested)
+    ea_match = _RHOAI_EA_RE.search(requested)
+    requested_exact_version = (
+        tuple(int(exact_match.group(name)) for name in ("major", "minor", "patch"))
+        if exact_match is not None
+        else None
+    )
     return (
         f"{version_match.group('major')}.{version_match.group('minor')}.",
+        requested_exact_version,
         ea_match.group("index") if ea_match is not None else None,
     )
 
@@ -311,6 +321,7 @@ def _rhoai_channel_candidates(
     package: dict[str, Any],
     *,
     requested_series: str,
+    requested_exact_version: tuple[int, ...] | None,
     requested_ea: str | None,
     channel_name: str,
     package_name: str,
@@ -337,7 +348,10 @@ def _rhoai_channel_candidates(
         )
         if normalized_ea == requested_ea:
             version_tuple = _parse_version_tuple(current_version)
-            if version_tuple:
+            if version_tuple and (
+                requested_exact_version is None
+                or version_tuple == requested_exact_version
+            ):
                 candidates.append(
                     (version_tuple, current_csv, source, source_namespace)
                 )
@@ -360,6 +374,11 @@ def _rhoai_channel_candidates(
         version_tuple = _parse_version_tuple(version)
         if not version_tuple or not name:
             continue
+        if (
+            requested_exact_version is not None
+            and version_tuple != requested_exact_version
+        ):
+            continue
         candidates.append((version_tuple, name, source, source_namespace))
     return candidates
 
@@ -367,7 +386,9 @@ def _rhoai_channel_candidates(
 def _resolve_rhoai_operator_package(
     kubectl_cmd: str, requested_version: str, channel_name: str
 ) -> tuple[str, str, str]:
-    requested_series, requested_ea = _requested_rhoai_version(requested_version)
+    requested_series, requested_exact_version, requested_ea = _requested_rhoai_version(
+        requested_version
+    )
     packages = _candidate_package_manifests(kubectl_cmd, RHOAI_OPERATOR_PACKAGE_NAME)
     if not packages:
         raise CommandError(
@@ -380,6 +401,7 @@ def _resolve_rhoai_operator_package(
         package_candidates = _rhoai_channel_candidates(
             package,
             requested_series=requested_series,
+            requested_exact_version=requested_exact_version,
             requested_ea=requested_ea,
             channel_name=channel_name,
             package_name=RHOAI_OPERATOR_PACKAGE_NAME,
@@ -400,7 +422,7 @@ def _resolve_rhoai_operator_package(
     if not candidates:
         raise CommandError(
             f"channel {channel_name} for {RHOAI_OPERATOR_PACKAGE_NAME} does not expose "
-            f"a CSV matching {normalize_rhoai_platform_version(requested_version)}"
+            f"a CSV matching {requested_version}"
         )
 
     candidates.sort(key=lambda item: item[0], reverse=True)
@@ -571,16 +593,16 @@ def _wait_for_csv_succeeded(
 ) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        _approve_pending_installplan(
-            kubectl_cmd,
-            namespace=namespace,
-            expected_csv_name=csv_name,
-        )
         payload = run_json_command(
             [kubectl_cmd, "get", "csv", csv_name, "-n", namespace, "-o", "json"]
         )
         if str(payload.get("status", {}).get("phase") or "") == "Succeeded":
             return
+        _approve_pending_installplan(
+            kubectl_cmd,
+            namespace=namespace,
+            expected_csv_name=csv_name,
+        )
         time.sleep(5)
     raise CommandError(f"timed out waiting for CSV {csv_name} to reach Succeeded")
 
@@ -744,8 +766,9 @@ def setup_rhoai(
     plan: ResolvedRunPlan, *, state_path: Path | None = None
 ) -> dict[str, Any]:
     kubectl_cmd = require_any_command("oc", "kubectl")
-    requested_version = normalize_rhoai_platform_version(
-        str(plan.deployment.platform_version or "")
+    requested_version = (
+        str(plan.deployment.platform_version or "").strip()
+        or DEFAULT_RHOAI_PLATFORM_VERSION
     )
     channel_name = _rhoai_channel(plan)
     state = _empty_state(requested_version)
