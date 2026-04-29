@@ -593,11 +593,15 @@ def _wait_for_csv_succeeded(
 ) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        payload = run_json_command(
-            [kubectl_cmd, "get", "csv", csv_name, "-n", namespace, "-o", "json"]
+        result = run_command(
+            [kubectl_cmd, "get", "csv", csv_name, "-n", namespace, "-o", "json"],
+            capture_output=True,
+            check=False,
         )
-        if str(payload.get("status", {}).get("phase") or "") == "Succeeded":
-            return
+        if result.returncode == 0:
+            payload = json.loads(result.stdout or "{}")
+            if str(payload.get("status", {}).get("phase") or "") == "Succeeded":
+                return
         _approve_pending_installplan(
             kubectl_cmd,
             namespace=namespace,
