@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from ..assets import render_jinja_text
 from ..cluster import (
     CommandError,
     require_any_command,
@@ -26,6 +27,7 @@ from ..ui import detail, step, success
 _LLMD_INFERENCE_SERVING_LABEL = "llm-d.ai/inferenceServing"
 _LLMD_MODEL_LABEL = "llm-d.ai/model"
 _BENCHFLOW_RELEASE_LABEL = "benchflow.io/release"
+_BENCHFLOW_EPP_CONFIG_FILE = "benchflow-epp-config.yaml"
 
 
 def _llmd_guide_layout(plan: ResolvedRunPlan) -> dict[str, str]:
@@ -294,6 +296,60 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
     return values
 
 
+def _llmd_custom_epp_config_context(plan: ResolvedRunPlan) -> dict[str, Any]:
+    runtime = plan.deployment.runtime
+    return {
+        "release_name": plan.deployment.release_name,
+        "namespace": plan.deployment.namespace,
+        "mode": plan.deployment.mode,
+        "repo_ref": plan.deployment.repo_ref,
+        "gateway": plan.deployment.gateway,
+        "scheduler_image": plan.deployment.scheduler_image,
+        "model_name": plan.model.name,
+        "model_uri": _model_uri(plan),
+        "model_mount_path": _model_mount_path(plan),
+        "replicas": runtime.replicas,
+        "tensor_parallelism": runtime.tensor_parallelism,
+        "runtime_image": runtime.image,
+        "runtime_env": runtime.env,
+        "runtime_vllm_args": runtime.vllm_args,
+        "runtime_node_selector": runtime.node_selector,
+        "runtime_affinity": runtime.affinity,
+        "runtime_tolerations": runtime.tolerations,
+        "runtime_image_pull_secrets": runtime.image_pull_secrets,
+        "runtime_resources": runtime.resources,
+    }
+
+
+def _render_llmd_custom_epp_config(plan: ResolvedRunPlan) -> str:
+    raw_config = plan.deployment.options.get("epp_config")
+    if raw_config is None or str(raw_config).strip() == "":
+        return ""
+    if not isinstance(raw_config, str):
+        raise CommandError(
+            "deployment profile options.epp_config must be a YAML string"
+        )
+
+    rendered = render_jinja_text(
+        raw_config, _llmd_custom_epp_config_context(plan)
+    ).strip()
+    try:
+        parsed = yaml.safe_load(rendered)
+    except yaml.YAMLError as exc:
+        raise CommandError(
+            "deployment profile options.epp_config must render valid YAML"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise CommandError(
+            "deployment profile options.epp_config must render to a YAML mapping"
+        )
+    if parsed.get("kind") != "EndpointPickerConfig":
+        raise CommandError(
+            "deployment profile options.epp_config must render an EndpointPickerConfig"
+        )
+    return rendered + "\n"
+
+
 def _patch_scheduler_values(plan: ResolvedRunPlan, values_file: Path) -> None:
     values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
     inference_extension = values.setdefault("inferenceExtension", {})
@@ -324,7 +380,17 @@ def _patch_scheduler_values(plan: ResolvedRunPlan, values_file: Path) -> None:
         model_servers["matchLabels"] = match_labels
     match_labels.update(_release_match_labels(plan.deployment.release_name))
 
-    if plan.deployment.mode == "precise-prefix-cache":
+    custom_epp_config = _render_llmd_custom_epp_config(plan)
+    if custom_epp_config:
+        inference_extension["pluginsConfigFile"] = _BENCHFLOW_EPP_CONFIG_FILE
+        plugins_custom_config = inference_extension.setdefault(
+            "pluginsCustomConfig", {}
+        )
+        if not isinstance(plugins_custom_config, dict):
+            plugins_custom_config = {}
+            inference_extension["pluginsCustomConfig"] = plugins_custom_config
+        plugins_custom_config[_BENCHFLOW_EPP_CONFIG_FILE] = custom_epp_config
+    elif plan.deployment.mode == "precise-prefix-cache":
         plugins_config_name = str(
             inference_extension.get("pluginsConfigFile") or ""
         ).strip()

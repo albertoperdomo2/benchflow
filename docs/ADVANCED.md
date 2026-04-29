@@ -506,7 +506,7 @@ spec:
   scheduler_image: "" # overridden by spec.overrides.images.scheduler or --scheduler-image
   options:
     enable_auth: false # rhoai only, overridden by spec.overrides.rhoai.enable_auth or --rhoai-auth
-    epp_config: "" # rhoai only, optional EndpointPickerConfig rendered with Jinja
+    epp_config: "" # rhoai/llm-d only, optional EndpointPickerConfig rendered with Jinja
 ```
 
 RHOAI deployment profiles can provide a custom EPP configuration with
@@ -514,6 +514,13 @@ RHOAI deployment profiles can provide a custom EPP configuration with
 used for the `LLMInferenceService` manifest, validates that it renders an
 `EndpointPickerConfig`, enables the custom scheduler path, and places it directly
 in the scheduler `--config-text`.
+
+Upstream `llm-d` deployment profiles can use the same `spec.options.epp_config`
+field. BenchFlow renders and validates the `EndpointPickerConfig`, then patches
+the guide scheduler values by setting `inferenceExtension.pluginsConfigFile` to
+`benchflow-epp-config.yaml` and placing the rendered YAML in
+`inferenceExtension.pluginsCustomConfig`. The upstream guide still creates the
+EPP ConfigMap through Helm.
 
 This is intended for deployment-profile variants, not experiment overrides:
 
