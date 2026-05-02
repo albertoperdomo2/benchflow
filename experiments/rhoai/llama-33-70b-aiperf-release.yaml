@@ -13,6 +13,7 @@ spec:
     - rhoai-precise-prefix-cache
   benchmark_profile:
     - aiperf-mooncake-trace
+    - aiperf-mooncake-toolagent-trace
   metrics_profile: detailed
   mlflow:
     tags:
