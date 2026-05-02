@@ -17,6 +17,8 @@ spec:
     fixed_schedule: true
     fixed_schedule_auto_offset: true
     synthesis_max_isl: 131072
+    # Optional: trim the downloaded JSONL to the first N non-empty records.
+    dataset_cap: 500
     max_seconds: 7200
     # Optional debug exports for broken/truncated streamed responses.
     # export_level: records
