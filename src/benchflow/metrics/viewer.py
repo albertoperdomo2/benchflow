@@ -951,24 +951,34 @@ def _viewer_output_dir(mlflow_run_ids: list[str]) -> Path:
 
 
 def _write_dashboard_page(
-    *, run_data: list[ViewerRunData], mlflow_run_ids: list[str]
+    *,
+    run_data: list[ViewerRunData],
+    mlflow_run_ids: list[str],
+    output_file: str | Path | None = None,
 ) -> Path:
     dashboard = _load_dashboard_spec()
     html_text = _render_dashboard_html(run_data=run_data, dashboard=dashboard)
-    output_dir = _viewer_output_dir(mlflow_run_ids)
-    output_path = output_dir / "index.html"
+    if output_file:
+        output_path = Path(output_file).expanduser().resolve()
+        if output_path.exists() and output_path.is_dir():
+            raise ValidationError(
+                f"metrics report output file is a directory: {output_path}"
+            )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_dir = _viewer_output_dir(mlflow_run_ids)
+        output_path = output_dir / "index.html"
     output_path.write_text(html_text, encoding="utf-8")
     return output_path
 
 
-def serve_mlflow_metrics_dashboard(
+def _load_dashboard_run_data(
     *,
     mlflow_run_ids: list[str],
     mlflow_tracking_uri: str | None = None,
-) -> str:
+) -> list[ViewerRunData]:
     if not mlflow_run_ids:
         raise ValidationError("at least one MLflow run ID is required")
-
     loaded = [
         _load_viewer_run_data(
             mlflow_run_id=run_id,
@@ -977,7 +987,39 @@ def serve_mlflow_metrics_dashboard(
         )
         for index, run_id in enumerate(mlflow_run_ids)
     ]
-    run_data = _ensure_unique_labels(loaded)
+    return _ensure_unique_labels(loaded)
+
+
+def generate_mlflow_metrics_dashboard_report(
+    *,
+    mlflow_run_ids: list[str],
+    mlflow_tracking_uri: str | None = None,
+    output_file: str | Path,
+) -> str:
+    run_data = _load_dashboard_run_data(
+        mlflow_run_ids=mlflow_run_ids,
+        mlflow_tracking_uri=mlflow_tracking_uri,
+    )
+    html_path = _write_dashboard_page(
+        run_data=run_data,
+        mlflow_run_ids=mlflow_run_ids,
+        output_file=output_file,
+    )
+    success(
+        f"Wrote metrics HTML report for {len(mlflow_run_ids)} MLflow run(s) to {html_path}"
+    )
+    return str(html_path)
+
+
+def serve_mlflow_metrics_dashboard(
+    *,
+    mlflow_run_ids: list[str],
+    mlflow_tracking_uri: str | None = None,
+) -> str:
+    run_data = _load_dashboard_run_data(
+        mlflow_run_ids=mlflow_run_ids,
+        mlflow_tracking_uri=mlflow_tracking_uri,
+    )
     html_path = _write_dashboard_page(run_data=run_data, mlflow_run_ids=mlflow_run_ids)
 
     handler = partial(SimpleHTTPRequestHandler, directory=str(html_path.parent))

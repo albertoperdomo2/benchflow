@@ -1044,7 +1044,8 @@ current supported Grafana path is the live Prometheus-backed dashboard only.
 
 Use `bflow metrics serve` to inspect the stored Prometheus metrics for one
 MLflow run locally in a Plotly-based dashboard that mirrors the live Grafana
-layout closely enough for interactive analysis.
+layout closely enough for interactive analysis. Add `--output-file` when you
+want a static HTML file instead of a local HTTP server.
 
 BenchFlow:
 
@@ -1065,6 +1066,14 @@ export MLFLOW_TRACKING_INSECURE_TLS=true
 bflow metrics serve --mlflow-run-id 3f0c1f...
 ```
 
+Write a static HTML report instead of serving it:
+
+```bash
+bflow metrics serve \
+  --mlflow-run-id 3f0c1f... \
+  --output-file ./reports/metrics.html
+```
+
 Compare multiple runs:
 
 ```bash
@@ -1080,7 +1089,7 @@ of wall-clock time so separate executions can be overlaid meaningfully.
 Notes:
 
 - the port is intentionally fixed to `8765`
-- the command does not open a browser automatically
+- `--output-file` writes the same self-contained dashboard HTML and exits
 - press `Ctrl-C` to stop the local server
 - repeat `--mlflow-run-id` to compare multiple runs in one viewer
 - cached runs are reused from `/tmp/benchflow-metrics-viewer`

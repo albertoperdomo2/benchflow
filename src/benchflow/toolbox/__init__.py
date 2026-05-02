@@ -4,7 +4,11 @@ from .benchmark import (
     generate_plan_report,
     run_plan_benchmark,
 )
-from .metrics import collect_plan_metrics, serve_metrics_dashboard
+from .metrics import (
+    collect_plan_metrics,
+    generate_metrics_dashboard_report,
+    serve_metrics_dashboard,
+)
 from .mlflow import upload_artifact_directory, upload_plan_results
 from .model import download_cached_model
 from .platform import (
@@ -24,6 +28,7 @@ __all__ = [
     "deploy_platform",
     "download_cached_model",
     "generate_artifacts_run_report",
+    "generate_metrics_dashboard_report",
     "generate_plan_report",
     "resolve_target_url",
     "resolve_run_plan_stages",

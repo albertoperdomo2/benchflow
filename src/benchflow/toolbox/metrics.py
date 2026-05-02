@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
-from ..metrics import collect_metrics, serve_mlflow_metrics_dashboard
+from ..metrics import (
+    collect_metrics,
+    generate_mlflow_metrics_dashboard_report,
+    serve_mlflow_metrics_dashboard,
+)
 from ..remote_jobs import (
     remote_job_artifacts_dir,
     remote_run_plan_json,
@@ -81,4 +85,17 @@ def serve_metrics_dashboard(
     return serve_mlflow_metrics_dashboard(
         mlflow_run_ids=mlflow_run_ids,
         mlflow_tracking_uri=mlflow_tracking_uri or None,
+    )
+
+
+def generate_metrics_dashboard_report(
+    *,
+    mlflow_run_ids: list[str],
+    mlflow_tracking_uri: str = "",
+    output_file: str | Path,
+) -> str:
+    return generate_mlflow_metrics_dashboard_report(
+        mlflow_run_ids=mlflow_run_ids,
+        mlflow_tracking_uri=mlflow_tracking_uri or None,
+        output_file=output_file,
     )

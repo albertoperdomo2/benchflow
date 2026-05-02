@@ -53,6 +53,7 @@ from ..toolbox import (
     deploy_platform,
     download_cached_model,
     generate_artifacts_run_report,
+    generate_metrics_dashboard_report,
     generate_plan_report,
     resolve_run_plan_stages,
     resolve_target_url,
@@ -837,10 +838,19 @@ def cmd_metrics_collect(args: argparse.Namespace) -> int:
 
 
 def cmd_metrics_serve(args: argparse.Namespace) -> int:
-    serve_metrics_dashboard(
-        mlflow_run_ids=_parse_mlflow_run_ids(args.mlflow_run_id),
-        mlflow_tracking_uri=args.mlflow_tracking_uri or "",
-    )
+    mlflow_run_ids = _parse_mlflow_run_ids(args.mlflow_run_id)
+    if args.output_file:
+        report_path = generate_metrics_dashboard_report(
+            mlflow_run_ids=mlflow_run_ids,
+            mlflow_tracking_uri=args.mlflow_tracking_uri or "",
+            output_file=args.output_file,
+        )
+        print(report_path)
+    else:
+        serve_metrics_dashboard(
+            mlflow_run_ids=mlflow_run_ids,
+            mlflow_tracking_uri=args.mlflow_tracking_uri or "",
+        )
     return 0
 
 
@@ -1873,6 +1883,11 @@ def metrics_collect_command(**kwargs: object) -> int:
     default=lambda: os.environ.get("MLFLOW_TRACKING_URI"),
     show_default="env MLFLOW_TRACKING_URI",
     help="MLflow tracking URI that owns the run.",
+)
+@click.option(
+    "--output-file",
+    type=click.Path(dir_okay=False, path_type=str),
+    help="Write a static HTML metrics report to this file instead of serving it.",
 )
 def metrics_serve_command(**kwargs: object) -> int:
     return invoke_handler(cmd_metrics_serve, **kwargs)
