@@ -6,7 +6,7 @@ spec:
   platform: llm-d
   mode: precise-prefix-cache
   repo_url: https://github.com/llm-d/llm-d.git
-  repo_ref: v0.4.0
+  repo_ref: v0.6.0
   gateway: istio
   endpoint_path: /v1/models
   model_storage:

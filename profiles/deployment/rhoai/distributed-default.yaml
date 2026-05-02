@@ -5,7 +5,8 @@ metadata:
 spec:
   platform: rhoai
   mode: distributed-default
-  platform_version: RHOAI-3.3
+  platform_version: RHOAI-3.4.0
+  platform_channel: stable-3.x
   endpoint_path: /v1/models
   model_storage:
     pvc_name: models-storage
@@ -21,3 +22,4 @@ spec:
       - --enable-prefix-caching
   options:
     enable_auth: false
+    # epp_verbosity: 10

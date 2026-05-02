@@ -6,7 +6,7 @@ spec:
   platform: llm-d
   mode: inference-scheduling
   repo_url: https://github.com/llm-d/llm-d.git
-  repo_ref: v0.4.0
+  repo_ref: v0.6.0
   gateway: istio
   endpoint_path: /v1/models
   model_storage:
@@ -22,3 +22,20 @@ spec:
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching
+  # options:
+  #   epp_config: |
+  #     apiVersion: inference.networking.x-k8s.io/v1alpha1
+  #     kind: EndpointPickerConfig
+  #     plugins:
+  #     - type: single-profile-handler
+  #     - type: prefix-cache-scorer
+  #     - type: load-aware-scorer
+  #     - type: max-score-picker
+  #     schedulingProfiles:
+  #     - name: default
+  #       plugins:
+  #       - pluginRef: prefix-cache-scorer
+  #         weight: 2.0
+  #       - pluginRef: load-aware-scorer
+  #         weight: 1.0
+  #       - pluginRef: max-score-picker
