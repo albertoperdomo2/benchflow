@@ -226,6 +226,12 @@ def _sequence_value(value: Any, index: int) -> Any:
     return value
 
 
+def _join_optional_ints(values: list[int] | None) -> str | None:
+    if not values:
+        return None
+    return ",".join(str(value) for value in values)
+
+
 def _mlflow_step_from_value(value: Any) -> int | None:
     try:
         numeric = float(value)
@@ -547,10 +553,10 @@ def extract_metrics_from_benchmark(benchmark: Dict[str, Any]) -> Dict[str, Any]:
 def run_guidellm_cli(
     target: str,
     model: str,
-    rate: str,
+    rate: str | None,
     backend_type: str = "openai_http",
     request_type: str | None = None,
-    rate_type: str = "concurrent",
+    rate_type: str | None = None,
     data: str = None,
     max_seconds=None,
     max_requests=None,
@@ -568,17 +574,18 @@ def run_guidellm_cli(
         model,
         "--backend-type",
         backend_type,
-        "--rate",
-        str(rate),
         "--output-dir",
         str(output_path_obj.parent),
         "--outputs",
         output_path_obj.name,
     ]
 
+    if rate is not None and str(rate).strip():
+        cmd.extend(["--rate", str(rate)])
     if request_type:
         cmd.extend(["--request-type", request_type])
-    cmd.extend(["--rate-type", rate_type])
+    if rate_type:
+        cmd.extend(["--rate-type", rate_type])
     cmd.extend(["--backend-args", '{"timeout": 600}'])
     if target.startswith("https://"):
         # cmd.extend(["--backend-kwargs", '{"verify": false}'])
@@ -725,10 +732,10 @@ def generate_visualization_report(
 def _run_and_process_benchmark(
     target: str,
     model: str,
-    rate: str,
+    rate: str | None,
     backend_type: str,
     request_type: str | None,
-    rate_type: str,
+    rate_type: str | None,
     data: str,
     max_seconds,
     max_requests,
@@ -772,10 +779,10 @@ def _run_and_process_benchmark(
 def run_benchmark_without_mlflow(
     target: str,
     model: str,
-    rate: str,
+    rate: str | None,
     backend_type: str = "openai_http",
     request_type: str | None = None,
-    rate_type: str = "concurrent",
+    rate_type: str | None = None,
     data: str = None,
     max_seconds=None,
     max_requests=None,
@@ -789,7 +796,9 @@ def run_benchmark_without_mlflow(
 ) -> str:
     """Run benchmark without MLflow tracking, saving results to specified directory."""
     logger.info("Running benchmark without MLflow tracking")
-    logger.info(f"Starting benchmark for rates: {rate}")
+    logger.info(
+        f"Starting benchmark for rates: {rate if rate is not None else 'not set'}"
+    )
     logger.info(f"Results will be saved to: {output_dir}")
 
     multiturn_mode = _multiturn_mode_enabled(
@@ -797,6 +806,8 @@ def run_benchmark_without_mlflow(
         max_seconds=max_seconds,
         max_requests=max_requests,
     )
+    if multiturn_mode and not rate:
+        raise BenchmarkExecutionError("multiturn benchmark requires rates to be set")
     if multiturn_mode:
         logger.info(
             "Multiturn mode enabled - running separate commands per concurrency"
@@ -898,10 +909,10 @@ def run_benchmark_without_mlflow(
 def run_benchmark_with_mlflow(
     target: str,
     model: str,
-    rate: str,
+    rate: str | None,
     backend_type: str = "openai_http",
     request_type: str | None = None,
-    rate_type: str = "concurrent",
+    rate_type: str | None = None,
     data: str = None,
     max_seconds=None,
     max_requests=None,
@@ -938,7 +949,9 @@ def run_benchmark_with_mlflow(
         mode_suffix = "multiturn" if multiturn_mode else "sweep"
         run_name = f"{model.split('/')[-1]}_{mode_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    logger.info(f"Starting benchmark sweep: rates={rate}")
+    logger.info(
+        f"Starting benchmark sweep: rates={rate if rate is not None else 'not set'}"
+    )
     if multiturn_mode:
         logger.info(
             "Multiturn mode enabled - running separate commands per concurrency"
@@ -951,14 +964,16 @@ def run_benchmark_with_mlflow(
                 "target": target,
                 "model": model,
                 "backend_type": backend_type,
-                "rate_type": rate_type,
-                "rates": rate,
                 "tp": tp_size,
                 "replicas": replicas,
                 "prefill_replicas": prefill_replicas,
                 "decode_replicas": decode_replicas,
                 "multiturn_mode": multiturn_mode,
             }
+            if rate_type:
+                params["rate_type"] = rate_type
+            if rate is not None and str(rate).strip():
+                params["rates"] = rate
             if request_type:
                 params["request_type"] = request_type
             if data:
@@ -1838,8 +1853,8 @@ def _run_benchmark_mode(
     target: str,
     model: str,
     backend_type: str,
-    rate_type: str,
-    rate: str,
+    rate_type: str | None,
+    rate: str | None,
     data: str | None,
     max_seconds: str | None,
     max_requests: str | None,
@@ -1856,7 +1871,9 @@ def _run_benchmark_mode(
     decode_replicas: str,
 ) -> int:
     parsed_tags = _parse_tag_mappings(tags)
-    logger.info(f"Starting benchmark sweep for rates: {rate}")
+    logger.info(
+        f"Starting benchmark sweep for rates: {rate if rate is not None else 'not set'}"
+    )
     _authenticate_huggingface_if_needed()
 
     mlflow_enabled = os.environ.get("MLFLOW_ENABLED", "false").lower() == "true"

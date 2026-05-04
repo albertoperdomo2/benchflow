@@ -360,8 +360,8 @@ class BenchmarkRequirementsSpec:
 class GuidellmBenchmarkSpec:
     backend_type: str = "openai_http"
     request_type: str = ""
-    rate_type: str = "concurrent"
-    rates: list[int] = field(default_factory=list)
+    rate_type: str | None = None
+    rates: list[int] | None = None
     data: str = "prompt_tokens=1000,output_tokens=1000"
     max_seconds: int = 600
     max_requests: str | None = None
@@ -411,15 +411,15 @@ class BenchmarkProfileSpec:
         self.guidellm.request_type = value
 
     @property
-    def rate_type(self) -> str:
+    def rate_type(self) -> str | None:
         return "fixed_schedule" if self.tool == "aiperf" else self.guidellm.rate_type
 
     @property
-    def rates(self) -> list[int]:
+    def rates(self) -> list[int] | None:
         return [] if self.tool == "aiperf" else self.guidellm.rates
 
     @rates.setter
-    def rates(self, value: list[int]) -> None:
+    def rates(self, value: list[int] | None) -> None:
         self.guidellm.rates = value
 
     @property

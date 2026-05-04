@@ -29,6 +29,12 @@ def _read_optional_text(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
+def _format_optional_rates(rates: list[int] | None) -> str:
+    if not rates:
+        return "not set"
+    return ",".join(str(rate) for rate in rates)
+
+
 def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
     if plan.benchmark.tool == "aiperf":
         aiperf = plan.benchmark.aiperf
@@ -50,8 +56,13 @@ def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
     guidellm = plan.benchmark.guidellm
     detail(
         "Rates: "
-        + ",".join(str(rate) for rate in guidellm.rates)
-        + f", rate type: {guidellm.rate_type}, backend: {guidellm.backend_type}"
+        + _format_optional_rates(guidellm.rates)
+        + (
+            f", rate type: {guidellm.rate_type}"
+            if guidellm.rate_type
+            else ", rate type: not set"
+        )
+        + f", backend: {guidellm.backend_type}"
     )
     detail(f"Benchmark data: {guidellm.data}")
 

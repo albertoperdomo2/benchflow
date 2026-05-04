@@ -464,8 +464,8 @@ def _guidellm_benchmark_from_dict(raw: dict[str, Any]) -> GuidellmBenchmarkSpec:
     return GuidellmBenchmarkSpec(
         backend_type=str(raw.get("backend_type", "openai_http")),
         request_type=str(raw.get("request_type", "") or "").strip(),
-        rate_type=str(raw.get("rate_type", "concurrent")),
-        rates=[int(item) for item in (raw.get("rates") or [])],
+        rate_type=_nonempty_string(raw.get("rate_type"), "spec.guidellm.rate_type"),
+        rates=_int_list(raw.get("rates"), "spec.guidellm.rates"),
         data=str(raw.get("data", "prompt_tokens=1000,output_tokens=1000")),
         max_seconds=int(raw.get("max_seconds", 600)),
         max_requests=str(raw["max_requests"]).strip()
@@ -763,7 +763,7 @@ def list_profile_entries(profiles_dir: Path) -> list[ProfileIndexEntry]:
                 details["dataset_type"] = str(aiperf.get("dataset_type", ""))
             else:
                 details["rate_type"] = str(
-                    guidellm.get("rate_type", spec.get("rate_type", ""))
+                    guidellm.get("rate_type", spec.get("rate_type", "")) or ""
                 )
             entries.append(
                 ProfileIndexEntry(
