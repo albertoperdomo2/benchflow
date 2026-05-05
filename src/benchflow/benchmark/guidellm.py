@@ -111,6 +111,7 @@ def run_benchmark(
     rate_values = _join_optional_rates(guidellm.rates)
     rate_type = guidellm.rate_type if guidellm.rate_type else None
     data_samples = guidellm.data_samples
+    warmup = guidellm.warmup
     if output_dir is not None:
         benchmark_env["GUIDELLM_OUTPUT_DIR"] = str(output_dir)
     step(f"Preparing benchmark run for {plan.model.name}")
@@ -144,6 +145,7 @@ def run_benchmark(
                     profile=guidellm.profile,
                     rate_type=rate_type,
                     data_samples=data_samples,
+                    warmup=warmup,
                     data=guidellm.data,
                     max_seconds=guidellm.max_seconds,
                     max_requests=guidellm.max_requests,
@@ -173,6 +175,7 @@ def run_benchmark(
                     profile=guidellm.profile,
                     rate_type=rate_type,
                     data_samples=data_samples,
+                    warmup=warmup,
                     data=guidellm.data,
                     max_seconds=guidellm.max_seconds,
                     max_requests=guidellm.max_requests,

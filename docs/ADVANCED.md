@@ -599,6 +599,7 @@ spec:
     request_type: "" # optional; if empty BenchFlow defers to GuideLLM's internal default
     profile: poisson # optional; when set, BenchFlow passes --profile poisson
     data_samples: 750 # optional; when set, BenchFlow passes --data-samples 750
+    warmup: 10 # optional; when set, BenchFlow passes --warmup 10
     data: prompt_tokens=1000,output_tokens=1000 # no CLI override today
     max_seconds: 600 # overridden by spec.overrides.benchmark.max_seconds
     max_requests: null # overridden by spec.overrides.benchmark.max_requests

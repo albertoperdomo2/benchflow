@@ -363,6 +363,7 @@ class GuidellmBenchmarkSpec:
     rate_type: str | None = None
     rates: list[int] | None = None
     data_samples: int | None = None
+    warmup: Any | None = None
     data: str = "prompt_tokens=1000,output_tokens=1000"
     max_seconds: int | None = None
     max_requests: str | None = None

@@ -90,6 +90,8 @@ NON_DATA_PROFILE_PARAMS = {
     "rate_type",
     "rates",
     "tp",
+    "data_samples",
+    "warmup",
     "replicas",
     "prefill_replicas",
     "decode_replicas",
@@ -560,6 +562,7 @@ def run_guidellm_cli(
     profile: str | None = None,
     rate_type: str | None = None,
     data_samples: int | None = None,
+    warmup: str | None = None,
     data: str = None,
     max_seconds=None,
     max_requests=None,
@@ -593,6 +596,8 @@ def run_guidellm_cli(
         cmd.extend(["--rate-type", rate_type])
     if data_samples is not None:
         cmd.extend(["--data-samples", str(data_samples)])
+    if warmup is not None and str(warmup).strip():
+        cmd.extend(["--warmup", str(warmup)])
     cmd.extend(["--backend-args", '{"timeout": 600}'])
     if target.startswith("https://"):
         # cmd.extend(["--backend-kwargs", '{"verify": false}'])
@@ -745,6 +750,7 @@ def _run_and_process_benchmark(
     profile: str | None,
     rate_type: str | None,
     data_samples: int | None,
+    warmup: str | None,
     data: str,
     max_seconds,
     max_requests,
@@ -764,6 +770,7 @@ def _run_and_process_benchmark(
         profile=profile,
         rate_type=rate_type,
         data_samples=data_samples,
+        warmup=warmup,
         data=data,
         max_seconds=max_seconds,
         max_requests=max_requests,
@@ -796,6 +803,7 @@ def run_benchmark_without_mlflow(
     profile: str | None = None,
     rate_type: str | None = None,
     data_samples: int | None = None,
+    warmup: str | None = None,
     data: str = None,
     max_seconds=None,
     max_requests=None,
@@ -863,6 +871,7 @@ def run_benchmark_without_mlflow(
                 profile=profile,
                 rate_type=rate_type,
                 data_samples=data_samples,
+                warmup=warmup,
                 data=parsed_data,
                 max_seconds=parsed_max_seconds,
                 max_requests=parsed_max_requests,
@@ -905,6 +914,7 @@ def run_benchmark_without_mlflow(
         profile=profile,
         rate_type=rate_type,
         data_samples=data_samples,
+        warmup=warmup,
         data=data,
         max_seconds=max_seconds,
         max_requests=max_requests,
@@ -932,6 +942,7 @@ def run_benchmark_with_mlflow(
     profile: str | None = None,
     rate_type: str | None = None,
     data_samples: int | None = None,
+    warmup: str | None = None,
     data: str = None,
     max_seconds=None,
     max_requests=None,
@@ -999,6 +1010,8 @@ def run_benchmark_with_mlflow(
                 params["profile"] = profile
             if data_samples is not None:
                 params["data_samples"] = data_samples
+            if warmup is not None:
+                params["warmup"] = warmup
             if data:
                 params.update(_parse_data_profile_config(data))
             if max_seconds is not None:
@@ -1092,6 +1105,7 @@ def run_benchmark_with_mlflow(
                             profile=profile,
                             rate_type=rate_type,
                             data_samples=data_samples,
+                            warmup=warmup,
                             data=parsed_data,
                             max_seconds=parsed_max_seconds,
                             max_requests=parsed_max_requests,
@@ -1197,6 +1211,7 @@ def run_benchmark_with_mlflow(
                     profile=profile,
                     rate_type=rate_type,
                     data_samples=data_samples,
+                    warmup=warmup,
                     data=data,
                     max_seconds=max_seconds,
                     max_requests=max_requests,
@@ -1882,6 +1897,7 @@ def _run_benchmark_mode(
     backend_type: str,
     rate_type: str | None,
     data_samples: int | None,
+    warmup: str | None,
     rate: str | None,
     data: str | None,
     max_seconds: str | None,
@@ -1917,6 +1933,7 @@ def _run_benchmark_mode(
                 backend_type=backend_type,
                 rate_type=rate_type,
                 data_samples=data_samples,
+                warmup=warmup,
                 data=data,
                 profile=profile,
                 max_seconds=max_seconds,
@@ -1944,6 +1961,7 @@ def _run_benchmark_mode(
             backend_type=backend_type,
             rate_type=rate_type,
             data_samples=data_samples,
+            warmup=warmup,
             data=data,
             profile=profile,
             max_seconds=max_seconds,
@@ -1996,6 +2014,11 @@ def _run_benchmark_mode(
     "--data-samples",
     type=int,
     help="Limit the number of data samples used by GuideLLM.",
+)
+@click.option(
+    "--warmup",
+    type=str,
+    help=('GuideLLM warmup value, for example 10 or {"value":30,"mode":"duration"}.'),
 )
 @click.option(
     "--data",
@@ -2110,6 +2133,7 @@ def cli(
     backend_type: str,
     rate_type: str,
     data_samples: int | None,
+    warmup: str | None,
     rate: str | None,
     data: str | None,
     max_seconds: str | None,
@@ -2163,6 +2187,7 @@ def cli(
         backend_type=backend_type,
         rate_type=rate_type,
         data_samples=data_samples,
+        warmup=warmup,
         rate=rate,
         data=data,
         max_seconds=max_seconds,
