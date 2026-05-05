@@ -592,7 +592,7 @@ def run_guidellm_cli(
         cmd.extend(["--backend-args", '{"verify": false, "timeout": 600}'])
     if data:
         cmd.extend(["--data", data])
-    if max_seconds:
+    if max_seconds is not None:
         cmd.extend(["--max-seconds", str(max_seconds)])
     if max_requests:
         cmd.extend(["--max-requests", str(max_requests)])
@@ -978,7 +978,7 @@ def run_benchmark_with_mlflow(
                 params["request_type"] = request_type
             if data:
                 params.update(_parse_data_profile_config(data))
-            if max_seconds:
+            if max_seconds is not None:
                 params["max_seconds"] = max_seconds
             if max_requests:
                 params["max_requests"] = max_requests
@@ -1038,7 +1038,7 @@ def run_benchmark_with_mlflow(
                             )
 
                         parsed_max_seconds = None
-                        if max_seconds:
+                        if max_seconds is not None:
                             parsed_max_seconds = int(
                                 parse_multiturn_expression(
                                     str(max_seconds), concurrency

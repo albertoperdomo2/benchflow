@@ -241,13 +241,13 @@ def wait_for_remote_job(
     plan: ResolvedRunPlan,
     *,
     job_name: str,
-    timeout_seconds: int = 3600,
+    timeout_seconds: int | None = 3600,
 ) -> RemoteJobResult:
     kubectl_cmd = require_any_command("oc", "kubectl")
-    deadline = time.time() + timeout_seconds
+    deadline = time.time() + timeout_seconds if timeout_seconds is not None else None
     last_pod_name = ""
     with use_kubeconfig(plan.target_cluster.kubeconfig):
-        while time.time() < deadline:
+        while deadline is None or time.time() < deadline:
             payload = run_json_command(
                 [
                     kubectl_cmd,
@@ -515,7 +515,7 @@ def run_remote_job(
     env: dict[str, str] | None = None,
     volume_mounts: list[dict[str, Any]] | None = None,
     volumes: list[dict[str, Any]] | None = None,
-    timeout_seconds: int = 3600,
+    timeout_seconds: int | None = 3600,
     mount_results_pvc: bool = False,
 ) -> RemoteJobResult:
     if (args is None) == (args_builder is None):

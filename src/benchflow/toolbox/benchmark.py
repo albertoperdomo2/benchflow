@@ -129,7 +129,7 @@ def run_plan_benchmark(
                             for item in ("--tag", f"{key}={value}")
                         ],
                     ],
-                    timeout_seconds=max(plan.benchmark.max_seconds + 900, 7200),
+                    timeout_seconds=None,
                     mount_results_pvc=True,
                 )
             except RemoteJobFailed as exc:

@@ -236,12 +236,20 @@ class OverrideScaleSpec:
 
 @dataclass(slots=True)
 class OverrideRuntimeSpec:
-    vllm_args: list[str] = field(default_factory=list)
+    extra_vllm_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     node_selector: dict[str, str] | None = None
     affinity: dict[str, Any] | None = None
     tolerations: list[dict[str, Any]] | None = None
     resources: "RuntimeResourcesSpec | None" = None
+
+    @property
+    def vllm_args(self) -> list[str]:
+        return self.extra_vllm_args
+
+    @vllm_args.setter
+    def vllm_args(self, value: list[str]) -> None:
+        self.extra_vllm_args = value
 
 
 @dataclass(slots=True)
@@ -363,7 +371,7 @@ class GuidellmBenchmarkSpec:
     rate_type: str | None = None
     rates: list[int] | None = None
     data: str = "prompt_tokens=1000,output_tokens=1000"
-    max_seconds: int = 600
+    max_seconds: int | None = None
     max_requests: str | None = None
 
 
@@ -429,7 +437,7 @@ class BenchmarkProfileSpec:
         return self.guidellm.data
 
     @property
-    def max_seconds(self) -> int:
+    def max_seconds(self) -> int | None:
         return (
             self.aiperf.max_seconds
             if self.tool == "aiperf"
@@ -437,7 +445,7 @@ class BenchmarkProfileSpec:
         )
 
     @max_seconds.setter
-    def max_seconds(self, value: int) -> None:
+    def max_seconds(self, value: int | None) -> None:
         if self.tool == "aiperf":
             self.aiperf.max_seconds = value
         else:

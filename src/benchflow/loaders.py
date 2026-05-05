@@ -253,7 +253,15 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
             ),
         ),
         runtime=OverrideRuntimeSpec(
-            vllm_args=[str(item) for item in (runtime.get("vllm_args") or [])],
+            extra_vllm_args=[
+                str(item)
+                for item in (
+                    runtime.get("extra_vllm_args")
+                    if "extra_vllm_args" in runtime
+                    else runtime.get("vllm_args")
+                )
+                or []
+            ],
             env={
                 str(key): str(value)
                 for key, value in (runtime.get("env") or {}).items()
@@ -467,7 +475,9 @@ def _guidellm_benchmark_from_dict(raw: dict[str, Any]) -> GuidellmBenchmarkSpec:
         rate_type=_nonempty_string(raw.get("rate_type"), "spec.guidellm.rate_type"),
         rates=_int_list(raw.get("rates"), "spec.guidellm.rates"),
         data=str(raw.get("data", "prompt_tokens=1000,output_tokens=1000")),
-        max_seconds=int(raw.get("max_seconds", 600)),
+        max_seconds=_optional_positive_int(
+            raw.get("max_seconds"), "spec.guidellm.max_seconds"
+        ),
         max_requests=str(raw["max_requests"]).strip()
         if raw.get("max_requests") is not None
         else None,
