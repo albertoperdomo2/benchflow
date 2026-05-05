@@ -99,7 +99,7 @@ class BootstrapOptions:
     target_kubeconfig: str | None = None
     benchflow_image: str = DEFAULT_CONTROLLER_IMAGE
     models_storage_access_mode: str = "ReadWriteOnce"
-    models_storage_size: str = "250Gi"
+    models_storage_size: str = "500Gi"
     models_storage_class: str | None = None
     results_storage_size: str = "20Gi"
     results_storage_class: str | None = None

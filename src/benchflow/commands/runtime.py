@@ -280,7 +280,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         target_kubeconfig=target_kubeconfig,
         benchflow_image=benchflow_image,
         models_storage_class=args.models_storage_class,
-        models_storage_size=args.models_size or "250Gi",
+        models_storage_size=args.models_size or "500Gi",
         models_storage_access_mode=args.models_access_mode or "ReadWriteOnce",
         results_storage_class=args.results_storage_class,
         results_storage_size=args.results_size or "20Gi",
