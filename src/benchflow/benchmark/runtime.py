@@ -2002,8 +2002,6 @@ def _run_benchmark_mode(
 )
 @click.option(
     "--rate-type",
-    default="concurrent",
-    show_default=True,
     help="Rate type.",
 )
 @click.option(
@@ -2131,7 +2129,7 @@ def cli(
     target: str | None,
     model: str | None,
     backend_type: str,
-    rate_type: str,
+    rate_type: str | None,
     data_samples: int | None,
     warmup: str | None,
     rate: str | None,

@@ -593,7 +593,7 @@ spec:
   tool: guidellm # supported values: guidellm, aiperf
   guidellm:
     backend_type: openai_http # no CLI override today
-    rate_type: concurrent # no CLI override
+    rate_type: concurrent # optional; when omitted BenchFlow does not pass --rate-type
     rates:
       - 1 # overridden by spec.overrides.benchmark.rates
     request_type: "" # optional; if empty BenchFlow defers to GuideLLM's internal default
