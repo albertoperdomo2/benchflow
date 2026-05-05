@@ -253,15 +253,6 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
             ),
         ),
         runtime=OverrideRuntimeSpec(
-            extra_vllm_args=[
-                str(item)
-                for item in (
-                    runtime.get("extra_vllm_args")
-                    if "extra_vllm_args" in runtime
-                    else runtime.get("vllm_args")
-                )
-                or []
-            ],
             env={
                 str(key): str(value)
                 for key, value in (runtime.get("env") or {}).items()
@@ -472,6 +463,7 @@ def _guidellm_benchmark_from_dict(raw: dict[str, Any]) -> GuidellmBenchmarkSpec:
     return GuidellmBenchmarkSpec(
         backend_type=str(raw.get("backend_type", "openai_http")),
         request_type=str(raw.get("request_type", "") or "").strip(),
+        profile=_nonempty_string(raw.get("profile"), "spec.guidellm.profile"),
         rate_type=_nonempty_string(raw.get("rate_type"), "spec.guidellm.rate_type"),
         rates=_int_list(raw.get("rates"), "spec.guidellm.rates"),
         data=str(raw.get("data", "prompt_tokens=1000,output_tokens=1000")),

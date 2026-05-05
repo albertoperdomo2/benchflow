@@ -220,7 +220,6 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
         getattr(args, "llmd_repo_ref", None), "--llmd-repo-ref"
     )
     cli_env = parse_mapping(getattr(args, "env", None), "--env")
-    cli_vllm_args = [str(item) for item in (getattr(args, "vllm_arg", None) or [])]
     runtime_resources = base_experiment.spec.overrides.runtime.resources
     runtime_cpu_request = getattr(args, "runtime_cpu_request", None)
     runtime_cpu_limit = getattr(args, "runtime_cpu_limit", None)
@@ -321,10 +320,6 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             ),
         ),
         runtime=OverrideRuntimeSpec(
-            vllm_args=[
-                *base_experiment.spec.overrides.runtime.vllm_args,
-                *cli_vllm_args,
-            ],
             env={
                 **base_experiment.spec.overrides.runtime.env,
                 **cli_env,
@@ -608,11 +603,6 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
             type=int,
             multiple=True,
             help="Override tensor parallelism. Repeat to build a matrix axis.",
-        ),
-        click.option(
-            "--vllm-arg",
-            multiple=True,
-            help="Append one vLLM argument to the profile defaults. Repeat as needed.",
         ),
         click.option(
             "--env",

@@ -176,40 +176,23 @@ def _strip_max_model_len(
 def _resolve_vllm_args(
     *,
     deployment_args: list[str],
-    override_args: list[str],
     benchmark_min_max_model_len: int | None,
 ) -> list[str]:
     base_args, deployment_max_model_len = _strip_max_model_len(
         deployment_args,
         field_name="deployment runtime max-model-len",
     )
-    extra_args, override_max_model_len = _strip_max_model_len(
-        override_args,
-        field_name="spec.overrides.runtime.vllm_args max-model-len",
-    )
-
-    if (
-        override_max_model_len is not None
-        and benchmark_min_max_model_len is not None
-        and override_max_model_len < benchmark_min_max_model_len
-    ):
-        raise ValidationError(
-            "spec.overrides.runtime.vllm_args sets --max-model-len below "
-            "benchmark requirements.min_max_model_len"
-        )
-
     candidates = [
         value
         for value in (
             deployment_max_model_len,
             benchmark_min_max_model_len,
-            override_max_model_len,
         )
         if value is not None
     ]
     resolved_max_model_len = max(candidates) if candidates else None
 
-    resolved_args = [*base_args, *extra_args]
+    resolved_args = list(base_args)
     if resolved_max_model_len is not None:
         resolved_args.append(f"{_MAX_MODEL_LEN_FLAG}={resolved_max_model_len}")
     return resolved_args
@@ -288,7 +271,6 @@ def resolve_run_plan(
         ),
         vllm_args=_resolve_vllm_args(
             deployment_args=deployment_profile.spec.runtime.vllm_args,
-            override_args=experiment.spec.overrides.runtime.vllm_args,
             benchmark_min_max_model_len=benchmark_profile.spec.requirements.min_max_model_len,
         ),
         env={

@@ -219,7 +219,6 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                             tensor_parallelism=tensor_parallelism,
                         ),
                         runtime=OverrideRuntimeSpec(
-                            vllm_args=list(experiment.spec.overrides.runtime.vllm_args),
                             env=dict(experiment.spec.overrides.runtime.env),
                             node_selector=(
                                 dict(experiment.spec.overrides.runtime.node_selector)

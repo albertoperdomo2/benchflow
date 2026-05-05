@@ -86,6 +86,7 @@ NON_DATA_PROFILE_PARAMS = {
     "model",
     "backend_type",
     "request_type",
+    "profile",
     "rate_type",
     "rates",
     "tp",
@@ -556,6 +557,7 @@ def run_guidellm_cli(
     rate: str | None,
     backend_type: str = "openai_http",
     request_type: str | None = None,
+    profile: str | None = None,
     rate_type: str | None = None,
     data: str = None,
     max_seconds=None,
@@ -584,6 +586,8 @@ def run_guidellm_cli(
         cmd.extend(["--rate", str(rate)])
     if request_type:
         cmd.extend(["--request-type", request_type])
+    if profile:
+        cmd.extend(["--profile", profile])
     if rate_type:
         cmd.extend(["--rate-type", rate_type])
     cmd.extend(["--backend-args", '{"timeout": 600}'])
@@ -735,6 +739,7 @@ def _run_and_process_benchmark(
     rate: str | None,
     backend_type: str,
     request_type: str | None,
+    profile: str | None,
     rate_type: str | None,
     data: str,
     max_seconds,
@@ -752,6 +757,7 @@ def _run_and_process_benchmark(
         rate=rate,
         backend_type=backend_type,
         request_type=request_type,
+        profile=profile,
         rate_type=rate_type,
         data=data,
         max_seconds=max_seconds,
@@ -782,6 +788,7 @@ def run_benchmark_without_mlflow(
     rate: str | None,
     backend_type: str = "openai_http",
     request_type: str | None = None,
+    profile: str | None = None,
     rate_type: str | None = None,
     data: str = None,
     max_seconds=None,
@@ -847,6 +854,7 @@ def run_benchmark_without_mlflow(
                 rate=concurrency_str,
                 backend_type=backend_type,
                 request_type=request_type,
+                profile=profile,
                 rate_type=rate_type,
                 data=parsed_data,
                 max_seconds=parsed_max_seconds,
@@ -887,6 +895,7 @@ def run_benchmark_without_mlflow(
         rate=rate,
         backend_type=backend_type,
         request_type=request_type,
+        profile=profile,
         rate_type=rate_type,
         data=data,
         max_seconds=max_seconds,
@@ -912,6 +921,7 @@ def run_benchmark_with_mlflow(
     rate: str | None,
     backend_type: str = "openai_http",
     request_type: str | None = None,
+    profile: str | None = None,
     rate_type: str | None = None,
     data: str = None,
     max_seconds=None,
@@ -976,6 +986,8 @@ def run_benchmark_with_mlflow(
                 params["rates"] = rate
             if request_type:
                 params["request_type"] = request_type
+            if profile:
+                params["profile"] = profile
             if data:
                 params.update(_parse_data_profile_config(data))
             if max_seconds is not None:
@@ -1066,6 +1078,7 @@ def run_benchmark_with_mlflow(
                             rate=concurrency_str,
                             backend_type=backend_type,
                             request_type=request_type,
+                            profile=profile,
                             rate_type=rate_type,
                             data=parsed_data,
                             max_seconds=parsed_max_seconds,
@@ -1169,6 +1182,7 @@ def run_benchmark_with_mlflow(
                     rate=rate,
                     backend_type=backend_type,
                     request_type=request_type,
+                    profile=profile,
                     rate_type=rate_type,
                     data=data,
                     max_seconds=max_seconds,
@@ -1860,6 +1874,7 @@ def _run_benchmark_mode(
     max_requests: str | None,
     processor: str | None,
     accelerator: str | None,
+    profile: str | None,
     version: str | None,
     tp: int,
     runtime_args: str,
@@ -1888,6 +1903,7 @@ def _run_benchmark_mode(
                 backend_type=backend_type,
                 rate_type=rate_type,
                 data=data,
+                profile=profile,
                 max_seconds=max_seconds,
                 max_requests=max_requests,
                 processor=processor,
@@ -1913,6 +1929,7 @@ def _run_benchmark_mode(
             backend_type=backend_type,
             rate_type=rate_type,
             data=data,
+            profile=profile,
             max_seconds=max_seconds,
             max_requests=max_requests,
             processor=processor,
@@ -2077,6 +2094,7 @@ def cli(
     max_requests: str | None,
     processor: str | None,
     accelerator: str | None,
+    profile: str | None,
     version: str | None,
     tp: int,
     runtime_args: str,
@@ -2128,6 +2146,7 @@ def cli(
         max_requests=max_requests,
         processor=processor,
         accelerator=accelerator,
+        profile=profile,
         version=version,
         tp=tp,
         runtime_args=runtime_args,

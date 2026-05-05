@@ -367,7 +367,7 @@ spec:
       replicas: 2 # --replicas, integer or list for matrix
       tensor_parallelism: 4 # --tp, integer or list for matrix
     runtime:
-      vllm_args: # --vllm-arg, repeat to append more arguments
+      vllm_args:
         - --max-num-seqs=256
       env: # --env KEY=VALUE, repeat to set multiple variables
         LOG_LEVEL: DEBUG
@@ -403,7 +403,7 @@ Override semantics:
 
 - profile values remain the base
 - `images.runtime`, `images.scheduler`, `scale.replicas`, `scale.tensor_parallelism`, and `llm_d.repo_ref` replace the profile value
-- `runtime.vllm_args` appends to the profile vLLM args
+- `runtime.vllm_args` is the base profile vLLM args
 - `runtime.env` merges by key and override values win on collisions
 - `runtime.resources.requests` and `runtime.resources.limits` merge by resource name and override values win; CPU request and limit can also be set with `--runtime-cpu-request` and `--runtime-cpu-limit`
 - `runtime.node_selector`, `runtime.affinity`, and `runtime.tolerations` replace the profile value when set in `spec.overrides.runtime`
@@ -467,7 +467,7 @@ spec:
     replicas: 1 # overridden by spec.overrides.scale.replicas or --replicas
     tensor_parallelism: 1 # overridden by spec.overrides.scale.tensor_parallelism or --tp
     vllm_args:
-      - --max-model-len=8192 # appended to by spec.overrides.runtime.vllm_args or --vllm-arg
+      - --max-model-len=8192 # base guide args for the deployment profile
     env:
       VLLM_LOGGING_LEVEL: INFO # merged with spec.overrides.runtime.env or --env
     resources:
@@ -751,7 +751,6 @@ bflow experiment run \
   --scheduler-image ghcr.io/acme/router:dev \
   --replicas 2 \
   --tp 4 \
-  --vllm-arg --max-num-seqs=256 \
   --env LOG_LEVEL=DEBUG \
   --runtime-cpu-request 16 \
   --runtime-cpu-limit 32 \

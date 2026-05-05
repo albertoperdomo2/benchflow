@@ -236,20 +236,11 @@ class OverrideScaleSpec:
 
 @dataclass(slots=True)
 class OverrideRuntimeSpec:
-    extra_vllm_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     node_selector: dict[str, str] | None = None
     affinity: dict[str, Any] | None = None
     tolerations: list[dict[str, Any]] | None = None
     resources: "RuntimeResourcesSpec | None" = None
-
-    @property
-    def vllm_args(self) -> list[str]:
-        return self.extra_vllm_args
-
-    @vllm_args.setter
-    def vllm_args(self, value: list[str]) -> None:
-        self.extra_vllm_args = value
 
 
 @dataclass(slots=True)
@@ -368,6 +359,7 @@ class BenchmarkRequirementsSpec:
 class GuidellmBenchmarkSpec:
     backend_type: str = "openai_http"
     request_type: str = ""
+    profile: str | None = None
     rate_type: str | None = None
     rates: list[int] | None = None
     data: str = "prompt_tokens=1000,output_tokens=1000"
