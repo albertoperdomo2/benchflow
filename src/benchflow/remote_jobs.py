@@ -388,8 +388,10 @@ def _copy_remote_results_directory_with_rsync(
         run_command(
             [
                 "rsync",
-                "-a",
-                "-z",
+                "-rltz",
+                "--no-perms",
+                "--no-owner",
+                "--no-group",
                 "--blocking-io",
                 "--omit-dir-times",
                 f"--rsh=oc rsh -n {plan.deployment.namespace} -c main",
@@ -425,6 +427,7 @@ def copy_remote_results_directory(
     local_dir: Path,
     cleanup: bool = True,
 ) -> None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
     reader_pod = _generate_remote_job_name(plan, "reader")
     local_dir.mkdir(parents=True, exist_ok=True)
     _create_reader_pod(plan, pod_name=reader_pod)
