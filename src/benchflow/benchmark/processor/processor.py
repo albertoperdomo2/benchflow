@@ -34,6 +34,8 @@ DATA_PROFILE_PREFERRED_ORDER = [
     "prefix_count",
 ]
 
+THROUGHPUT_TOTAL_LEGEND = "legend20"
+
 
 def _get_nested(d: Dict[str, Any], *keys: str, default: Any = None) -> Any:
     """Safely get a nested value from a dictionary."""
@@ -183,12 +185,59 @@ def _extract_intended_concurrency(
     return profile_rate[0] if profile_rate else None
 
 
+def _is_rate_based_benchmark(benchmark_run: Dict[str, Any]) -> bool:
+    """Return true when the GuideLLM sweep axis is request rate, not concurrency."""
+    explicit_axis = benchmark_run.get("load axis")
+    if explicit_axis is not None:
+        return str(explicit_axis).strip().upper() == "RPS"
+
+    strategy = _get_nested(benchmark_run, "config", "strategy", default={})
+    profile = _get_nested(benchmark_run, "config", "profile", default={})
+    args_profile = _get_nested(benchmark_run, "args", "profile")
+    if args_profile is None:
+        args_profile = benchmark_run.get("profile")
+
+    rate_strategy_types = {
+        "poisson",
+        "fixed",
+        "fixed_rate",
+        "fixed-rate",
+        "fixed_schedule",
+        "fixed-schedule",
+    }
+    observed_types: set[str] = set()
+    for raw_value in (
+        strategy.get("type_") if isinstance(strategy, dict) else None,
+        profile.get("type_") if isinstance(profile, dict) else None,
+        profile.get("strategy_type") if isinstance(profile, dict) else None,
+        args_profile,
+    ):
+        if raw_value is not None:
+            observed_types.add(str(raw_value).strip().lower())
+
+    if observed_types & rate_strategy_types:
+        return True
+
+    strategy_types = profile.get("strategy_types") if isinstance(profile, dict) else []
+    if isinstance(strategy_types, list) and strategy_types:
+        normalized = {str(item).strip().lower() for item in strategy_types}
+        if normalized and normalized <= rate_strategy_types:
+            return True
+
+    return False
+
+
 def _benchmark_axis_label(benchmark_run: Dict[str, Any], benchmark_index: int) -> str:
     """Choose the report x-axis label based on the benchmark sweep shape."""
-    strategy_type = _get_nested(benchmark_run, "config", "strategy", "type_")
-    profile_type = _get_nested(benchmark_run, "config", "profile", "type_")
-    if strategy_type == "poisson" or profile_type == "poisson":
-        return "RPS"
+    return "RPS" if _is_rate_based_benchmark(benchmark_run) else "Concurrency"
+
+
+def _comparison_axis_label(filtered_data: pd.DataFrame) -> str:
+    """Choose the comparison x-axis label after all runs/CSV rows are merged."""
+    if "load axis" in filtered_data.columns:
+        normalized = filtered_data["load axis"].dropna().astype(str).str.upper()
+        if (normalized == "RPS").any():
+            return "RPS"
     return "Concurrency"
 
 
@@ -288,12 +337,15 @@ def _format_configuration_label(row: pd.Series) -> str:
     )
 
 
-def _render_comparison_table(filtered_data: pd.DataFrame) -> str:
+def _render_comparison_table(
+    filtered_data: pd.DataFrame, *, axis_label: str = "Concurrency"
+) -> str:
     if filtered_data.empty:
         return ""
 
     columns = [
-        ("Throughput", "output_tok/sec"),
+        ("Output Throughput", "output_tok/sec"),
+        ("Total Throughput", "total_tok/sec"),
         ("TTFT P50 (ms)", "ttft_median"),
         ("TTFT P90 (ms)", "ttft_p90"),
         ("TTFT P99 (ms)", "ttft_p99"),
@@ -329,7 +381,7 @@ def _render_comparison_table(filtered_data: pd.DataFrame) -> str:
     for concurrency, group_data in table_df.groupby("intended concurrency", sort=True):
         table_rows.append(
             "<tr class='benchflow-report-table-group'>"
-            f"<th colspan='{len(columns) + 1}'>Concurrency {html.escape(_format_table_number(concurrency))}</th>"
+            f"<th colspan='{len(columns) + 1}'>{html.escape(axis_label)} {html.escape(_format_table_number(concurrency))}</th>"
             "</tr>"
         )
         for _, row in group_data.iterrows():
@@ -345,7 +397,7 @@ def _render_comparison_table(filtered_data: pd.DataFrame) -> str:
 <section class="benchflow-report-table-section">
   <details class="benchflow-report-table-details">
     <summary>Raw Comparison Table</summary>
-    <p>Exact benchmark metrics grouped by intended concurrency.</p>
+    <p>Exact benchmark metrics grouped by intended {html.escape(axis_label.lower())}.</p>
     <div class="benchflow-report-table-shell">
       <table class="benchflow-report-table">
         {colgroup}
@@ -633,6 +685,7 @@ class BenchmarkProcessor:
         intended_concurrency = _extract_intended_concurrency(
             benchmark_run, benchmark_index
         )
+        load_axis = _benchmark_axis_label(benchmark_run, benchmark_index)
 
         metrics = benchmark_run.get("metrics", {})
 
@@ -671,6 +724,7 @@ class BenchmarkProcessor:
             "TP": self.tp_size,
             "measured concurrency": measured_concurrency,
             "intended concurrency": intended_concurrency,
+            "load axis": load_axis,
             "measured rps": measured_rps,
             "output_tok/sec": output_tok_per_sec,
             "total_tok/sec": total_tok_per_sec,
@@ -817,6 +871,9 @@ class BenchmarkProcessor:
                         "TP": self.tp_size,
                         "replicas": self.replicas,
                         "intended concurrency": intended_concurrency,
+                        "load axis": _benchmark_axis_label(
+                            benchmark_run, benchmark_index
+                        ),
                         "ttft_ms": ttft_ms,
                     }
                 )
@@ -852,6 +909,7 @@ class BenchmarkProcessor:
             "TP",
             "measured concurrency",
             "intended concurrency",
+            "load axis",
             "measured rps",
             "output_tok/sec",
             "total_tok/sec",
@@ -1213,14 +1271,13 @@ class BenchmarkProcessor:
         model_config = self.config["models"][0]
         colors = self.config["styling"]["colors"]
         markers = self.config["styling"]["markers"]
-        source_df = (
-            self.combined_df if self.combined_df is not None else self.new_data_df
+        filtered_data = self.filter_data_for_config(all_data, model_config).copy()
+        axis_label = _comparison_axis_label(filtered_data)
+        efficiency_axis_label = (
+            "Output tok/s/RPS" if axis_label == "RPS" else "Output tok/s/concurrency"
         )
-        if source_df is not None and not source_df.empty:
-            axis_label = _benchmark_axis_label(source_df.iloc[0].to_dict(), 0)
-        else:
-            axis_label = "Concurrency"
         throughput_title = "Throughput vs RPS" if axis_label == "RPS" else "Throughput"
+        throughput_subtitle = "Higher is better; solid=output, dashed=total"
 
         has_ttft_distribution = (
             self.ttft_distribution_df is not None
@@ -1240,10 +1297,10 @@ class BenchmarkProcessor:
                 [{}, {}, {}],
             ]
             subplot_titles = [
-                f"<b>{throughput_title}</b><br><sub>Higher is better</sub>",
+                f"<b>{throughput_title}</b><br><sub>{throughput_subtitle}</sub>",
                 "<b>Throughput Efficiency by GPU</b><br><sub>Higher is better</sub>",
                 "<b>Token Throughput per GPU vs End-to-End Latency</b><br><sub>Higher throughput, lower latency</sub>",
-                "<b>TTFT Distribution by Concurrency</b><br><sub>Lower is better</sub>",
+                f"<b>TTFT Distribution by {axis_label}</b><br><sub>Lower is better</sub>",
                 "<b>TTFT P1</b><br><sub>Lower is better</sub>",
                 "<b>TTFT P50</b><br><sub>Lower is better</sub>",
                 "<b>TTFT P90</b><br><sub>Lower is better</sub>",
@@ -1273,7 +1330,7 @@ class BenchmarkProcessor:
                 [{}, {}, {}],
             ]
             subplot_titles = [
-                f"<b>{throughput_title}</b><br><sub>Higher is better</sub>",
+                f"<b>{throughput_title}</b><br><sub>{throughput_subtitle}</sub>",
                 "<b>Throughput Efficiency by GPU</b><br><sub>Higher is better</sub>",
                 "<b>Token Throughput per GPU vs End-to-End Latency</b><br><sub>Higher throughput, lower latency</sub>",
                 "<b>TTFT P1</b><br><sub>Lower is better</sub>",
@@ -1305,10 +1362,10 @@ class BenchmarkProcessor:
         )
 
         # Filter data for the model
-        filtered_data = self.filter_data_for_config(all_data, model_config).copy()
         if not filtered_data.empty:
             for column in [
                 "output_tok/sec",
+                "total_tok/sec",
                 "intended concurrency",
                 "TP",
                 "replicas",
@@ -1349,6 +1406,7 @@ class BenchmarkProcessor:
         axis_tick_font = {"size": 12}
         legend_font = {"size": 12}
         legend_title_font = {"size": 12}
+        total_throughput_legend_added = False
 
         if has_ttft_distribution:
             plot_positions = [
@@ -1427,6 +1485,32 @@ class BenchmarkProcessor:
                     row=row,
                     col=col,
                 )
+                if (
+                    metric_key == "output_tok/sec"
+                    and "total_tok/sec" in group_data.columns
+                    and group_data["total_tok/sec"].notna().any()
+                ):
+                    fig.add_trace(
+                        go.Scatter(
+                            x=group_data["intended concurrency"],
+                            y=group_data["total_tok/sec"],
+                            mode="lines+markers",
+                            name="Total throughput",
+                            legend=THROUGHPUT_TOTAL_LEGEND,
+                            legendgroup="__total_throughput__",
+                            line=dict(color=color, width=2, dash="dash"),
+                            marker=dict(
+                                size=8,
+                                symbol=marker,
+                                color="white",
+                                line=dict(width=1.5, color=color),
+                            ),
+                            showlegend=not total_throughput_legend_added,
+                        ),
+                        row=row,
+                        col=col,
+                    )
+                    total_throughput_legend_added = True
 
         if not filtered_data.empty:
             efficiency_data = filtered_data.dropna(
@@ -1550,11 +1634,11 @@ class BenchmarkProcessor:
 
         if has_ttft_distribution:
             axis_labels = [
-                (1, 1, "Concurrency", "Output tok/s"),
+                (1, 1, axis_label, "Token throughput (tok/s)"),
                 (
                     2,
                     1,
-                    "Interactivity (toks/s/concurrency)",
+                    efficiency_axis_label,
                     "Output throughput per GPU (toks/s/gpu)",
                 ),
                 (
@@ -1563,29 +1647,29 @@ class BenchmarkProcessor:
                     "End-to-end latency (s)",
                     "Token throughput per GPU (toks/s/gpu)",
                 ),
-                (4, 1, "Concurrency", "TTFT (ms)"),
-                (5, 1, "Concurrency", "P1 (ms)"),
-                (5, 2, "Concurrency", "P50 (ms)"),
-                (5, 3, "Concurrency", "P90 (ms)"),
-                (6, 1, "Concurrency", "P99 (ms)"),
-                (6, 2, "Concurrency", "P99/P50 Ratio"),
-                (7, 1, "Concurrency", "P50 (ms)"),
-                (7, 2, "Concurrency", "P90 (ms)"),
-                (7, 3, "Concurrency", "P99 (ms)"),
-                (8, 1, "Concurrency", "P50 (ms)"),
-                (8, 2, "Concurrency", "P90 (ms)"),
-                (8, 3, "Concurrency", "P99 (ms)"),
-                (9, 1, "Concurrency", "P50 (s)"),
-                (9, 2, "Concurrency", "P90 (s)"),
-                (9, 3, "Concurrency", "P99 (s)"),
+                (4, 1, axis_label, "TTFT (ms)"),
+                (5, 1, axis_label, "P1 (ms)"),
+                (5, 2, axis_label, "P50 (ms)"),
+                (5, 3, axis_label, "P90 (ms)"),
+                (6, 1, axis_label, "P99 (ms)"),
+                (6, 2, axis_label, "P99/P50 Ratio"),
+                (7, 1, axis_label, "P50 (ms)"),
+                (7, 2, axis_label, "P90 (ms)"),
+                (7, 3, axis_label, "P99 (ms)"),
+                (8, 1, axis_label, "P50 (ms)"),
+                (8, 2, axis_label, "P90 (ms)"),
+                (8, 3, axis_label, "P99 (ms)"),
+                (9, 1, axis_label, "P50 (s)"),
+                (9, 2, axis_label, "P90 (s)"),
+                (9, 3, axis_label, "P99 (s)"),
             ]
         else:
             axis_labels = [
-                (1, 1, "Concurrency", "Output tok/s"),
+                (1, 1, axis_label, "Token throughput (tok/s)"),
                 (
                     2,
                     1,
-                    "Interactivity (toks/s/concurrency)",
+                    efficiency_axis_label,
                     "Output throughput per GPU (toks/s/gpu)",
                 ),
                 (
@@ -1594,20 +1678,20 @@ class BenchmarkProcessor:
                     "End-to-end latency (s)",
                     "Token throughput per GPU (toks/s/gpu)",
                 ),
-                (4, 1, "Concurrency", "P1 (ms)"),
-                (4, 2, "Concurrency", "P50 (ms)"),
-                (4, 3, "Concurrency", "P90 (ms)"),
-                (5, 1, "Concurrency", "P99 (ms)"),
-                (5, 2, "Concurrency", "P99/P50 Ratio"),
-                (6, 1, "Concurrency", "P50 (ms)"),
-                (6, 2, "Concurrency", "P90 (ms)"),
-                (6, 3, "Concurrency", "P99 (ms)"),
-                (7, 1, "Concurrency", "P50 (ms)"),
-                (7, 2, "Concurrency", "P90 (ms)"),
-                (7, 3, "Concurrency", "P99 (ms)"),
-                (8, 1, "Concurrency", "P50 (s)"),
-                (8, 2, "Concurrency", "P90 (s)"),
-                (8, 3, "Concurrency", "P99 (s)"),
+                (4, 1, axis_label, "P1 (ms)"),
+                (4, 2, axis_label, "P50 (ms)"),
+                (4, 3, axis_label, "P90 (ms)"),
+                (5, 1, axis_label, "P99 (ms)"),
+                (5, 2, axis_label, "P99/P50 Ratio"),
+                (6, 1, axis_label, "P50 (ms)"),
+                (6, 2, axis_label, "P90 (ms)"),
+                (6, 3, axis_label, "P99 (ms)"),
+                (7, 1, axis_label, "P50 (ms)"),
+                (7, 2, axis_label, "P90 (ms)"),
+                (7, 3, axis_label, "P99 (ms)"),
+                (8, 1, axis_label, "P50 (s)"),
+                (8, 2, axis_label, "P90 (s)"),
+                (8, 3, axis_label, "P99 (s)"),
             ]
 
         for row, col, x_label, y_label in axis_labels:
@@ -1653,6 +1737,26 @@ class BenchmarkProcessor:
                         bordercolor="#cbd5e1",
                         borderwidth=1,
                         bgcolor="rgba(255,255,255,0.94)",
+                        font=legend_font,
+                        title_font=legend_title_font,
+                        groupclick="togglegroup",
+                    )
+                }
+            )
+
+        if total_throughput_legend_added:
+            fig.update_layout(
+                **{
+                    THROUGHPUT_TOTAL_LEGEND: dict(
+                        title={"text": "<b>Optional</b>"},
+                        orientation="v",
+                        yanchor="top",
+                        y=_row_top(1) - 0.015,
+                        xanchor="left",
+                        x=0.012,
+                        bordercolor="#cbd5e1",
+                        borderwidth=1,
+                        bgcolor="rgba(255,255,255,0.88)",
                         font=legend_font,
                         title_font=legend_title_font,
                         groupclick="togglegroup",
@@ -1850,7 +1954,9 @@ class BenchmarkProcessor:
             include_plotlyjs=self.include_plotlyjs,
             config={"responsive": False},
         )
-        comparison_table_html = _render_comparison_table(filtered_data)
+        comparison_table_html = _render_comparison_table(
+            filtered_data, axis_label=axis_label
+        )
         full_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
