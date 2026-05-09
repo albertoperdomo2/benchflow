@@ -1017,13 +1017,20 @@ def _pods_ready(
     return total > 0 and ready == total, ready, total
 
 
-def _gateway_exists(namespace: str, release_name: str, kubectl_cmd: str) -> bool:
+def _gateway_exists(
+    namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
+) -> bool:
+    gateway_name = (
+        "llm-d-inference-gateway"
+        if recipe_layout
+        else f"infra-{release_name}-inference-gateway"
+    )
     result = run_command(
         [
             kubectl_cmd,
             "get",
             "gateway",
-            f"infra-{release_name}-inference-gateway",
+            gateway_name,
             "-n",
             namespace,
             "-o",
@@ -1081,16 +1088,32 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
             model_selector,
             kubectl_cmd,
         )
-        gateway_ready = _gateway_exists(namespace, release_name, kubectl_cmd)
-        httproute_ready = _httproute_exists(namespace, release_name, kubectl_cmd)
-        snapshot = (epp_ready_count, ms_ready_count, gateway_ready, httproute_ready)
+        gateway_ready = _gateway_exists(
+            namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
+        )
+        httproute_ready = (
+            _httproute_exists(namespace, release_name, kubectl_cmd)
+            if not recipe_layout
+            else True
+        )
+        snapshot = (
+            epp_ready_count,
+            ms_ready_count,
+            gateway_ready,
+            httproute_ready,
+        )
 
         if snapshot != last_snapshot:
+            httproute_text = (
+                "httproute present: yes"
+                if not recipe_layout
+                else "httproute present: n/a"
+            )
             detail(
                 f"EPP pods ready: {epp_ready_count}/{epp_total}, "
                 f"model-service pods ready: {ms_ready_count}/{ms_total}, "
                 f"gateway present: {'yes' if gateway_ready else 'no'}, "
-                f"httproute present: {'yes' if httproute_ready else 'no'}"
+                f"{httproute_text}"
             )
             last_snapshot = snapshot
 

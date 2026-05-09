@@ -97,16 +97,27 @@ def _release_name_for(experiment: Experiment) -> str:
 
 
 def _target_for(
-    platform: str, mode: str, release_name: str, namespace: str, gateway: str, path: str
+    platform: str,
+    mode: str,
+    release_name: str,
+    namespace: str,
+    gateway: str,
+    path: str,
+    repo_ref: str,
 ) -> TargetSpec:
     if platform == "llm-d":
         if gateway == "standalone":
             base_url = f"http://ms-{release_name}.{namespace}.svc.cluster.local:8000"
         else:
+            gateway_name = (
+                "llm-d-inference-gateway"
+                if str(repo_ref).strip() == "main"
+                else f"infra-{release_name}-inference-gateway"
+            )
             return TargetSpec(
                 discovery="gateway-status-url",
                 resource_kind="Gateway",
-                resource_name=f"infra-{release_name}-inference-gateway",
+                resource_name=gateway_name,
                 path=path,
             )
         return TargetSpec(discovery="static", base_url=base_url, path=path)
@@ -368,6 +379,7 @@ def resolve_run_plan(
             namespace=namespace,
             gateway=deployment_profile.spec.gateway,
             path=deployment_profile.spec.endpoint_path,
+            repo_ref=repo_ref,
         )
     )
 
