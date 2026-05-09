@@ -375,15 +375,17 @@ def reset_llmd_platform(
     gateway: str = "istio",
     workspace_dir: Path | None = None,
 ) -> None:
-    if gateway != "istio":
+    if gateway not in {"istio", "standalone"}:
         raise CommandError(
-            f"llm-d cleanup currently supports only gateway=istio, got {gateway}"
+            "llm-d cleanup currently supports only gateway=istio or "
+            f"gateway=standalone, got {gateway}"
         )
 
     require_command("bash")
     require_command("git")
     require_command("helm")
-    require_command("helmfile")
+    if gateway == "istio":
+        require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
     checkout_dir, created_tempdir, _repo_head = _clone_llmd_repo_source(
@@ -393,7 +395,9 @@ def reset_llmd_platform(
     )
     try:
         gateway_provider_dir = _gateway_provider_dir(checkout_dir)
-        if {"istio-base", "istiod"}.issubset(_helm_release_names("istio-system")):
+        if gateway == "istio" and {"istio-base", "istiod"}.issubset(
+            _helm_release_names("istio-system")
+        ):
             step("Removing upstream Istio before switching platforms")
             _run_istio_helmfile(gateway_provider_dir, "destroy")
         if llmd_platform_present(kubectl_cmd):
@@ -411,15 +415,17 @@ def setup_llmd(
     workspace_dir: Path | None = None,
     state_path: Path | None = None,
 ) -> dict[str, Any]:
-    if plan.deployment.gateway != "istio":
+    if plan.deployment.gateway not in {"istio", "standalone"}:
         raise CommandError(
-            f"llm-d setup currently supports only gateway=istio, got {plan.deployment.gateway}"
+            "llm-d setup currently supports only gateway=istio or "
+            f"gateway=standalone, got {plan.deployment.gateway}"
         )
 
     require_command("bash")
     require_command("git")
     require_command("helm")
-    require_command("helmfile")
+    if plan.deployment.gateway == "istio":
+        require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
     state = _empty_state(plan)
@@ -446,6 +452,10 @@ def setup_llmd(
             _run_gateway_provider_script(gateway_provider_dir, "apply")
             state["gateway_dependencies_managed"] = True
             _persist_state(state, state_path)
+
+        if plan.deployment.gateway == "standalone":
+            success("llm-d standalone platform prerequisites are ready")
+            return state
 
         step("Ensuring llm-d Istio namespace and runner RBAC")
         _ensure_namespace(kubectl_cmd, "istio-system")
@@ -517,14 +527,15 @@ def teardown_llmd(
         or (plan.deployment.gateway if plan is not None else "")
         or "istio"
     ).strip()
-    if gateway != "istio":
+    if gateway not in {"istio", "standalone"}:
         detail(f"Skipping llm-d teardown because gateway={gateway} is not managed here")
         return
 
     require_command("bash")
     require_command("git")
     require_command("helm")
-    require_command("helmfile")
+    if gateway == "istio":
+        require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
     repo_url = str(
@@ -546,7 +557,7 @@ def teardown_llmd(
     try:
         gateway_provider_dir = _gateway_provider_dir(checkout_dir)
 
-        if state.get("istio_releases_managed"):
+        if gateway == "istio" and state.get("istio_releases_managed"):
             step("Removing upstream Istio installed during llm-d setup")
             _run_istio_helmfile(gateway_provider_dir, "destroy")
 

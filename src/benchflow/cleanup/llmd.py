@@ -28,7 +28,7 @@ def _llmd_recipe_layout_from_repo_ref(repo_ref: str) -> bool:
     normalized = repo_ref.strip().lower()
     if normalized == "main":
         return True
-    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", normalized)
+    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+][a-z0-9.-]+)?", normalized)
     if match is None:
         return False
     version = tuple(int(part) for part in match.groups())

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 
 from .loaders import ProfileCatalog
@@ -96,6 +97,17 @@ def _release_name_for(experiment: Experiment) -> str:
     return f"{prefix}-{suffix}"
 
 
+def _llmd_uses_recipe_layout(repo_ref: str) -> bool:
+    normalized = str(repo_ref or "").strip().lower()
+    if normalized == "main":
+        return True
+    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+][a-z0-9.-]+)?", normalized)
+    if match is None:
+        return False
+    version = tuple(int(part) for part in match.groups())
+    return version >= (0, 6, 0)
+
+
 def _target_for(
     platform: str,
     mode: str,
@@ -107,11 +119,17 @@ def _target_for(
 ) -> TargetSpec:
     if platform == "llm-d":
         if gateway == "standalone":
-            base_url = f"http://ms-{release_name}.{namespace}.svc.cluster.local:8000"
+            service_name = (
+                f"gaie-{release_name}-epp"
+                if _llmd_uses_recipe_layout(repo_ref)
+                else f"ms-{release_name}"
+            )
+            port = 80 if _llmd_uses_recipe_layout(repo_ref) else 8000
+            base_url = f"http://{service_name}.{namespace}.svc.cluster.local:{port}"
         else:
             gateway_name = (
                 "llm-d-inference-gateway"
-                if str(repo_ref).strip() == "main"
+                if _llmd_uses_recipe_layout(repo_ref)
                 else f"infra-{release_name}-inference-gateway"
             )
             return TargetSpec(

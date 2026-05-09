@@ -1094,6 +1094,24 @@ def _gateway_exists(
     return False
 
 
+def _service_exists(namespace: str, service_name: str, kubectl_cmd: str) -> bool:
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "service",
+            service_name,
+            "-n",
+            namespace,
+            "-o",
+            "name",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def _httproute_exists(
     namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
 ) -> bool:
@@ -1121,6 +1139,7 @@ def _verify_deployment(
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
     release_name = plan.deployment.release_name
+    standalone = plan.deployment.gateway == "standalone"
     deadline = time.time() + timeout_seconds
     last_snapshot: tuple[int, int, bool, bool] | None = None
 
@@ -1147,12 +1166,18 @@ def _verify_deployment(
             model_selector,
             kubectl_cmd,
         )
-        gateway_ready = _gateway_exists(
-            namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
-        )
-        httproute_ready = _httproute_exists(
-            namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
-        )
+        if standalone:
+            gateway_ready = _service_exists(
+                namespace, _gaie_service_account_name(release_name), kubectl_cmd
+            )
+            httproute_ready = True
+        else:
+            gateway_ready = _gateway_exists(
+                namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
+            )
+            httproute_ready = _httproute_exists(
+                namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
+            )
         snapshot = (
             epp_ready_count,
             ms_ready_count,
@@ -1161,12 +1186,18 @@ def _verify_deployment(
         )
 
         if snapshot != last_snapshot:
-            httproute_text = f"httproute present: {'yes' if httproute_ready else 'no'}"
+            router_text = (
+                f"standalone service present: {'yes' if gateway_ready else 'no'}"
+                if standalone
+                else (
+                    f"gateway present: {'yes' if gateway_ready else 'no'}, "
+                    f"httproute present: {'yes' if httproute_ready else 'no'}"
+                )
+            )
             detail(
                 f"EPP pods ready: {epp_ready_count}/{epp_total}, "
                 f"model-service pods ready: {ms_ready_count}/{ms_total}, "
-                f"gateway present: {'yes' if gateway_ready else 'no'}, "
-                f"{httproute_text}"
+                f"{router_text}"
             )
             last_snapshot = snapshot
 
@@ -1194,7 +1225,6 @@ def deploy_llmd(
     verify_timeout_seconds: int = 1800,
 ) -> Path:
     require_command("helm")
-    require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
     if skip_if_exists and _release_exists(
@@ -1227,6 +1257,7 @@ def deploy_llmd(
 
     recipe_layout = _llmd_recipe_layout_available(checkout_dir)
     if recipe_layout:
+        require_command("kustomize")
         guide_name = _llmd_recipe_guide_name(plan)
         guide_dir = checkout_dir / "guides" / guide_name
         scheduler_values_file = _llmd_recipe_scheduler_values_path(checkout_dir, plan)
@@ -1236,7 +1267,7 @@ def deploy_llmd(
             raise CommandError(
                 f"expected llm-d guide file not found: {scheduler_values_file}"
             )
-        if not gateway_dir.exists():
+        if plan.deployment.gateway != "standalone" and not gateway_dir.exists():
             raise CommandError(
                 f"expected llm-d gateway directory not found: {gateway_dir}"
             )
@@ -1244,13 +1275,12 @@ def deploy_llmd(
             raise CommandError(
                 f"expected llm-d modelserver overlay not found: {overlay_dir}"
             )
-        if plan.deployment.mode == "precise-prefix-cache":
-            require_command("kustomize")
 
         step(f"Patching llm-d recipe values for release {plan.deployment.release_name}")
         detail(f"Guide directory: {guide_dir}")
         _patch_scheduler_values(plan, scheduler_values_file, recipe_layout=True)
-        _patch_recipe_gateway(plan, gateway_dir)
+        if plan.deployment.gateway != "standalone":
+            _patch_recipe_gateway(plan, gateway_dir)
         _patch_recipe_modelserver_overlay(plan, overlay_dir)
 
         env = {
@@ -1262,32 +1292,59 @@ def deploy_llmd(
             "HELM_PLUGINS": "/tmp/.local/share/helm/plugins",
             "RELEASE_NAME_POSTFIX": plan.deployment.release_name,
         }
+        helm_chart = (
+            "oci://registry.k8s.io/gateway-api-inference-extension/charts/standalone"
+            if plan.deployment.gateway == "standalone"
+            else "oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool"
+        )
         helm_args = [
             "helm",
             "install",
             _llmd_recipe_scheduler_release_name(plan),
-            "oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool",
+            helm_chart,
             "-f",
             str(checkout_dir / "guides" / "recipes" / "scheduler" / "base.values.yaml"),
             "-f",
             str(scheduler_values_file),
-            "-f",
-            str(
-                checkout_dir
-                / "guides"
-                / "recipes"
-                / "scheduler"
-                / "features"
-                / "httproute-flags.yaml"
-            ),
-            "--set",
-            "provider.name=istio",
             "-n",
             plan.deployment.namespace,
             "--version",
             "v1.5.0",
         ]
+        if plan.deployment.gateway == "standalone":
+            post_renderer = (
+                guide_dir
+                / "scheduler"
+                / "patches"
+                / "epp-resources"
+                / "post-renderer.sh"
+            )
+            if not post_renderer.exists():
+                raise CommandError(
+                    "llm-d standalone recipe deployments require the guide "
+                    f"EPP post-renderer, but it was not found: {post_renderer}"
+                )
+            helm_args.extend(["--post-renderer", str(post_renderer)])
+        else:
+            helm_args.extend(
+                [
+                    "--set",
+                    f"provider.name={plan.deployment.gateway}",
+                    "--set",
+                    "experimentalHttpRoute.enabled=true",
+                    "--set",
+                    "experimentalHttpRoute.inferenceGatewayName=llm-d-inference-gateway",
+                    "--set",
+                    "experimentalHttpRoute.requestTimeout=0s",
+                ]
+            )
+
         if plan.deployment.mode == "precise-prefix-cache":
+            if plan.deployment.gateway == "standalone":
+                raise CommandError(
+                    "llm-d precise-prefix-cache standalone deployments are not "
+                    "supported because they require an additional tokenizer post-renderer"
+                )
             helm_args.extend(
                 [
                     "--post-renderer",
@@ -1312,23 +1369,24 @@ def deploy_llmd(
                 manifests_dir=manifests_dir,
             )
 
+        if plan.deployment.gateway != "standalone":
+            step(f"Applying llm-d gateway resources from {gateway_dir}")
+            run_command(
+                [
+                    kubectl_cmd,
+                    "apply",
+                    "-n",
+                    plan.deployment.namespace,
+                    "-k",
+                    str(gateway_dir),
+                ]
+            )
         step(
             f"Installing llm-d recipe scheduler {helm_args[2]} "
             f"into namespace {plan.deployment.namespace}"
         )
         run_command(helm_args, cwd=guide_dir, env=env)
 
-        step(f"Applying llm-d gateway resources from {gateway_dir}")
-        run_command(
-            [
-                kubectl_cmd,
-                "apply",
-                "-n",
-                plan.deployment.namespace,
-                "-k",
-                str(gateway_dir),
-            ]
-        )
         step(f"Applying llm-d modelserver overlay from {overlay_dir}")
         run_command(
             [
@@ -1345,6 +1403,7 @@ def deploy_llmd(
             f"in namespace {plan.deployment.namespace}"
         )
     else:
+        require_command("helmfile")
         guide_layout = _llmd_guide_layout(plan)
         guide_dir = checkout_dir / "guides" / guide_layout["guide_dirname"]
         values_file = guide_dir / Path(guide_layout["model_values_relpath"])

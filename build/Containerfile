@@ -7,6 +7,7 @@ ARG GUIDELLM_VERSION_LABEL=albertoperdomo2-nightly
 
 ARG HELM_VERSION=v3.17.1
 ARG HELMFILE_VERSION=v0.171.0
+ARG KUSTOMIZE_VERSION=v5.4.3
 ARG OPENSHIFT_CLIENT_VERSION=4.19.5
 
 ENV PYTHONUNBUFFERED=1
@@ -32,6 +33,12 @@ RUN curl -fsSL "https://github.com/helmfile/helmfile/releases/download/${HELMFIL
     && mv /tmp/helmfile /usr/local/bin/helmfile \
     && chmod +x /usr/local/bin/helmfile \
     && rm -f /tmp/helmfile.tgz
+
+RUN curl -fsSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" -o /tmp/kustomize.tgz \
+    && tar -xzf /tmp/kustomize.tgz -C /tmp \
+    && mv /tmp/kustomize /usr/local/bin/kustomize \
+    && chmod +x /usr/local/bin/kustomize \
+    && rm -f /tmp/kustomize.tgz
 
 RUN curl -fsSL "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OPENSHIFT_CLIENT_VERSION}/openshift-client-linux.tar.gz" -o /tmp/openshift-client.tgz \
     && tar -xzf /tmp/openshift-client.tgz -C /tmp \
