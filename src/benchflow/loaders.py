@@ -20,6 +20,7 @@ from .models import (
     ExperimentSpec,
     ExperimentTargetSpec,
     GuidellmBenchmarkSpec,
+    GuidellmPreWarmupSpec,
     MetricsProfile,
     MetricsProfileSpec,
     MlflowSpec,
@@ -499,6 +500,40 @@ def _guidellm_benchmark_from_dict(raw: dict[str, Any]) -> GuidellmBenchmarkSpec:
         data=str(raw.get("data", "prompt_tokens=1000,output_tokens=1000")),
         max_seconds=_optional_positive_int(
             raw.get("max_seconds"), "spec.guidellm.max_seconds"
+        ),
+        max_requests=str(raw["max_requests"]).strip()
+        if raw.get("max_requests") is not None
+        else None,
+        pre_warmup=_guidellm_pre_warmup_from_dict(raw.get("pre_warmup")),
+    )
+
+
+def _guidellm_pre_warmup_from_dict(raw: Any) -> GuidellmPreWarmupSpec:
+    if raw is None:
+        return GuidellmPreWarmupSpec()
+    if not isinstance(raw, dict):
+        raise ValidationError("spec.guidellm.pre_warmup must be a mapping")
+
+    enabled = _as_bool(raw.get("enabled"), True)
+    rate = _positive_int(raw.get("rate"), "spec.guidellm.pre_warmup.rate")
+    if enabled and rate is None:
+        raise ValidationError("spec.guidellm.pre_warmup.rate is required")
+
+    return GuidellmPreWarmupSpec(
+        enabled=enabled,
+        rate=rate,
+        profile=_nonempty_string(
+            raw.get("profile"), "spec.guidellm.pre_warmup.profile"
+        ),
+        rate_type=_nonempty_string(
+            raw.get("rate_type"), "spec.guidellm.pre_warmup.rate_type"
+        ),
+        data_samples=_optional_nonnegative_int(
+            raw.get("data_samples"), "spec.guidellm.pre_warmup.data_samples"
+        ),
+        data=_nonempty_string(raw.get("data"), "spec.guidellm.pre_warmup.data"),
+        max_seconds=_optional_positive_int(
+            raw.get("max_seconds"), "spec.guidellm.pre_warmup.max_seconds"
         ),
         max_requests=str(raw["max_requests"]).strip()
         if raw.get("max_requests") is not None

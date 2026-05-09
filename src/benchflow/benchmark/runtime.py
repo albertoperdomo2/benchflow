@@ -651,6 +651,74 @@ def run_guidellm_cli(
         raise
 
 
+def _pre_warmup_value(pre_warmup: Any, key: str, default: Any = None) -> Any:
+    if pre_warmup is None:
+        return default
+    if isinstance(pre_warmup, dict):
+        value = pre_warmup.get(key, default)
+    else:
+        value = getattr(pre_warmup, key, default)
+    return default if value is None else value
+
+
+def _pre_warmup_enabled(pre_warmup: Any) -> bool:
+    return bool(_pre_warmup_value(pre_warmup, "enabled", False))
+
+
+def _run_guidellm_pre_warmup(
+    *,
+    target: str,
+    model: str,
+    backend_type: str,
+    request_type: str | None,
+    profile: str | None,
+    rate_type: str | None,
+    data_samples: int | None,
+    data: str | None,
+    processor: str | None,
+    output_dir: str,
+    pre_warmup: Any,
+) -> tuple[str, str] | None:
+    if not _pre_warmup_enabled(pre_warmup):
+        return None
+
+    rate = _pre_warmup_value(pre_warmup, "rate")
+    if rate is None:
+        raise BenchmarkExecutionError("GuideLLM pre-warmup requires a rate")
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    output_json = f"{output_dir}/pre_warmup_output.json"
+    warmup_profile = _pre_warmup_value(pre_warmup, "profile", profile)
+    warmup_rate_type = _pre_warmup_value(pre_warmup, "rate_type", rate_type)
+    warmup_data_samples = _pre_warmup_value(pre_warmup, "data_samples", data_samples)
+    warmup_data = _pre_warmup_value(pre_warmup, "data", data)
+    warmup_max_seconds = _pre_warmup_value(pre_warmup, "max_seconds")
+    warmup_max_requests = _pre_warmup_value(pre_warmup, "max_requests")
+
+    logger.info(
+        "Running GuideLLM pre-warmup: rate=%s, duration=%s, max_requests=%s",
+        rate,
+        warmup_max_seconds if warmup_max_seconds is not None else "not set",
+        warmup_max_requests if warmup_max_requests is not None else "not set",
+    )
+    return run_guidellm_cli(
+        target=target,
+        model=model,
+        rate=str(rate),
+        backend_type=backend_type,
+        request_type=request_type,
+        profile=warmup_profile,
+        rate_type=warmup_rate_type,
+        data_samples=warmup_data_samples,
+        warmup=None,
+        data=warmup_data,
+        max_seconds=warmup_max_seconds,
+        max_requests=warmup_max_requests,
+        processor=processor,
+        output_path=output_json,
+    )
+
+
 def generate_visualization_report(
     json_path: str,
     model: str,
@@ -807,6 +875,7 @@ def run_benchmark_without_mlflow(
     data: str = None,
     max_seconds=None,
     max_requests=None,
+    pre_warmup: Any = None,
     processor: str = None,
     output_dir: str = "/benchmark-results",
     accelerator: str = None,
@@ -834,6 +903,19 @@ def run_benchmark_without_mlflow(
             "Multiturn mode enabled - running separate commands per concurrency"
         )
         Path(output_dir).mkdir(parents=True, exist_ok=True)
+        _run_guidellm_pre_warmup(
+            target=target,
+            model=model,
+            backend_type=backend_type,
+            request_type=request_type,
+            profile=profile,
+            rate_type=rate_type,
+            data_samples=data_samples,
+            data=data,
+            processor=processor,
+            output_dir=output_dir,
+            pre_warmup=pre_warmup,
+        )
         concurrencies = [r.strip() for r in rate.split(",") if r.strip()]
         logger.info(f"Running {len(concurrencies)} separate benchmark commands")
 
@@ -905,6 +987,20 @@ def run_benchmark_without_mlflow(
         )
         return output_dir
 
+    _run_guidellm_pre_warmup(
+        target=target,
+        model=model,
+        backend_type=backend_type,
+        request_type=request_type,
+        profile=profile,
+        rate_type=rate_type,
+        data_samples=data_samples,
+        data=data,
+        processor=processor,
+        output_dir=output_dir,
+        pre_warmup=pre_warmup,
+    )
+
     json_path, console_log_path, benchmarks = _run_and_process_benchmark(
         target=target,
         model=model,
@@ -946,6 +1042,7 @@ def run_benchmark_with_mlflow(
     data: str = None,
     max_seconds=None,
     max_requests=None,
+    pre_warmup: Any = None,
     processor: str = None,
     accelerator: str = None,
     experiment_name: str = "guidellm-benchmarks",
@@ -1018,6 +1115,24 @@ def run_benchmark_with_mlflow(
                 params["max_seconds"] = max_seconds
             if max_requests:
                 params["max_requests"] = max_requests
+            if _pre_warmup_enabled(pre_warmup):
+                params["pre_warmup_rate"] = _pre_warmup_value(pre_warmup, "rate")
+                if _pre_warmup_value(pre_warmup, "profile"):
+                    params["pre_warmup_profile"] = _pre_warmup_value(
+                        pre_warmup, "profile"
+                    )
+                if _pre_warmup_value(pre_warmup, "rate_type"):
+                    params["pre_warmup_rate_type"] = _pre_warmup_value(
+                        pre_warmup, "rate_type"
+                    )
+                if _pre_warmup_value(pre_warmup, "max_seconds") is not None:
+                    params["pre_warmup_max_seconds"] = _pre_warmup_value(
+                        pre_warmup, "max_seconds"
+                    )
+                if _pre_warmup_value(pre_warmup, "max_requests") is not None:
+                    params["pre_warmup_max_requests"] = _pre_warmup_value(
+                        pre_warmup, "max_requests"
+                    )
             if processor:
                 params["processor"] = processor
             if accelerator:
@@ -1044,6 +1159,28 @@ def run_benchmark_with_mlflow(
             if tags:
                 default_tags.update(tags)
             mlflow.set_tags(default_tags)
+
+            warmup_artifacts = _run_guidellm_pre_warmup(
+                target=target,
+                model=model,
+                backend_type=backend_type,
+                request_type=request_type,
+                profile=profile,
+                rate_type=rate_type,
+                data_samples=data_samples,
+                data=data,
+                processor=processor,
+                output_dir=output_dir or "/tmp",
+                pre_warmup=pre_warmup,
+            )
+            if warmup_artifacts:
+                warmup_json, warmup_console_log = warmup_artifacts
+                if Path(warmup_json).exists():
+                    mlflow.log_artifact(warmup_json, "warmup")
+                    logger.info("Logged pre-warmup JSON artifact")
+                if Path(warmup_console_log).exists():
+                    mlflow.log_artifact(warmup_console_log, "warmup")
+                    logger.info("Logged pre-warmup console output")
 
             # Multi-turn mode: loop over concurrencies and run separate commands
             if multiturn_mode:

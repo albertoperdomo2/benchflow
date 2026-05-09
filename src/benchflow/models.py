@@ -367,6 +367,21 @@ class GuidellmBenchmarkSpec:
     data: str = "prompt_tokens=1000,output_tokens=1000"
     max_seconds: int | None = None
     max_requests: str | None = None
+    pre_warmup: "GuidellmPreWarmupSpec" = field(
+        default_factory=lambda: GuidellmPreWarmupSpec()
+    )
+
+
+@dataclass(slots=True)
+class GuidellmPreWarmupSpec:
+    enabled: bool = False
+    rate: int | None = None
+    profile: str | None = None
+    rate_type: str | None = None
+    data_samples: int | None = None
+    data: str | None = None
+    max_seconds: int | None = None
+    max_requests: str | None = None
 
 
 @dataclass(slots=True)

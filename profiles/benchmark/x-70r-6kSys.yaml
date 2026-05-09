@@ -11,6 +11,8 @@ spec:
     data: prompt_tokens=1200,output_tokens=1000,prefix_tokens=6000,prefix_count=150                                                                                                                                                                               
     data_samples: 750  # 750 samples pool for the whole benchmark
     max_seconds: 30
-    warmup: '{"value": 30, "mode": "duration"}'  # discard the first 30s worth of metrics
+    pre_warmup:
+      rate: 15
+      max_seconds: 30  # populate common-prefix KV cache before the measured sweep
   env:
     GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "DEBUG"

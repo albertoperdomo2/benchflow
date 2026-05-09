@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..cluster import CommandError
 from ..models import ResolvedRunPlan
-from ..ui import detail, step, success
+from ..ui import detail, step, success, warning
 from .common import (
     BenchmarkRunFailed,
     benchmark_version_from_plan,
@@ -149,6 +149,7 @@ def run_benchmark(
                     data=guidellm.data,
                     max_seconds=guidellm.max_seconds,
                     max_requests=guidellm.max_requests,
+                    pre_warmup=guidellm.pre_warmup,
                     accelerator=accelerator,
                     experiment_name=plan.mlflow.experiment,
                     mlflow_tracking_uri=mlflow_tracking_uri
@@ -179,6 +180,7 @@ def run_benchmark(
                     data=guidellm.data,
                     max_seconds=guidellm.max_seconds,
                     max_requests=guidellm.max_requests,
+                    pre_warmup=guidellm.pre_warmup,
                     output_dir=str(output_dir),
                     accelerator=accelerator,
                     version=benchmark_version_from_plan(plan),

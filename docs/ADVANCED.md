@@ -616,6 +616,9 @@ spec:
     data: prompt_tokens=1000,output_tokens=1000 # no CLI override today
     max_seconds: 600 # overridden by spec.overrides.benchmark.max_seconds
     max_requests: null # overridden by spec.overrides.benchmark.max_requests
+    pre_warmup: # optional; one GuideLLM run before the measured sweep
+      rate: 15 # required when pre_warmup is present
+      max_seconds: 30 # optional; inherited profile/data settings are used
   aiperf:
     dataset_url: "" # required when tool: aiperf
     dataset_name: "" # optional local/cache filename; defaults to the URL basename

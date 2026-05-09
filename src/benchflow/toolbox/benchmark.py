@@ -65,6 +65,12 @@ def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
         + f", backend: {guidellm.backend_type}"
     )
     detail(f"Benchmark data: {guidellm.data}")
+    if guidellm.pre_warmup.enabled:
+        detail(
+            "Pre-warmup: "
+            f"rate={guidellm.pre_warmup.rate}, "
+            f"duration={guidellm.pre_warmup.max_seconds or 'not set'}s"
+        )
 
 
 def run_plan_benchmark(
