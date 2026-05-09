@@ -683,6 +683,8 @@ def _patch_recipe_modelserver_overlay(plan: ResolvedRunPlan, overlay_dir: Path) 
         _model_mount_path(plan),
         "--disable-access-log-for-endpoints=/health,/metrics,/v1/models",
         f"--tensor-parallel-size={runtime.tensor_parallelism}",
+        "--served-model-name",
+        plan.model.name,
     ]
     env: list[dict[str, Any]] = []
     if plan.deployment.mode == "precise-prefix-cache":
@@ -1042,13 +1044,16 @@ def _gateway_exists(
     return result.returncode == 0
 
 
-def _httproute_exists(namespace: str, release_name: str, kubectl_cmd: str) -> bool:
+def _httproute_exists(
+    namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
+) -> bool:
+    route_name = f"gaie-{release_name}" if recipe_layout else f"llm-d-{release_name}"
     result = run_command(
         [
             kubectl_cmd,
             "get",
             "httproute",
-            f"llm-d-{release_name}",
+            route_name,
             "-n",
             namespace,
             "-o",
@@ -1091,7 +1096,9 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
         gateway_ready = _gateway_exists(
             namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
         )
-        httproute_ready = _httproute_exists(namespace, release_name, kubectl_cmd)
+        httproute_ready = _httproute_exists(
+            namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
+        )
         snapshot = (
             epp_ready_count,
             ms_ready_count,
