@@ -368,7 +368,7 @@ def reset_llmd_platform(
     require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
-    checkout_dir, created_tempdir = _clone_llmd_repo_source(
+    checkout_dir, created_tempdir, _repo_head = _clone_llmd_repo_source(
         repo_url=repo_url,
         repo_ref=repo_ref,
         workspace_dir=workspace_dir,
@@ -520,7 +520,7 @@ def teardown_llmd(
         or "main"
     ).strip()
 
-    checkout_dir, created_tempdir = _clone_llmd_repo_source(
+    checkout_dir, created_tempdir, _repo_head = _clone_llmd_repo_source(
         repo_url=repo_url,
         repo_ref=repo_ref,
         workspace_dir=workspace_dir,
