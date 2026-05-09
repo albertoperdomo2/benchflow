@@ -232,6 +232,16 @@ def _benchmark_axis_label(benchmark_run: Dict[str, Any], benchmark_index: int) -
     return "RPS" if _is_rate_based_benchmark(benchmark_run) else "Concurrency"
 
 
+def _has_metric_samples(metric_group: Dict[str, Any]) -> bool:
+    """Return False when GuideLLM reports an empty metric group as zeroed stats."""
+    if "count" not in metric_group:
+        return True
+    try:
+        return float(metric_group.get("count") or 0) > 0
+    except (TypeError, ValueError):
+        return True
+
+
 def _comparison_axis_label(filtered_data: pd.DataFrame) -> str:
     """Choose the comparison x-axis label after all runs/CSV rows are merged."""
     if "load axis" in filtered_data.columns:
@@ -692,6 +702,10 @@ class BenchmarkProcessor:
         def successful_metrics(*keys: str) -> Dict[str, Any]:
             return _get_nested(metrics, *keys, "successful", default={})
 
+        def sampled_successful_metrics(*keys: str) -> Dict[str, Any]:
+            values = successful_metrics(*keys)
+            return values if _has_metric_samples(values) else {}
+
         measured_concurrency = successful_metrics("request_concurrency").get("mean")
         measured_rps = successful_metrics("requests_per_second").get("mean")
         output_tok_per_sec = _get_nested(
@@ -704,15 +718,18 @@ class BenchmarkProcessor:
         requests_made = _get_nested(
             benchmark_run, "scheduler_metrics", "requests_made", default={}
         )
-        successful_reqs = requests_made.get("successful", 0)
-        errored_reqs = requests_made.get("errored", 0)
+        request_totals = _get_nested(metrics, "request_totals", default={})
+        successful_reqs = request_totals.get(
+            "successful", requests_made.get("successful", 0)
+        )
+        errored_reqs = request_totals.get("errored", requests_made.get("errored", 0))
 
-        prompt_tok_metrics = successful_metrics("prompt_token_count")
-        output_tok_metrics = successful_metrics("output_token_count")
-        ttft_metrics = successful_metrics("time_to_first_token_ms")
-        tpot_metrics = successful_metrics("time_per_output_token_ms")
-        itl_metrics = successful_metrics("inter_token_latency_ms")
-        request_latency_metrics = successful_metrics("request_latency")
+        prompt_tok_metrics = sampled_successful_metrics("prompt_token_count")
+        output_tok_metrics = sampled_successful_metrics("output_token_count")
+        ttft_metrics = sampled_successful_metrics("time_to_first_token_ms")
+        tpot_metrics = sampled_successful_metrics("time_per_output_token_ms")
+        itl_metrics = sampled_successful_metrics("inter_token_latency_ms")
+        request_latency_metrics = sampled_successful_metrics("request_latency")
 
         row = {
             "run": full_model_name,
