@@ -1091,11 +1091,7 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
         gateway_ready = _gateway_exists(
             namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
         )
-        httproute_ready = (
-            _httproute_exists(namespace, release_name, kubectl_cmd)
-            if not recipe_layout
-            else True
-        )
+        httproute_ready = _httproute_exists(namespace, release_name, kubectl_cmd)
         snapshot = (
             epp_ready_count,
             ms_ready_count,
@@ -1104,11 +1100,7 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
         )
 
         if snapshot != last_snapshot:
-            httproute_text = (
-                "httproute present: yes"
-                if not recipe_layout
-                else "httproute present: n/a"
-            )
+            httproute_text = f"httproute present: {'yes' if httproute_ready else 'no'}"
             detail(
                 f"EPP pods ready: {epp_ready_count}/{epp_total}, "
                 f"model-service pods ready: {ms_ready_count}/{ms_total}, "
@@ -1217,6 +1209,15 @@ def deploy_llmd(
             str(checkout_dir / "guides" / "recipes" / "scheduler" / "base.values.yaml"),
             "-f",
             str(scheduler_values_file),
+            "-f",
+            str(
+                checkout_dir
+                / "guides"
+                / "recipes"
+                / "scheduler"
+                / "features"
+                / "httproute-flags.yaml"
+            ),
             "--set",
             "provider.name=istio",
             "-n",
