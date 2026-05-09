@@ -1059,11 +1059,7 @@ def _pods_ready(
 def _gateway_exists(
     namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
 ) -> bool:
-    gateway_name = (
-        "llm-d-inference-gateway"
-        if recipe_layout
-        else f"infra-{release_name}-inference-gateway"
-    )
+    gateway_name = f"infra-{release_name}-inference-gateway"
     result = run_command(
         [
             kubectl_cmd,
@@ -1102,11 +1098,12 @@ def _httproute_exists(
     return result.returncode == 0
 
 
-def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
+def _verify_deployment(
+    plan: ResolvedRunPlan, timeout_seconds: int, *, recipe_layout: bool
+) -> None:
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
     release_name = plan.deployment.release_name
-    recipe_layout = _llmd_recipe_layout_from_repo_ref(plan.deployment.repo_ref)
     deadline = time.time() + timeout_seconds
     last_snapshot: tuple[int, int, bool, bool] | None = None
 
@@ -1406,7 +1403,11 @@ def deploy_llmd(
         )
 
     if verify:
-        _verify_deployment(plan, verify_timeout_seconds)
+        _verify_deployment(
+            plan,
+            verify_timeout_seconds,
+            recipe_layout=recipe_layout,
+        )
 
     if created_tempdir:
         return checkout_root
