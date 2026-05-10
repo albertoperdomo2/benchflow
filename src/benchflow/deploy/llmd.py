@@ -144,6 +144,10 @@ def _llmd_recipe_scheduler_release_name(plan: ResolvedRunPlan) -> str:
     return f"gaie-{plan.deployment.release_name}"
 
 
+def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
+    return f"gaie-{plan.deployment.release_name}-envoy"
+
+
 def _llmd_recipe_modelserver_backend_dir(plan: ResolvedRunPlan) -> str:
     accelerator = (
         str(
@@ -1039,6 +1043,54 @@ def _ensure_gaie_rbac(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
     )
 
 
+def _patch_standalone_envoy_volume(
+    plan: ResolvedRunPlan, kubectl_cmd: str, *, skip_if_missing: bool = False
+) -> None:
+    deployment_name = f"{_llmd_recipe_scheduler_release_name(plan)}-epp"
+    configmap_name = _llmd_recipe_standalone_envoy_configmap_name(plan)
+    patch = {
+        "spec": {
+            "template": {
+                "spec": {
+                    "volumes": [
+                        {
+                            "name": "config",
+                            "configMap": {
+                                "name": configmap_name,
+                                "items": [{"key": "envoy.yaml", "path": "envoy.yaml"}],
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    step(f"Patching llm-d standalone Envoy volume to use ConfigMap {configmap_name}")
+    result = run_command(
+        [
+            kubectl_cmd,
+            "patch",
+            "deployment",
+            deployment_name,
+            "-n",
+            plan.deployment.namespace,
+            "--type=strategic",
+            "-p",
+            json.dumps(patch, separators=(",", ":")),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+    if skip_if_missing and "not found" in (result.stderr or "").lower():
+        return
+    raise CommandError(
+        f"failed to patch llm-d standalone Envoy volume for {deployment_name}: "
+        f"{(result.stderr or result.stdout or '').strip()}"
+    )
+
+
 def _pods_ready(
     namespace: str, selector: str, kubectl_cmd: str
 ) -> tuple[bool, int, int]:
@@ -1199,6 +1251,8 @@ def deploy_llmd(
         plan.deployment.namespace, plan.deployment.release_name
     ):
         _ensure_gaie_rbac(plan, kubectl_cmd)
+        if str(plan.deployment.gateway or "").strip() == "standalone":
+            _patch_standalone_envoy_volume(plan, kubectl_cmd, skip_if_missing=True)
         success(
             "Skipping deploy; llm-d Helm release already exists for "
             f"{plan.deployment.release_name}"
@@ -1312,7 +1366,7 @@ def deploy_llmd(
                 [
                     "--set",
                     "inferenceExtension.sidecar.configMap.name="
-                    f"gaie-{plan.deployment.release_name}-envoy",
+                    f"{_llmd_recipe_standalone_envoy_configmap_name(plan)}",
                 ]
             )
         if plan.deployment.mode == "precise-prefix-cache":
@@ -1345,6 +1399,13 @@ def deploy_llmd(
             f"into namespace {plan.deployment.namespace}"
         )
         run_command(helm_args, cwd=guide_dir, env=env)
+
+        if gateway_mode == "standalone":
+            # The official standalone chart renders the Envoy ConfigMap name from
+            # values, but v1.5.0 still hard-codes the mounted volume reference to
+            # "envoy". Patch the Deployment so parallel BenchFlow releases do not
+            # fight over one shared ConfigMap.
+            _patch_standalone_envoy_volume(plan, kubectl_cmd)
 
         if gateway_dir is not None:
             step(f"Applying llm-d gateway resources from {gateway_dir}")
