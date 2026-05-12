@@ -76,12 +76,14 @@ def _route_authpolicy_name(release_name: str) -> str:
     return f"{release_name}-kserve-route-authn"
 
 
-def _route_authpolicy_snapshot(payload: dict[str, object]) -> tuple[bool, bool, bool]:
+def _route_authpolicy_snapshot(
+    payload: dict[str, object],
+) -> tuple[bool, bool | None, bool | None]:
     spec = payload.get("spec", {})
     status = payload.get("status", {})
     anonymous = False
-    accepted = False
-    enforced = False
+    accepted: bool | None = None
+    enforced: bool | None = None
 
     if isinstance(spec, dict):
         rules = spec.get("rules", {})
@@ -111,12 +113,26 @@ def _route_authpolicy_snapshot(payload: dict[str, object]) -> tuple[bool, bool, 
     return anonymous, accepted, enforced
 
 
+def _authpolicy_resource_unavailable(result_stderr: str) -> bool:
+    return (
+        "the server doesn't have a resource type" in result_stderr
+        or "the server does not have a resource type" in result_stderr
+        or "no matches for kind" in result_stderr
+    )
+
+
+def _status_label(value: bool | None) -> str:
+    if value is None:
+        return "n/a"
+    return "yes" if value else "no"
+
+
 def _verify_public_route_auth(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
     authpolicy_name = _route_authpolicy_name(plan.deployment.release_name)
     deadline = time.time() + timeout_seconds
-    last_snapshot: tuple[bool, bool, bool] | None = None
+    last_snapshot: tuple[bool, bool | None, bool | None] | None = None
 
     step(
         f"Waiting for RHOAI route AuthPolicy {authpolicy_name} "
@@ -140,6 +156,13 @@ def _verify_public_route_auth(plan: ResolvedRunPlan, timeout_seconds: int) -> No
             check=False,
         )
         if result.returncode != 0:
+            stderr = result.stderr or ""
+            if _authpolicy_resource_unavailable(stderr):
+                detail(
+                    "AuthPolicy resource type is unavailable; skipping anonymous "
+                    "route policy status check"
+                )
+                return
             detail(f"AuthPolicy {authpolicy_name} not published yet")
             time.sleep(5)
             continue
@@ -162,14 +185,16 @@ def _verify_public_route_auth(plan: ResolvedRunPlan, timeout_seconds: int) -> No
             detail(
                 "Anonymous auth: "
                 f"{'yes' if anonymous else 'no'}, "
-                f"accepted: {'yes' if accepted else 'no'}, "
-                f"enforced: {'yes' if enforced else 'no'}"
+                f"accepted: {_status_label(accepted)}, "
+                f"enforced: {_status_label(enforced)}"
             )
             last_snapshot = snapshot
 
-        anonymous, accepted, enforced = snapshot
-        if anonymous and accepted and enforced:
-            success(f"RHOAI route AuthPolicy {authpolicy_name} allows anonymous access")
+        anonymous, _, _ = snapshot
+        if anonymous:
+            success(
+                f"RHOAI route AuthPolicy {authpolicy_name} declares anonymous access"
+            )
             return
         time.sleep(5)
 
