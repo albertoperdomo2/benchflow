@@ -377,7 +377,7 @@ def reset_llmd_platform(
 ) -> None:
     if gateway not in {"istio", "standalone"}:
         raise CommandError(
-            "llm-d cleanup currently supports only gateway=istio or "
+            "llm-d cleanup currently supports gateway=istio or "
             f"gateway=standalone, got {gateway}"
         )
 
@@ -415,16 +415,17 @@ def setup_llmd(
     workspace_dir: Path | None = None,
     state_path: Path | None = None,
 ) -> dict[str, Any]:
-    if plan.deployment.gateway not in {"istio", "standalone"}:
+    gateway = str(plan.deployment.gateway or "").strip()
+    if gateway not in {"istio", "standalone"}:
         raise CommandError(
-            "llm-d setup currently supports only gateway=istio or "
+            "llm-d setup currently supports gateway=istio or "
             f"gateway=standalone, got {plan.deployment.gateway}"
         )
 
     require_command("bash")
     require_command("git")
     require_command("helm")
-    if plan.deployment.gateway == "istio":
+    if gateway == "istio":
         require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
@@ -453,7 +454,7 @@ def setup_llmd(
             state["gateway_dependencies_managed"] = True
             _persist_state(state, state_path)
 
-        if plan.deployment.gateway == "standalone":
+        if gateway == "standalone":
             success("llm-d standalone platform prerequisites are ready")
             return state
 

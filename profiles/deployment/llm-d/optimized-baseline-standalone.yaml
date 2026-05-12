@@ -1,12 +1,12 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: llm-d-optimized-baseline-v080-standalone
+  name: llm-d-optimized-baseline-standalone
 spec:
   platform: llm-d
   mode: inference-scheduling
-  repo_url: https://github.com/vMaroon/llm-d.git
-  repo_ref: optimized-baseline-benchmark-v0.8.0
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: main
   gateway: standalone
   endpoint_path: /v1/models
   model_storage:

@@ -97,17 +97,6 @@ def _release_name_for(experiment: Experiment) -> str:
     return f"{prefix}-{suffix}"
 
 
-def _llmd_uses_recipe_layout(repo_ref: str) -> bool:
-    normalized = str(repo_ref or "").strip().lower()
-    if normalized == "main":
-        return True
-    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+][a-z0-9.-]+)?", normalized)
-    if match is None:
-        return False
-    version = tuple(int(part) for part in match.groups())
-    return version >= (0, 6, 0)
-
-
 def _target_for(
     platform: str,
     mode: str,
@@ -119,13 +108,14 @@ def _target_for(
 ) -> TargetSpec:
     if platform == "llm-d":
         if gateway == "standalone":
-            service_name = (
-                f"gaie-{release_name}-epp"
-                if _llmd_uses_recipe_layout(repo_ref)
-                else f"ms-{release_name}"
-            )
-            port = 80 if _llmd_uses_recipe_layout(repo_ref) else 8000
-            base_url = f"http://{service_name}.{namespace}.svc.cluster.local:{port}"
+            if _llmd_uses_recipe_layout(repo_ref):
+                base_url = (
+                    f"http://gaie-{release_name}-epp.{namespace}.svc.cluster.local:80"
+                )
+            else:
+                base_url = (
+                    f"http://ms-{release_name}.{namespace}.svc.cluster.local:8000"
+                )
         else:
             gateway_name = (
                 "llm-d-inference-gateway"
@@ -160,6 +150,17 @@ def _target_for(
         base_url=f"http://{release_name}-predictor.{namespace}.svc.cluster.local:8080",
         path=path,
     )
+
+
+def _llmd_uses_recipe_layout(repo_ref: str) -> bool:
+    normalized = str(repo_ref or "").strip().lower()
+    if normalized == "main":
+        return True
+    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+][a-z0-9_.-]+)?", normalized)
+    if match is None:
+        return False
+    version = tuple(int(part) for part in match.groups())
+    return version >= (0, 6, 0)
 
 
 def _scalar_override(value, field_name: str):
