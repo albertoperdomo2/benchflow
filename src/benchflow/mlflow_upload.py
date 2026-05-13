@@ -186,6 +186,18 @@ def _generate_post_run_report(artifacts_dir: Path) -> Path | None:
     return report_path
 
 
+def _write_run_plan_artifact(plan: ResolvedRunPlan, artifacts_dir: Path) -> Path:
+    metadata_dir = artifacts_dir / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    run_plan_path = metadata_dir / "run-plan.json"
+    run_plan_path.write_text(
+        json.dumps(plan.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    detail(f"Wrote RunPlan artifact to {run_plan_path}")
+    return run_plan_path
+
+
 def _list_run_artifact_paths(
     client, mlflow_run_id: str, root_path: str = ""
 ) -> set[str]:
@@ -407,6 +419,7 @@ def upload_to_mlflow(
     artifact_count = 0
     fallback_count = 0
     if artifacts_dir.exists():
+        _write_run_plan_artifact(plan, artifacts_dir)
         benchmark_dir = artifacts_dir / "benchmark"
         if benchmark_dir.exists():
             fallback_count = _upload_missing_benchmark_artifacts(
