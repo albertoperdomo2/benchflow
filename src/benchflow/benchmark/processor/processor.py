@@ -161,28 +161,32 @@ def _extract_intended_concurrency(
     benchmark_run: Dict[str, Any], benchmark_index: int
 ) -> Any:
     """Extract the sweep axis across old and new GuideLLM schemas."""
+
+    def axis_value(values: Any) -> Any:
+        if not isinstance(values, list):
+            return values
+        if len(values) == 1:
+            return values[0]
+        if benchmark_index < len(values):
+            return values[benchmark_index]
+        return values[0] if values else None
+
     streams_value = _get_nested(benchmark_run, "scheduler", "strategy", "streams")
     if streams_value is not None:
         return streams_value
 
     strategy_rate = _get_nested(benchmark_run, "config", "strategy", "rate")
-    if isinstance(strategy_rate, list):
-        if benchmark_index < len(strategy_rate):
-            return strategy_rate[benchmark_index]
-        return strategy_rate[0] if strategy_rate else None
     if strategy_rate is not None:
-        return strategy_rate
+        return axis_value(strategy_rate)
 
     profile_args = _get_nested(benchmark_run, "config", "profile") or _get_nested(
         benchmark_run, "args", "profile", default={}
     )
     streams = profile_args.get("streams", [])
-    if benchmark_index < len(streams):
-        return streams[benchmark_index]
+    if streams:
+        return axis_value(streams)
     profile_rate = profile_args.get("rate", [])
-    if benchmark_index < len(profile_rate):
-        return profile_rate[benchmark_index]
-    return profile_rate[0] if profile_rate else None
+    return axis_value(profile_rate) if profile_rate else None
 
 
 def _is_rate_based_benchmark(benchmark_run: Dict[str, Any]) -> bool:
