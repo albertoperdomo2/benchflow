@@ -33,6 +33,7 @@ bflow experiment run experiments/smoke/qwen3-06b-llm-d-smoke.yaml
 ```
 
 BenchFlow installs Tekton, Kueue, the BenchFlow remote-capacity controller, Grafana, RBAC, GPU prerequisites, and the required PVCs in the same cluster. Kueue admits runs locally against the discovered GPU capacity, and Tekton runs the full workflow there.
+GPU prerequisites include DCGM exporter metrics and the ServiceMonitor used by BenchFlow system metrics.
 
 ### Management cluster + remote target cluster(s)
 
@@ -55,6 +56,7 @@ bflow experiment run experiments/smoke/qwen3-06b-llm-d-smoke.yaml --cluster-name
 ```
 
 In this mode, the management cluster runs Tekton, Kueue, and the BenchFlow remote-capacity controller. Kueue queues executions by target cluster and admits them only when the target has enough GPU capacity. The target cluster does not need Tekton; BenchFlow launches the runtime work there through plain Kubernetes `Job`s using the stored kubeconfig Secret.
+Target bootstrap also reconciles DCGM exporter metrics unless accelerator prerequisites are explicitly disabled.
 
 The narrow path is the shipped smoke experiment:
 

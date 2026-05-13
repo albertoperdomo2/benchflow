@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +9,9 @@ import yaml
 
 from .cluster import CommandError
 from .ui import detail, step
+
+
+DCGM_EXPORTER_SERVICE_TIMEOUT_SECONDS = 300
 
 
 def install_real_secrets(installer: Any) -> None:
@@ -146,7 +151,100 @@ def apply_cluster_monitoring_config(installer: Any) -> None:
         )
 
 
+def _dcgm_exporter_metrics_enabled(cluster_policy: dict[str, Any]) -> bool:
+    spec = cluster_policy.get("spec") or {}
+    if not isinstance(spec, dict):
+        return False
+    dcgm = spec.get("dcgm") or {}
+    dcgm_exporter = spec.get("dcgmExporter") or {}
+    service_monitor = (
+        dcgm_exporter.get("serviceMonitor") if isinstance(dcgm_exporter, dict) else {}
+    ) or {}
+    return (
+        isinstance(dcgm, dict)
+        and isinstance(dcgm_exporter, dict)
+        and isinstance(service_monitor, dict)
+        and dcgm.get("enabled") is True
+        and dcgm_exporter.get("enabled") is True
+        and service_monitor.get("enabled") is True
+    )
+
+
+def _ensure_dcgm_exporter_metrics_enabled(installer: Any) -> bool:
+    if not installer._resource_exists("get", "crd", "clusterpolicies.nvidia.com"):
+        detail(
+            "Skipping DCGM exporter configuration because ClusterPolicy CRD is unavailable"
+        )
+        return False
+    if not installer._resource_exists(
+        "get", "clusterpolicy.nvidia.com", "gpu-cluster-policy"
+    ):
+        detail(
+            "Skipping DCGM exporter configuration because ClusterPolicy/gpu-cluster-policy does not exist"
+        )
+        return False
+
+    cluster_policy = installer._oc_json(
+        "get",
+        "clusterpolicy.nvidia.com",
+        "gpu-cluster-policy",
+        retry=True,
+        description="reading NVIDIA GPU ClusterPolicy",
+    )
+    if _dcgm_exporter_metrics_enabled(cluster_policy):
+        detail(
+            "DCGM exporter metrics are already enabled in the NVIDIA GPU ClusterPolicy"
+        )
+        return True
+
+    step("Enabling DCGM exporter metrics in the NVIDIA GPU ClusterPolicy")
+    patch = {
+        "spec": {
+            "dcgm": {"enabled": True},
+            "dcgmExporter": {
+                "enabled": True,
+                "serviceMonitor": {"enabled": True},
+            },
+        }
+    }
+    installer._oc(
+        "patch",
+        "clusterpolicy.nvidia.com",
+        "gpu-cluster-policy",
+        "--type=merge",
+        "-p",
+        json.dumps(patch),
+        retry=True,
+        description="enabling DCGM exporter metrics",
+        echo_output=True,
+    )
+    return True
+
+
+def _wait_for_dcgm_exporter_service(installer: Any) -> bool:
+    deadline = time.time() + DCGM_EXPORTER_SERVICE_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        if installer._resource_exists(
+            "get",
+            "service",
+            "nvidia-dcgm-exporter",
+            "-n",
+            installer.gpu_operator_namespace,
+        ):
+            return True
+        time.sleep(5)
+    return False
+
+
 def apply_gpu_metrics_monitoring(installer: Any) -> None:
+    dcgm_exporter_expected = False
+    if installer.options.install_accelerator_prerequisites:
+        dcgm_exporter_expected = _ensure_dcgm_exporter_metrics_enabled(installer)
+    else:
+        detail(
+            "Skipping DCGM exporter configuration because accelerator prerequisite installation is disabled"
+        )
+
     if not installer._resource_exists(
         "get", "crd", "servicemonitors.monitoring.coreos.com"
     ):
@@ -159,6 +257,30 @@ def apply_gpu_metrics_monitoring(installer: Any) -> None:
             f"Skipping DCGM ServiceMonitor because namespace {installer.gpu_operator_namespace} does not exist"
         )
         return
+    if not installer._resource_exists(
+        "get",
+        "service",
+        "nvidia-dcgm-exporter",
+        "-n",
+        installer.gpu_operator_namespace,
+    ):
+        if dcgm_exporter_expected:
+            detail(
+                "Waiting for service/nvidia-dcgm-exporter after enabling DCGM exporter metrics"
+            )
+            if _wait_for_dcgm_exporter_service(installer):
+                detail("DCGM exporter service is present")
+            else:
+                detail(
+                    "Skipping DCGM ServiceMonitor because service/nvidia-dcgm-exporter did not become available"
+                )
+                return
+        else:
+            detail(
+                "Skipping DCGM ServiceMonitor because service/nvidia-dcgm-exporter does not exist"
+            )
+            return
+
     if not installer._resource_exists(
         "get",
         "service",

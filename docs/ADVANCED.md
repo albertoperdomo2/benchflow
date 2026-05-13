@@ -119,6 +119,7 @@ This mode does not install:
 
 - NFD
 - NVIDIA GPU Operator
+- DCGM exporter metrics configuration
 - `models-storage` PVC
 
 ### Single cluster
@@ -132,6 +133,7 @@ run workloads there:
 
 - NFD operator and `NodeFeatureDiscovery` instance
 - NVIDIA GPU Operator and `ClusterPolicy`
+- DCGM exporter metrics and the ServiceMonitor used by BenchFlow GPU metrics
 - OpenShift Pipelines
 - Kueue
 - BenchFlow remote-capacity controller
@@ -155,6 +157,7 @@ When `--target-kubeconfig` is set, BenchFlow defaults to a runtime-only target
 bootstrap:
 
 - NFD and the GPU Operator are installed
+- DCGM exporter metrics and the ServiceMonitor used by BenchFlow GPU metrics are enabled
 - `models-storage` and `benchmark-results` PVCs are installed
 - Tekton is not installed unless `--install-tekton` is passed
 - Grafana is not installed unless `--install-grafana` is passed
@@ -195,6 +198,12 @@ bflow bootstrap \
   --cluster-name target-cluster \
   --no-install-accelerator-prerequisites
 ```
+
+That mode still enables user workload monitoring and applies BenchFlow RBAC, but
+it does not reconcile the NVIDIA GPU Operator `ClusterPolicy`. If DCGM exporter
+metrics are disabled on that cluster, GPU metrics queries such as
+`DCGM_FI_DEV_GPU_UTIL` and `DCGM_FI_DEV_FB_USED` will remain empty until the
+cluster's GPU Operator configuration is fixed out of band.
 
 ## Cluster Topologies
 
