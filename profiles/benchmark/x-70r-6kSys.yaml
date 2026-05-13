@@ -15,4 +15,4 @@ spec:
       rate: 10
       max_seconds: 60  # populate common-prefix KV cache before the measured sweep
   env:
-    GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "DEBUG"
+    GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "INFO"
