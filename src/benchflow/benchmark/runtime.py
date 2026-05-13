@@ -1548,7 +1548,7 @@ def validate_runs_compatibility(runs_data: list) -> tuple:
         runs_data: List of run data dictionaries
 
     Returns:
-        Tuple of (model, rate, data_profile) if compatible
+        Tuple of (model, data_profile) if compatible
 
     Raises:
         ValueError if runs are incompatible
@@ -1556,12 +1556,12 @@ def validate_runs_compatibility(runs_data: list) -> tuple:
     if not runs_data:
         raise ValueError("No runs provided for validation")
 
-    # Extract model, rate, and data profile from first run
+    # Extract model and data profile from first run
     first_run = runs_data[0]
     model = first_run["params"].get("model")
-    rate = first_run["params"].get("rates")
 
     first_profile = _extract_data_profile_params(first_run["params"])
+    rate_configs = [first_run["params"].get("rates")]
 
     # Validate all runs have same configuration
     for run_data in runs_data[1:]:
@@ -1573,11 +1573,7 @@ def validate_runs_compatibility(runs_data: list) -> tuple:
                 f"All runs must use the same model."
             )
 
-        if params.get("rates") != rate:
-            raise ValueError(
-                f"Rate mismatch: {params.get('rates')} != {rate}. "
-                f"All runs must use the same rate configuration."
-            )
+        rate_configs.append(params.get("rates"))
 
         current_profile = _extract_data_profile_params(params)
         if current_profile != first_profile:
@@ -1603,10 +1599,17 @@ def validate_runs_compatibility(runs_data: list) -> tuple:
 
     logger.info("All runs validated successfully:")
     logger.info(f"  Model: {model}")
-    logger.info(f"  Rate: {rate}")
+    unique_rate_configs = {str(value) for value in rate_configs}
+    if len(unique_rate_configs) == 1:
+        logger.info(f"  Rate: {rate_configs[0]}")
+    else:
+        logger.info(
+            "  Rate: mixed configurations; comparison report will use each "
+            "benchmark row's own load-axis value"
+        )
     logger.info(f"  Data profile: {data_profile}")
 
-    return model, rate, data_profile
+    return model, data_profile
 
 
 def generate_plot_only_report(
@@ -1646,7 +1649,7 @@ def generate_plot_only_report(
         versions_override = {}
 
     # Validate runs compatibility
-    model, rate, data_profile = validate_runs_compatibility(runs_data)
+    model, data_profile = validate_runs_compatibility(runs_data)
 
     # Extract full data profile parameters from first run
     first_run_params = runs_data[0]["params"]
