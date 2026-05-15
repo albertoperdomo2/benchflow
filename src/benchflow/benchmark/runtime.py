@@ -104,6 +104,16 @@ NON_DATA_PROFILE_PARAMS = {
 }
 
 
+def _is_data_profile_param(key: str, value: Any) -> bool:
+    if value is None:
+        return False
+    if key in NON_DATA_PROFILE_PARAMS:
+        return False
+    # Pre-warmup is an execution phase used to populate caches; it does not
+    # define the benchmark workload shape being compared.
+    return not key.startswith("pre_warmup_")
+
+
 class BenchmarkExecutionError(RuntimeError):
     def __init__(self, message: str, *, run_id: str = "") -> None:
         super().__init__(message)
@@ -388,7 +398,7 @@ def _extract_data_profile_params(params: dict[str, Any]) -> dict[str, Any]:
     extracted = {
         key: _coerce_profile_value(value)
         for key, value in params.items()
-        if key not in NON_DATA_PROFILE_PARAMS and value is not None
+        if _is_data_profile_param(key, value)
     }
     ordered: dict[str, Any] = {}
     for key in preferred_order:
