@@ -1316,6 +1316,25 @@ wall-clock windows and not GuideLLM concurrency phases. BenchFlow starts
 profiling when a worker process reaches the beginning of a configured range and
 exports results after that process completes the final call in the range.
 
+For profiling repeated traffic bursts without restarting the runtime pods, keep
+the same `call_ranges` field but set it to a single capture length and provide
+`idle_seconds`:
+
+```yaml
+spec:
+  execution:
+    profiling:
+      enabled: true
+      call_ranges: "100"
+      idle_seconds: 20
+```
+
+With `idle_seconds` set, BenchFlow starts a capture on the first
+`Worker.execute_model` call after an idle gap of at least that many seconds,
+exports after the configured number of calls, then waits for the next idle gap.
+The existing `start-end` range behavior is unchanged when `idle_seconds` is not
+set.
+
 BenchFlow fixes the rest of the profiler contract intentionally:
 
 - activities are always `CPU,CUDA`

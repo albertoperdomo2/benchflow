@@ -205,6 +205,7 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
         ),
         "profiling_enabled": plan.execution.profiling.enabled,
         "profiler_call_ranges": plan.execution.profiling.call_ranges,
+        "profiler_idle_seconds": plan.execution.profiling.idle_seconds,
         "profiler_configmap_name": rhoai_profiler_configmap_name(plan),
         "profiler_mount_path": RHOAI_PROFILER_MOUNT_PATH,
     }

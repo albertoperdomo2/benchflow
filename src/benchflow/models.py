@@ -10,6 +10,7 @@ class ValidationError(ValueError):
 
 
 _CALL_RANGE_RE = re.compile(r"^\s*(\d+)\s*-\s*(\d+)\s*$")
+_CALL_COUNT_RE = re.compile(r"^\s*(\d+)\s*$")
 
 
 def _require(value: Any, field_name: str) -> Any:
@@ -58,6 +59,34 @@ def normalize_call_ranges(value: Any, field_name: str) -> str:
     if not normalized:
         raise ValidationError(f"{field_name} must contain at least one range")
     return ",".join(normalized)
+
+
+def normalize_capture_call_count(value: Any, field_name: str) -> str:
+    raw = str(value or "").strip()
+    match = _CALL_COUNT_RE.fullmatch(raw)
+    if match is None:
+        raise ValidationError(
+            f"{field_name} must be a positive call count when "
+            "execution.profiling.idle_seconds is set"
+        )
+    count = int(match.group(1))
+    if count <= 0:
+        raise ValidationError(f"{field_name} must be greater than 0")
+    return str(count)
+
+
+def normalize_idle_seconds(value: Any, field_name: str) -> int | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        raise ValidationError(f"{field_name} must be an integer")
+    try:
+        seconds = int(str(value).strip())
+    except ValueError as exc:
+        raise ValidationError(f"{field_name} must be an integer") from exc
+    if seconds <= 0:
+        raise ValidationError(f"{field_name} must be greater than 0")
+    return seconds
 
 
 def sanitize_name(value: str, max_length: int = 42) -> str:
@@ -165,6 +194,7 @@ class MlflowSpec:
 class ProfilingSpec:
     enabled: bool = False
     call_ranges: str = "100-150"
+    idle_seconds: int | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> "ProfilingSpec":
@@ -174,12 +204,34 @@ class ProfilingSpec:
         call_ranges_raw = raw.get("call_ranges")
         if call_ranges_raw is None and "profiling_ranges" in raw:
             call_ranges_raw = raw.get("profiling_ranges")
+        idle_seconds = normalize_idle_seconds(
+            raw.get("idle_seconds"),
+            "execution.profiling.idle_seconds",
+        )
+        if idle_seconds is not None and call_ranges_raw is None:
+            raise ValidationError(
+                "execution.profiling.call_ranges is required when "
+                "execution.profiling.idle_seconds is set"
+            )
+        call_ranges_default = "100-150"
+        call_ranges_value = (
+            call_ranges_raw if call_ranges_raw is not None else call_ranges_default
+        )
+        call_ranges = (
+            normalize_capture_call_count(
+                call_ranges_value,
+                "execution.profiling.call_ranges",
+            )
+            if idle_seconds is not None
+            else normalize_call_ranges(
+                call_ranges_value,
+                "execution.profiling.call_ranges",
+            )
+        )
         return cls(
             enabled=_as_bool(raw.get("enabled"), False),
-            call_ranges=normalize_call_ranges(
-                call_ranges_raw if call_ranges_raw is not None else "100-150",
-                "execution.profiling.call_ranges",
-            ),
+            call_ranges=call_ranges,
+            idle_seconds=idle_seconds,
         )
 
 

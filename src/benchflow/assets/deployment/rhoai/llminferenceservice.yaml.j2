@@ -206,6 +206,10 @@ spec:
             value: {{ profiler_call_ranges | tojson }}
           - name: VLLM_PROFILER_OUTPUT_DIR
             value: "/tmp/benchflow-profiler"
+{% if profiler_idle_seconds is not none %}
+          - name: VLLM_PROFILER_IDLE_SECONDS
+            value: {{ profiler_idle_seconds | string | tojson }}
+{% endif %}
 {% endif %}
 {% if precise_prefix_cache_enabled %}
           - name: POD_IP

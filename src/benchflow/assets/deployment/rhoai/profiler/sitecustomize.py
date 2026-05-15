@@ -20,6 +20,7 @@ import importlib.util
 import os
 import socket
 import sys
+import time
 from typing import Any
 
 os.environ.setdefault("VLLM_RPC_TIMEOUT", "1800000")
@@ -28,6 +29,7 @@ TARGET_MODULE = "vllm.v1.worker.gpu_worker"
 TARGET_CLASS = "Worker"
 TARGET_METHOD = "execute_model"
 DEFAULT_CALL_RANGES = "100-150"
+DEFAULT_CAPTURE_CALLS = "100"
 DEFAULT_OUTPUT_DIR = "/tmp/benchflow-profiler"
 
 
@@ -50,17 +52,49 @@ def _parse_call_ranges(value: str) -> list[tuple[int, int]]:
     return ranges
 
 
-def _profiler_config() -> tuple[list[tuple[int, int]], str]:
-    ranges = _parse_call_ranges(
-        os.environ.get("VLLM_PROFILER_RANGES", DEFAULT_CALL_RANGES)
+def _parse_capture_calls(value: str) -> int:
+    raw = str(value or "").strip()
+    if not raw.isdigit():
+        raise ValueError("idle-triggered profiling requires a positive call count")
+    capture_calls = int(raw)
+    if capture_calls <= 0:
+        raise ValueError("idle-triggered profiling requires a positive call count")
+    return capture_calls
+
+
+def _parse_idle_seconds(value: str | None) -> float | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    idle_seconds = float(raw)
+    if idle_seconds <= 0:
+        raise ValueError("VLLM_PROFILER_IDLE_SECONDS must be greater than 0")
+    return idle_seconds
+
+
+def _profiler_config() -> tuple[list[tuple[int, int]], str, float | None, int | None]:
+    idle_seconds = _parse_idle_seconds(os.environ.get("VLLM_PROFILER_IDLE_SECONDS"))
+    capture_calls = (
+        _parse_capture_calls(
+            os.environ.get("VLLM_PROFILER_RANGES", DEFAULT_CAPTURE_CALLS)
+        )
+        if idle_seconds is not None
+        else None
+    )
+    ranges = (
+        []
+        if idle_seconds is not None
+        else _parse_call_ranges(
+            os.environ.get("VLLM_PROFILER_RANGES", DEFAULT_CALL_RANGES)
+        )
     )
     output_dir = os.environ.get("VLLM_PROFILER_OUTPUT_DIR", DEFAULT_OUTPUT_DIR).strip()
     if not output_dir:
         output_dir = DEFAULT_OUTPUT_DIR
-    return ranges, output_dir
+    return ranges, output_dir, idle_seconds, capture_calls
 
 
-CALL_RANGES, OUTPUT_DIR = _profiler_config()
+CALL_RANGES, OUTPUT_DIR, IDLE_SECONDS, CAPTURE_CALLS = _profiler_config()
 
 
 def _pod_identity() -> str:
@@ -142,6 +176,12 @@ def _write_summary_table(profiler: Any, path: str) -> None:
 
 
 def _wrap_execute_model(original_func):
+    if IDLE_SECONDS is not None:
+        return _wrap_execute_model_idle_triggered(original_func)
+    return _wrap_execute_model_ranges(original_func)
+
+
+def _wrap_execute_model_ranges(original_func):
     try:
         profiler = _new_profiler()
     except Exception as exc:  # pragma: no cover - runtime-only fallback
@@ -205,6 +245,84 @@ def _wrap_execute_model(original_func):
     return _wrapped
 
 
+def _wrap_execute_model_idle_triggered(original_func):
+    call_count = 0
+    last_execute_model_time: float | None = None
+    profiling_active = False
+    profiled_current_burst = False
+    profiler = None
+    active_start = 0
+    active_end = 0
+
+    @functools.wraps(original_func)
+    def _wrapped(*args, **kwargs):
+        nonlocal active_end, active_start, call_count, last_execute_model_time
+        nonlocal profiled_current_burst, profiler, profiling_active
+
+        now = time.monotonic()
+        idle_gap = (
+            None if last_execute_model_time is None else now - last_execute_model_time
+        )
+        if idle_gap is None or idle_gap >= IDLE_SECONDS:
+            profiled_current_burst = False
+
+        call_count += 1
+        if not profiling_active and not profiled_current_burst:
+            assert CAPTURE_CALLS is not None
+            active_start = call_count
+            active_end = call_count + CAPTURE_CALLS - 1
+            try:
+                profiler = _new_profiler()
+                profiler.start()
+                profiling_active = True
+                print(
+                    f"[benchflow-profiler] starting idle-triggered range "
+                    f"{active_start}-{active_end} on call {call_count}",
+                    file=sys.stderr,
+                )
+            except Exception as exc:  # pragma: no cover - runtime-only fallback
+                profiler = None
+                profiled_current_burst = True
+                print(
+                    f"[benchflow-profiler] unable to initialize torch profiler: {exc}",
+                    file=sys.stderr,
+                )
+
+        result = original_func(*args, **kwargs)
+        last_execute_model_time = time.monotonic()
+
+        if profiling_active and call_count >= active_end:
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            try:
+                assert profiler is not None
+                profiler.stop()
+                _write_summary_table(
+                    profiler, _summary_path(OUTPUT_DIR, active_start, active_end)
+                )
+                profiler.export_chrome_trace(
+                    _trace_path(OUTPUT_DIR, active_start, active_end)
+                )
+                print(
+                    f"[benchflow-profiler] exported idle-triggered range "
+                    f"{active_start}-{active_end} to {OUTPUT_DIR}",
+                    file=sys.stderr,
+                )
+            except Exception as exc:  # pragma: no cover - runtime-only fallback
+                print(
+                    f"[benchflow-profiler] failed to export idle-triggered range "
+                    f"{active_start}-{active_end}: {exc}",
+                    file=sys.stderr,
+                )
+            finally:
+                profiler = None
+                profiling_active = False
+                profiled_current_burst = True
+
+        return result
+
+    return _wrapped
+
+
 def _safe_wrap_worker(module=None) -> None:
     try:
         resolved_module = module or sys.modules.get(TARGET_MODULE)
@@ -232,8 +350,13 @@ def _safe_wrap_worker(module=None) -> None:
 
 
 sys.meta_path.insert(0, _PostImportFinder())
+MODE_DETAIL = (
+    f"idle-triggered capture_calls={CAPTURE_CALLS} idle_seconds={IDLE_SECONDS}"
+    if IDLE_SECONDS is not None
+    else f"call ranges {CALL_RANGES}"
+)
 print(
     f"[benchflow-profiler] installed for {TARGET_MODULE}.{TARGET_CLASS}.{TARGET_METHOD} "
-    f"with call ranges {CALL_RANGES}",
+    f"with {MODE_DETAIL}",
     file=sys.stderr,
 )

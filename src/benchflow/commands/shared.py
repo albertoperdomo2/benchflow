@@ -410,6 +410,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 profiling=ProfilingSpec(
                     enabled=base_experiment.spec.execution.profiling.enabled,
                     call_ranges=base_experiment.spec.execution.profiling.call_ranges,
+                    idle_seconds=base_experiment.spec.execution.profiling.idle_seconds,
                 ),
             ),
             target=resolved_target,

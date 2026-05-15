@@ -197,6 +197,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                         profiling=ProfilingSpec(
                             enabled=experiment.spec.execution.profiling.enabled,
                             call_ranges=experiment.spec.execution.profiling.call_ranges,
+                            idle_seconds=experiment.spec.execution.profiling.idle_seconds,
                         ),
                     ),
                     target=ExperimentTargetSpec(
