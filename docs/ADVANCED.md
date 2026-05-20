@@ -956,6 +956,7 @@ BenchFlow also sets default MLflow tags from the resolved run:
 - `deployment_profile`
 - `benchmark_profile`
 - `metrics_profile`
+- if `MLFLOW_WORKSPACE` is set, BenchFlow scopes MLflow client calls to that workspace
 
 If you do not set `spec.mlflow.version`, BenchFlow also derives a default
 version label:
@@ -1185,7 +1186,14 @@ export MLFLOW_TRACKING_URI=https://mlflow.example.com
 export MLFLOW_TRACKING_USERNAME=my-user
 export MLFLOW_TRACKING_PASSWORD=my-password
 export MLFLOW_TRACKING_INSECURE_TLS=true
+export MLFLOW_WORKSPACE=team-a
 ```
+
+Use `MLFLOW_WORKSPACE` only when the target MLflow server has workspaces enabled.
+Older servers such as MLflow 2.18 still work with BenchFlow as long as you do
+not set `MLFLOW_WORKSPACE`. If you do set `MLFLOW_WORKSPACE`, BenchFlow checks
+`/api/3.0/mlflow/server-info` first and fails explicitly when the server does
+not advertise workspace support.
 
 With those environment variables set, you can omit `--mlflow-tracking-uri`:
 

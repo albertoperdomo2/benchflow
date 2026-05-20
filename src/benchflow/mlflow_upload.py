@@ -11,6 +11,7 @@ from mlflow.store.artifact.artifact_repository_registry import get_artifact_repo
 
 from .benchmark import generate_run_report
 from .cluster import require_any_command, run_command
+from .mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from .models import ResolvedRunPlan
 from .remote_jobs import copy_remote_results_directory
 from .ui import detail, step, success, warning
@@ -308,11 +309,9 @@ def upload_artifact_directory_to_mlflow(
     preserve_names: set[str] | None = None,
     exclude_names: set[str] | None = None,
 ) -> Path:
-    import mlflow
-
     explicit_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
     if explicit_tracking_uri:
-        mlflow.set_tracking_uri(explicit_tracking_uri)
+        configure_mlflow_tracking(explicit_tracking_uri)
     if not mlflow_run_id or not explicit_tracking_uri:
         warning(
             "Skipping MLflow upload because "
@@ -324,7 +323,7 @@ def upload_artifact_directory_to_mlflow(
         )
         return artifacts_dir
 
-    client = mlflow.tracking.MlflowClient()
+    client = create_mlflow_client(explicit_tracking_uri)
     prefix = artifact_path_prefix.strip("/")
     excluded = exclude_names or set()
     artifact_count = 0
@@ -378,11 +377,9 @@ def upload_to_mlflow(
     artifacts_dir: Path,
     grafana_url: str = "",
 ) -> Path:
-    import mlflow
-
     explicit_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
     if explicit_tracking_uri:
-        mlflow.set_tracking_uri(explicit_tracking_uri)
+        configure_mlflow_tracking(explicit_tracking_uri)
     step(
         f"Uploading artifacts to MLflow run {mlflow_run_id or '<missing>'} "
         f"for release {plan.deployment.release_name}"
@@ -398,7 +395,7 @@ def upload_to_mlflow(
         )
         return artifacts_dir
 
-    client = mlflow.tracking.MlflowClient()
+    client = create_mlflow_client(explicit_tracking_uri)
     detail(f"MLflow tracking URI: {explicit_tracking_uri}")
     _materialize_remote_artifacts_if_needed(plan, artifacts_dir)
     _materialize_remote_metrics_if_needed(plan, artifacts_dir)

@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import mlflow
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 
+from ..mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from ..models import ResolvedRunPlan, ValidationError
 from . import aiperf as aiperf_backend
 from . import guidellm as guidellm_backend
@@ -33,8 +33,8 @@ def _detect_mlflow_report_tool(
     tracking_uri = mlflow_tracking_uri or os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
         return "guidellm"
-    mlflow.set_tracking_uri(tracking_uri)
-    client = mlflow.tracking.MlflowClient()
+    configure_mlflow_tracking(tracking_uri)
+    client = create_mlflow_client(tracking_uri)
     detected: set[str] = set()
     for run_id in mlflow_run_ids:
         run = client.get_run(run_id)

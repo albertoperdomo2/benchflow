@@ -13,12 +13,12 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-import mlflow
 import plotly.graph_objects as go
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 from plotly.offline import get_plotlyjs
 
 from ..contracts import ValidationError
+from ..mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from ..plotting import REPORT_COLOR_PALETTE
 from ..ui import detail, step, success
 
@@ -100,10 +100,8 @@ def _download_metrics_artifacts(
     mlflow_tracking_uri: str | None = None,
 ) -> tuple[Any, Path]:
     tracking_uri = str(mlflow_tracking_uri or "").strip()
-    if tracking_uri:
-        mlflow.set_tracking_uri(tracking_uri)
-
-    client = mlflow.tracking.MlflowClient()
+    configure_mlflow_tracking(tracking_uri)
+    client = create_mlflow_client(tracking_uri)
     run = client.get_run(mlflow_run_id)
     cache_dir = _cache_dir_for_run(mlflow_run_id)
     metrics_dir = cache_dir / "metrics"

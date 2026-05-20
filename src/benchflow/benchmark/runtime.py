@@ -14,6 +14,7 @@ import click
 import mlflow
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 
+from ..mlflow_compat import configure_mlflow_tracking
 from ..ui import configure_logging, emit
 
 # Disable SSL warnings if using self-signed certificates
@@ -1066,8 +1067,7 @@ def run_benchmark_with_mlflow(
     decode_replicas: str = "N/A",
     output_dir: str | None = None,
 ) -> str:
-    if mlflow_tracking_uri:
-        mlflow.set_tracking_uri(mlflow_tracking_uri)
+    configure_mlflow_tracking(mlflow_tracking_uri)
 
     mlflow.set_experiment(experiment_name)
 
@@ -1427,8 +1427,7 @@ def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:
         Each dict includes a 'composed_version' field that appends either the
         'epp' tag or, if absent, the 'deployment_type' tag to the base version.
     """
-    if mlflow_tracking_uri:
-        mlflow.set_tracking_uri(mlflow_tracking_uri)
+    configure_mlflow_tracking(mlflow_tracking_uri)
 
     runs_data = []
 

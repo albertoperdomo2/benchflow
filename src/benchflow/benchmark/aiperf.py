@@ -19,6 +19,7 @@ from plotly.offline import get_plotlyjs
 from plotly.subplots import make_subplots
 
 from ..cluster import CommandError, require_command
+from ..mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from ..models import AiperfBenchmarkSpec, ResolvedRunPlan, ValidationError
 from ..plotting import REPORT_COLOR_PALETTE
 from ..ui import detail, step, success
@@ -345,7 +346,7 @@ def run_benchmark(
                 raise BenchmarkRunFailed(
                     "MLFLOW_TRACKING_URI is required when MLflow is enabled"
                 )
-            mlflow.set_tracking_uri(tracking_uri)
+            configure_mlflow_tracking(tracking_uri)
             mlflow.set_experiment(plan.mlflow.experiment)
             with mlflow.start_run(tags=tags) as run:
                 run_id = run.info.run_id
@@ -1012,8 +1013,8 @@ def generate_report(
         raise ValidationError(
             "MLFLOW_TRACKING_URI is required for AIPerf comparison reports"
         )
-    mlflow.set_tracking_uri(tracking_uri)
-    client = mlflow.tracking.MlflowClient()
+    configure_mlflow_tracking(tracking_uri)
+    client = create_mlflow_client(tracking_uri)
     cache_dir = Path(tempfile.mkdtemp(prefix="benchflow-aiperf-report-"))
     runs_data: list[dict[str, Any]] = []
     overrides = dict(version_overrides or {})
