@@ -491,6 +491,9 @@ def _guidellm_benchmark_from_dict(raw: dict[str, Any]) -> GuidellmBenchmarkSpec:
         backend_type=str(raw.get("backend_type", "openai_http")),
         request_type=str(raw.get("request_type", "") or "").strip(),
         profile=_nonempty_string(raw.get("profile"), "spec.guidellm.profile"),
+        processor_args=_nonempty_string(
+            raw.get("processor_args"), "spec.guidellm.processor_args"
+        ),
         rate_type=_nonempty_string(raw.get("rate_type"), "spec.guidellm.rate_type"),
         rates=_int_list(raw.get("rates"), "spec.guidellm.rates"),
         data_samples=_optional_nonnegative_int(

@@ -633,6 +633,7 @@ spec:
       - 1 # overridden by spec.overrides.benchmark.rates
     request_type: "" # optional; if empty BenchFlow defers to GuideLLM's internal default
     profile: poisson # optional; when set, BenchFlow passes --profile poisson
+    processor_args: '{"trust_remote_code": true}' # optional; when set, BenchFlow passes --processor-args exactly as given
     data_samples: 750 # optional; when set, BenchFlow passes --data-samples 750
     warmup: 10 # optional; when set, BenchFlow passes --warmup 10
     data: prompt_tokens=1000,output_tokens=1000 # no CLI override today

@@ -578,6 +578,7 @@ def run_guidellm_cli(
     max_seconds=None,
     max_requests=None,
     processor: str = None,
+    processor_args: str | None = None,
     output_path: str = "benchmark_output.json",
 ) -> tuple[str, str]:
     output_path_obj = Path(output_path)
@@ -621,6 +622,8 @@ def run_guidellm_cli(
         cmd.extend(["--max-requests", str(max_requests)])
     if processor:
         cmd.extend(["--processor", processor])
+    if processor_args:
+        cmd.extend(["--processor-args", processor_args])
 
     logger.info(f"Running guidellm command: {' '.join(cmd)}")
 
@@ -687,6 +690,7 @@ def _run_guidellm_pre_warmup(
     data_samples: int | None,
     data: str | None,
     processor: str | None,
+    processor_args: str | None,
     output_dir: str,
     pre_warmup: Any,
 ) -> tuple[str, str] | None:
@@ -726,6 +730,7 @@ def _run_guidellm_pre_warmup(
         max_seconds=warmup_max_seconds,
         max_requests=warmup_max_requests,
         processor=processor,
+        processor_args=processor_args,
         output_path=output_json,
     )
 
@@ -834,6 +839,7 @@ def _run_and_process_benchmark(
     max_seconds,
     max_requests,
     processor: str,
+    processor_args: str | None,
     output_dir: str,
 ) -> tuple:
     """Helper to run guidellm and process results."""
@@ -854,6 +860,7 @@ def _run_and_process_benchmark(
         max_seconds=max_seconds,
         max_requests=max_requests,
         processor=processor,
+        processor_args=processor_args,
         output_path=output_json,
     )
 
@@ -888,6 +895,7 @@ def run_benchmark_without_mlflow(
     max_requests=None,
     pre_warmup: Any = None,
     processor: str = None,
+    processor_args: str | None = None,
     output_dir: str = "/benchmark-results",
     accelerator: str = None,
     version: str = None,
@@ -924,6 +932,7 @@ def run_benchmark_without_mlflow(
             data_samples=data_samples,
             data=data,
             processor=processor,
+            processor_args=processor_args,
             output_dir=output_dir,
             pre_warmup=pre_warmup,
         )
@@ -969,6 +978,7 @@ def run_benchmark_without_mlflow(
                 max_seconds=parsed_max_seconds,
                 max_requests=parsed_max_requests,
                 processor=processor,
+                processor_args=processor_args,
                 output_path=output_json,
             )
 
@@ -1008,6 +1018,7 @@ def run_benchmark_without_mlflow(
         data_samples=data_samples,
         data=data,
         processor=processor,
+        processor_args=processor_args,
         output_dir=output_dir,
         pre_warmup=pre_warmup,
     )
@@ -1026,6 +1037,7 @@ def run_benchmark_without_mlflow(
         max_seconds=max_seconds,
         max_requests=max_requests,
         processor=processor,
+        processor_args=processor_args,
         output_dir=output_dir,
     )
 
@@ -1055,6 +1067,7 @@ def run_benchmark_with_mlflow(
     max_requests=None,
     pre_warmup: Any = None,
     processor: str = None,
+    processor_args: str | None = None,
     accelerator: str = None,
     experiment_name: str = "guidellm-benchmarks",
     mlflow_tracking_uri: str = None,
@@ -1145,6 +1158,8 @@ def run_benchmark_with_mlflow(
                     )
             if processor:
                 params["processor"] = processor
+            if processor_args:
+                params["processor_args"] = processor_args
             if accelerator:
                 params["accelerator"] = accelerator
             if version:
@@ -1180,6 +1195,7 @@ def run_benchmark_with_mlflow(
                 data_samples=data_samples,
                 data=data,
                 processor=processor,
+                processor_args=processor_args,
                 output_dir=output_dir or "/tmp",
                 pre_warmup=pre_warmup,
             )
@@ -1257,6 +1273,7 @@ def run_benchmark_with_mlflow(
                             max_seconds=parsed_max_seconds,
                             max_requests=parsed_max_requests,
                             processor=processor,
+                            processor_args=processor_args,
                             output_path=output_json,
                         )
 
@@ -1363,6 +1380,7 @@ def run_benchmark_with_mlflow(
                     max_seconds=max_seconds,
                     max_requests=max_requests,
                     processor=processor,
+                    processor_args=processor_args,
                     output_dir=output_dir or "/tmp",
                 )
 

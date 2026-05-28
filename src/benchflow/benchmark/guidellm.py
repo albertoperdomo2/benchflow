@@ -131,6 +131,8 @@ def run_benchmark(
     detail(f"Hugging Face cache: {benchmark_env['HF_HUB_CACHE']}")
     if output_dir is not None:
         detail(f"Output directory: {output_dir}")
+    if guidellm.processor_args:
+        detail(f"GuideLLM processor args: {guidellm.processor_args}")
 
     with _patched_environment(benchmark_env):
         try:
@@ -150,6 +152,7 @@ def run_benchmark(
                     max_seconds=guidellm.max_seconds,
                     max_requests=guidellm.max_requests,
                     pre_warmup=guidellm.pre_warmup,
+                    processor_args=guidellm.processor_args,
                     accelerator=accelerator,
                     experiment_name=plan.mlflow.experiment,
                     mlflow_tracking_uri=mlflow_tracking_uri
@@ -181,6 +184,7 @@ def run_benchmark(
                     max_seconds=guidellm.max_seconds,
                     max_requests=guidellm.max_requests,
                     pre_warmup=guidellm.pre_warmup,
+                    processor_args=guidellm.processor_args,
                     output_dir=str(output_dir),
                     accelerator=accelerator,
                     version=benchmark_version_from_plan(plan),

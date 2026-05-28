@@ -412,6 +412,7 @@ class GuidellmBenchmarkSpec:
     backend_type: str = "openai_http"
     request_type: str = ""
     profile: str | None = None
+    processor_args: str | None = None
     rate_type: str | None = None
     rates: list[int] | None = None
     data_samples: int | None = None
