@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 from contextlib import contextmanager
+from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +127,21 @@ def run_json_command(
         ) from exc
 
 
+def _with_default_port(url: str, default_port: int) -> str:
+    parsed = urlsplit(url)
+    if parsed.port is not None or not parsed.netloc:
+        return url
+    netloc = f"{parsed.hostname}:{default_port}"
+    if parsed.username:
+        auth = parsed.username
+        if parsed.password:
+            auth += f":{parsed.password}"
+        netloc = f"{auth}@{netloc}"
+    return urlunsplit(
+        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+    )
+
+
 def resolve_target_base_url(target: Any, namespace: str) -> str:
     if target.discovery == "static":
         if not target.base_url:
@@ -222,7 +238,7 @@ def resolve_target_base_url(target: Any, namespace: str) -> str:
                 f"InferenceService {resource_name} in namespace {namespace} "
                 "does not have status.url yet"
             )
-        return url.rstrip("/")
+        return _with_default_port(url.rstrip("/"), 8080)
 
     raise CommandError(f"unsupported target discovery strategy: {target.discovery}")
 
