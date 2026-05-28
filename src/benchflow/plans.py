@@ -131,6 +131,13 @@ def _target_for(
         return TargetSpec(discovery="static", base_url=base_url, path=path)
 
     if platform == "rhoai":
+        if mode == "isvc":
+            return TargetSpec(
+                discovery="inferenceservice-status-url",
+                resource_kind="InferenceService",
+                resource_name=release_name,
+                path=path,
+            )
         return TargetSpec(
             discovery="llminferenceservice-status-url",
             resource_kind="LLMInferenceService",
@@ -358,6 +365,14 @@ def resolve_run_plan(
         raise ValidationError(
             f"scheduler image override is not supported for platform "
             f"{deployment_profile.spec.platform!r}"
+        )
+    if (
+        scheduler_image
+        and deployment_profile.spec.platform == "rhoai"
+        and deployment_profile.spec.mode == "isvc"
+    ):
+        raise ValidationError(
+            "scheduler image override is not supported for rhoai isvc deployments"
         )
 
     options = dict(deployment_profile.spec.options)

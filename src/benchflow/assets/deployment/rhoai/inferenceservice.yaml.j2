@@ -1,0 +1,111 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: {{ release_name }}
+  namespace: {{ namespace }}
+  labels:
+{% for key, value in labels.items() %}
+    {{ key }}: {{ value | tojson }}
+{% endfor %}
+  annotations:
+    security.opendatahub.io/enable-auth: {{ enable_auth | tojson }}
+    serving.kserve.io/deploymentMode: RawDeployment
+    serving.kserve.io/enable-prometheus-scraping: "true"
+spec:
+  predictor:
+    minReplicas: {{ replicas }}
+    maxReplicas: {{ replicas }}
+{% if runtime_node_selector %}
+    nodeSelector: {{ runtime_node_selector | tojson }}
+{% endif %}
+{% if runtime_affinity %}
+    affinity: {{ runtime_affinity | tojson }}
+{% endif %}
+{% if runtime_tolerations %}
+    tolerations: {{ runtime_tolerations | tojson }}
+{% endif %}
+{% if runtime_image_pull_secrets %}
+    imagePullSecrets: {{ runtime_image_pull_secrets | tojson }}
+{% endif %}
+    containers:
+      - name: kserve-container
+        image: {{ runtime_image | tojson }}
+        command:
+          - python3
+          - -m
+          - vllm.entrypoints.openai.api_server
+        ports:
+          - containerPort: 8080
+            protocol: TCP
+        resources:
+{% for resource_type, resource_values in runtime_resources.items() %}
+          {{ resource_type }}:
+{% for resource_name, resource_value in resource_values.items() %}
+            {{ resource_name | tojson }}: {{ resource_value | tojson }}
+{% endfor %}
+{% endfor %}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 400
+          periodSeconds: 10
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 12
+        args:
+{% for arg in runtime_args %}
+          - {{ arg | tojson }}
+{% endfor %}
+{% if runtime_env or profiling_enabled %}
+        env:
+{% for entry in runtime_env %}
+          - name: {{ entry.name }}
+            value: {{ entry.value | tojson }}
+{% endfor %}
+{% if profiling_enabled %}
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: metadata.name
+          - name: PYTHONPATH
+            value: {{ profiler_mount_path | tojson }}
+          - name: VLLM_PROFILER_RANGES
+            value: {{ profiler_call_ranges | tojson }}
+          - name: VLLM_PROFILER_OUTPUT_DIR
+            value: "/tmp/benchflow-profiler"
+{% if profiler_idle_seconds is not none %}
+          - name: VLLM_PROFILER_IDLE_SECONDS
+            value: {{ profiler_idle_seconds | string | tojson }}
+{% endif %}
+{% endif %}
+{% endif %}
+        volumeMounts:
+          - mountPath: {{ model_storage_mount_path | tojson }}
+            name: model-storage
+{% if profiling_enabled %}
+          - mountPath: {{ profiler_mount_path | tojson }}
+            name: vllm-profiler
+            readOnly: true
+{% endif %}
+    volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: {{ model_storage_pvc_name | tojson }}
+{% if profiling_enabled %}
+      - name: vllm-profiler
+        configMap:
+          name: {{ profiler_configmap_name | tojson }}
+{% endif %}

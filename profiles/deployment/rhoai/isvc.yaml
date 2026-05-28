@@ -1,0 +1,26 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-isvc
+spec:
+  platform: rhoai
+  mode: isvc
+  platform_version: RHOAI-3.3.0
+  platform_channel: stable-3.x
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /mnt
+  runtime:
+    image: quay.io/vllm/automation-vllm:cuda-26239591253
+    replicas: 1
+    tensor_parallelism: 1
+    vllm_args:
+      - --max-model-len=4096
+      - --gpu-memory-utilization=0.92
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+  options:
+    enable_auth: false

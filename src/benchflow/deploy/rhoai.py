@@ -16,12 +16,18 @@ from ..ui import detail, step, success
 _PUBLIC_ROUTE_AUTH_TIMEOUT_SECONDS = 900
 
 
-def _deployment_resource(plan: ResolvedRunPlan) -> str:
-    return "llminferenceservice"
-
-
 def _deployment_kind(plan: ResolvedRunPlan) -> str:
-    return "LLMInferenceService"
+    return str(plan.deployment.target.resource_kind or "LLMInferenceService").strip()
+
+
+def _deployment_resource(plan: ResolvedRunPlan) -> str:
+    return _deployment_kind(plan).lower()
+
+
+def _deployment_manifest_filename(plan: ResolvedRunPlan) -> str:
+    if _deployment_kind(plan) == "InferenceService":
+        return "inferenceservice.yaml"
+    return "llminferenceservice.yaml"
 
 
 def _deployment_exists(
@@ -243,7 +249,7 @@ def _verify_deployment(plan: ResolvedRunPlan, timeout_seconds: int) -> None:
         ready, url, _ = snapshot
         if ready and url:
             success(f"RHOAI deployment {release_name} is ready and published at {url}")
-            if _auth_disabled(plan):
+            if _auth_disabled(plan) and _deployment_kind(plan) == "LLMInferenceService":
                 _verify_public_route_auth(
                     plan,
                     timeout_seconds=min(
@@ -290,7 +296,7 @@ def deploy_rhoai(
                 yaml.safe_dump(profiler_configmap, sort_keys=False), encoding="utf-8"
             )
             detail(f"Rendered profiler ConfigMap written to {profiler_target}")
-        names = ["llminferenceservice.yaml"]
+        names = [_deployment_manifest_filename(plan)]
         for manifest, name in zip(manifests, names, strict=True):
             target = manifests_dir / name
             target.write_text(

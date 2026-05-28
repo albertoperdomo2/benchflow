@@ -601,6 +601,19 @@ modelTokenizerMap:
   base: "{{ precise_prefix_cache_tokenizer_model_path }}"
 ```
 
+BenchFlow also supports a narrow `rhoai-isvc` deployment profile that
+renders a basic KServe `InferenceService` instead of an `LLMInferenceService`.
+That path is intended for plain vLLM-on-KServe deployments on RHOAI 3.3 and
+supports the shared runtime knobs such as `runtime.image`, `runtime.vllm_args`,
+`runtime.env`, placement settings, and profiling. It does not support the
+RHOAI scheduler-specific features: `scheduler_image`, `options.epp_config`,
+`options.epp_verbosity`, or weighted/intelligent scheduling behavior. The
+shipped smoke example is:
+
+```bash
+bflow experiment run experiments/smoke/qwen3-06b-rhoai-isvc-smoke.yaml
+```
+
 Full `BenchmarkProfile` schema:
 
 Only the section that matches `spec.tool` is required for a profile. The other

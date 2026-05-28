@@ -7,12 +7,12 @@ from ..models import ResolvedRunPlan
 from ..renderers.deployment import rhoai_profiler_configmap_name
 
 
-def _deployment_resource(plan: ResolvedRunPlan) -> str:
-    return "llminferenceservice"
-
-
 def _deployment_kind(plan: ResolvedRunPlan) -> str:
-    return "LLMInferenceService"
+    return str(plan.deployment.target.resource_kind or "LLMInferenceService").strip()
+
+
+def _deployment_resource(plan: ResolvedRunPlan) -> str:
+    return _deployment_kind(plan).lower()
 
 
 def _delete_profiler_configmap(

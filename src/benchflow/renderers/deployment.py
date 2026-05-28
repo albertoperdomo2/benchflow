@@ -81,11 +81,34 @@ def _runtime_resource_requirements(
     return resources
 
 
+def _rhoai_uses_isvc(plan: ResolvedRunPlan) -> bool:
+    return plan.deployment.mode == "isvc"
+
+
 def _rhoai_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     return [
         {"name": key, "value": value}
         for key, value in sorted(plan.deployment.runtime.env.items())
     ]
+
+
+def _rhoai_basic_model_path(plan: ResolvedRunPlan) -> str:
+    mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
+    cache_dir = plan.deployment.model_storage.cache_dir.rstrip("/")
+    return f"{mount_root}{cache_dir}/{plan.model.pvc_directory_name}"
+
+
+def _rhoai_basic_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
+    cache_dir = f"{mount_root}{plan.deployment.model_storage.cache_dir.rstrip('/')}"
+    env = {
+        "HOME": "/tmp/vllm-home",
+        "HF_HOME": cache_dir,
+        "TRANSFORMERS_CACHE": f"{cache_dir}/hub",
+        "HF_HUB_CACHE": f"{cache_dir}/hub",
+        **plan.deployment.runtime.env,
+    }
+    return [{"name": key, "value": value} for key, value in sorted(env.items())]
 
 
 def _rhoai_vllm_args(plan: ResolvedRunPlan) -> list[str]:
@@ -99,6 +122,16 @@ def _rhoai_vllm_args(plan: ResolvedRunPlan) -> list[str]:
         "--enable-ssl-refresh",
         "--ssl-certfile=/var/run/kserve/tls/tls.crt",
         "--ssl-keyfile=/var/run/kserve/tls/tls.key",
+    ] + plan.deployment.runtime.vllm_args
+
+
+def _rhoai_basic_vllm_args(plan: ResolvedRunPlan) -> list[str]:
+    return [
+        "--port=8080",
+        "--host=0.0.0.0",
+        f"--model={_rhoai_basic_model_path(plan)}",
+        f"--served-model-name={plan.model.name}",
+        f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
     ] + plan.deployment.runtime.vllm_args
 
 
@@ -152,7 +185,26 @@ def _rhoai_epp_verbosity(plan: ResolvedRunPlan) -> int | None:
     return verbosity
 
 
-def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
+def _rhoai_validate_isvc(plan: ResolvedRunPlan) -> None:
+    if not _rhoai_uses_isvc(plan):
+        return
+    if not plan.deployment.runtime.image:
+        raise ValidationError("rhoai isvc deployments require deployment.runtime.image")
+    if plan.deployment.scheduler_image:
+        raise ValidationError("rhoai isvc deployments do not support scheduler_image")
+    if str(plan.deployment.options.get("epp_config") or "").strip():
+        raise ValidationError(
+            "rhoai isvc deployments do not support options.epp_config"
+        )
+    if _rhoai_epp_verbosity(plan) is not None:
+        raise ValidationError(
+            "rhoai isvc deployments do not support options.epp_verbosity"
+        )
+
+
+def _rhoai_llminferenceservice_template_context(
+    plan: ResolvedRunPlan,
+) -> dict[str, Any]:
     _validate_rhoai_profiling(plan)
     has_custom_epp_config = bool(
         str(plan.deployment.options.get("epp_config") or "").strip()
@@ -213,7 +265,39 @@ def _rhoai_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
     return context
 
 
+def _rhoai_inferenceservice_template_context(plan: ResolvedRunPlan) -> dict[str, Any]:
+    _validate_rhoai_profiling(plan)
+    _rhoai_validate_isvc(plan)
+    return {
+        "release_name": plan.deployment.release_name,
+        "namespace": plan.deployment.namespace,
+        "labels": _base_labels(plan),
+        "enable_auth": str(plan.deployment.options.get("enable_auth", False)).lower(),
+        "replicas": plan.deployment.runtime.replicas,
+        "runtime_image": plan.deployment.runtime.image,
+        "runtime_args": _rhoai_basic_vllm_args(plan),
+        "runtime_env": _rhoai_basic_runtime_env(plan),
+        "runtime_node_selector": plan.deployment.runtime.node_selector,
+        "runtime_affinity": plan.deployment.runtime.affinity,
+        "runtime_tolerations": plan.deployment.runtime.tolerations,
+        "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
+        "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
+        "model_storage_pvc_name": plan.deployment.model_storage.pvc_name,
+        "model_storage_mount_path": plan.deployment.model_storage.mount_path,
+        "profiling_enabled": plan.execution.profiling.enabled,
+        "profiler_call_ranges": plan.execution.profiling.call_ranges,
+        "profiler_idle_seconds": plan.execution.profiling.idle_seconds,
+        "profiler_configmap_name": rhoai_profiler_configmap_name(plan),
+        "profiler_mount_path": RHOAI_PROFILER_MOUNT_PATH,
+    }
+
+
 def render_rhoai_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
+    if _rhoai_uses_isvc(plan):
+        return render_jinja_yaml_document(
+            "deployment/rhoai/inferenceservice.yaml.j2",
+            _rhoai_inferenceservice_template_context(plan),
+        )
     if plan.deployment.mode not in {
         "distributed-default",
         "approximate-prefix-cache",
@@ -222,7 +306,7 @@ def render_rhoai_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
         raise ValueError(f"unsupported RHOAI deployment mode: {plan.deployment.mode}")
     return render_jinja_yaml_document(
         "deployment/rhoai/llminferenceservice.yaml.j2",
-        _rhoai_template_context(plan),
+        _rhoai_llminferenceservice_template_context(plan),
     )
 
 
