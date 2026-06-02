@@ -780,6 +780,7 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         additional_csv_files=args.additional_csv or None,
         notes=[item.strip() for item in args.note if item.strip()],
         repeat_section_legends=bool(args.repeat_section_legends),
+        include_total_throughput=bool(args.total_throughput),
     )
     print(report_path)
     return 0
@@ -1740,6 +1741,14 @@ def _register_comparison_report_options(command):
         help=(
             "Repeat right-side legends for each report section. "
             "Useful when taking screenshots of individual sections."
+        ),
+    )(command)
+    command = click.option(
+        "--total-throughput",
+        is_flag=True,
+        help=(
+            "Add the dashed total-throughput overlay to the throughput chart. "
+            "By default only output throughput is plotted."
         ),
     )(command)
     return command

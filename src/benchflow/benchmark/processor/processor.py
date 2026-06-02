@@ -463,6 +463,7 @@ class BenchmarkProcessor:
         prefix_count: Optional[int] = None,
         notes: Optional[List[str]] = None,
         repeat_section_legends: bool = False,
+        include_total_throughput: bool = False,
         include_plotlyjs: bool = True,
     ):
         """
@@ -490,6 +491,7 @@ class BenchmarkProcessor:
             prefix_count: Prefix count for prefix caching benchmarks (optional)
             notes: Optional subtitle note lines (optional)
             repeat_section_legends: Render repeated side legends per section (optional)
+            include_total_throughput: Render dashed total-throughput overlay in throughput charts (optional)
             include_plotlyjs: Inline Plotly JS in the generated HTML (optional)
         """
         self.json_path = json_path
@@ -504,6 +506,7 @@ class BenchmarkProcessor:
         self.replicas = replicas
         self.output_html = output_html or "benchmark_report.html"
         self.repeat_section_legends = repeat_section_legends
+        self.include_total_throughput = include_total_throughput
         self.include_plotlyjs = include_plotlyjs
         self.notes = [str(note).strip() for note in (notes or []) if str(note).strip()]
 
@@ -1298,7 +1301,11 @@ class BenchmarkProcessor:
             "Output tok/s/RPS" if axis_label == "RPS" else "Output tok/s/concurrency"
         )
         throughput_title = "Throughput vs RPS" if axis_label == "RPS" else "Throughput"
-        throughput_subtitle = "Higher is better; solid=output, dashed=total"
+        throughput_subtitle = (
+            "Higher is better; solid=output, dashed=total"
+            if self.include_total_throughput
+            else "Higher is better"
+        )
 
         has_ttft_distribution = (
             self.ttft_distribution_df is not None
@@ -1507,7 +1514,8 @@ class BenchmarkProcessor:
                     col=col,
                 )
                 if (
-                    metric_key == "output_tok/sec"
+                    self.include_total_throughput
+                    and metric_key == "output_tok/sec"
                     and "total_tok/sec" in group_data.columns
                     and group_data["total_tok/sec"].notna().any()
                 ):

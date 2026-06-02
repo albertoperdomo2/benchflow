@@ -102,6 +102,7 @@ def generate_report(
     additional_csv_files: list[str] | None = None,
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
+    include_total_throughput: bool = False,
 ) -> Path:
     tool = (
         plan.benchmark.tool
@@ -146,6 +147,7 @@ def generate_report(
         additional_csv_files=additional_csv_files,
         notes=notes,
         repeat_section_legends=repeat_section_legends,
+        include_total_throughput=include_total_throughput,
     )
 
 

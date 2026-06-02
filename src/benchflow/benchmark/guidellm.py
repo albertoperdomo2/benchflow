@@ -233,6 +233,7 @@ def generate_report(
     additional_csv_files: list[str] | None = None,
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
+    include_total_throughput: bool = False,
 ) -> Path:
     module = _load_guidellm_module()
 
@@ -248,6 +249,7 @@ def generate_report(
             output_file=str(output_file) if output_file else None,
             notes=notes or [],
             repeat_section_legends=repeat_section_legends,
+            include_total_throughput=include_total_throughput,
         )
         if not html_path:
             raise CommandError("GuideLLM report generation returned no output path")
@@ -270,6 +272,7 @@ def generate_report(
         replicas=replicas,
         notes=notes or [],
         repeat_section_legends=repeat_section_legends,
+        include_total_throughput=include_total_throughput,
     )
     if not html_path:
         raise CommandError("GuideLLM report generation returned no output path")

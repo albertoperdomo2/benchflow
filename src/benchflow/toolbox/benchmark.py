@@ -230,6 +230,7 @@ def generate_plan_report(
     additional_csv_files: list[str] | tuple[str, ...] | None,
     notes: list[str] | tuple[str, ...] | None,
     repeat_section_legends: bool = False,
+    include_total_throughput: bool = False,
 ) -> Path:
     model = model_name or (plan.model.name if plan is not None else None)
     resolved_version = version or (
@@ -267,6 +268,7 @@ def generate_plan_report(
         additional_csv_files=additional_csv_files,
         notes=list(notes or []),
         repeat_section_legends=repeat_section_legends,
+        include_total_throughput=include_total_throughput,
     )
 
 

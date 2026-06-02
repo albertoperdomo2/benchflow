@@ -747,6 +747,7 @@ def generate_visualization_report(
     replicas: int = 1,
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
+    include_total_throughput: bool = False,
 ) -> str:
     """
     Generate HTML visualization report from benchmark JSON.
@@ -764,6 +765,7 @@ def generate_visualization_report(
         replicas: Number of replicas
         notes: Optional subtitle note lines
         repeat_section_legends: Repeat side legends per section for screenshots
+        include_total_throughput: Render dashed total-throughput overlay in throughput charts
 
     Returns:
         Path to HTML report, or None if generation failed
@@ -805,6 +807,7 @@ def generate_visualization_report(
             replicas=replicas,
             notes=notes or [],
             repeat_section_legends=repeat_section_legends,
+            include_total_throughput=include_total_throughput,
         )
 
         processor.process()
@@ -1649,6 +1652,7 @@ def generate_plot_only_report(
     output_file: str = None,
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
+    include_total_throughput: bool = False,
 ) -> str:
     """
     Generate HTML report from existing MLflow runs without running benchmarks.
@@ -1663,6 +1667,7 @@ def generate_plot_only_report(
         output_file: Explicit report path (optional)
         notes: Optional subtitle note lines
         repeat_section_legends: Repeat side legends per section for screenshots
+        include_total_throughput: Render dashed total-throughput overlay in throughput charts
 
     Returns:
         Path to generated HTML report
@@ -1735,6 +1740,7 @@ def generate_plot_only_report(
         replicas=1,  # dummy value
         data_profile=data_profile_params,
         repeat_section_legends=repeat_section_legends,
+        include_total_throughput=include_total_throughput,
     )
     consolidated_df = temp_processor.download_s3_csv()
     logger.info(f"Downloaded consolidated CSV with {len(consolidated_df)} rows")
@@ -1789,6 +1795,7 @@ def generate_plot_only_report(
             replicas=replicas_int,
             data_profile=data_profile_params,
             repeat_section_legends=repeat_section_legends,
+            include_total_throughput=include_total_throughput,
         )
 
         # Parse this run's JSON to DataFrame (replicas will be included via processor)
@@ -1919,6 +1926,7 @@ def generate_plot_only_report(
         data_profile=data_profile_params,
         notes=notes or [],
         repeat_section_legends=repeat_section_legends,
+        include_total_throughput=include_total_throughput,
     )
 
     # Override with our merged and filtered data
