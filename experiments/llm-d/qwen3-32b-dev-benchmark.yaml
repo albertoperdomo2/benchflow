@@ -1,0 +1,22 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen3-32b-dev-benchmark
+spec:
+  model:
+    name: Qwen/Qwen3-32B
+  deployment_profile:
+    - llm-d-optimized-baseline-standalone
+  benchmark_profile: 
+    - guidellm-x-70r-6kSys
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H200
+      version: "llm-d-v0.7.0"
+  namespace: benchflow
+  execution:
+    timeout: 8h
+  # overrides:
+  #   images:
+  #     scheduler: 
