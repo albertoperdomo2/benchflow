@@ -9,5 +9,6 @@ spec:
     rates: [1]
     data: prompt_tokens=100,output_tokens=100
     max_seconds: 60
+    processor_args: '{"trust_remote_code": true}'
   env:
     GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "INFO"
