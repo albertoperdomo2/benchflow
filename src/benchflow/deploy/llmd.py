@@ -34,6 +34,8 @@ _LLMD_MODEL_LABEL = "llm-d.ai/model"
 _BENCHFLOW_GUIDE_LABEL = "llm-d.ai/guide"
 _BENCHFLOW_RELEASE_LABEL = "benchflow.io/release"
 _BENCHFLOW_EPP_CONFIG_FILE = "benchflow-epp-config.yaml"
+_STORAGE_OFFLOADING_VOLUME_NAME = "storage-offloading"
+_STORAGE_OFFLOADING_SERVICE_FILE = "benchflow-storage-events-service.yaml"
 
 
 def _llmd_guide_layout(plan: ResolvedRunPlan) -> dict[str, str]:
@@ -259,6 +261,81 @@ def _port_from_values(values: dict[str, Any]) -> int:
         return 8000
 
 
+def _storage_offloading_config(plan: ResolvedRunPlan) -> dict[str, Any] | None:
+    raw_config = plan.deployment.options.get("storage_offloading")
+    if raw_config in (None, "", False):
+        return None
+    if not isinstance(raw_config, dict):
+        raise CommandError(
+            "deployment profile options.storage_offloading must be a mapping"
+        )
+    if raw_config.get("enabled") is False:
+        return None
+
+    port_raw = raw_config.get("storage_events_port", 5559)
+    try:
+        storage_events_port = int(str(port_raw).strip())
+    except ValueError as exc:
+        raise CommandError(
+            "deployment profile options.storage_offloading.storage_events_port "
+            "must be an integer"
+        ) from exc
+    if storage_events_port <= 0:
+        raise CommandError(
+            "deployment profile options.storage_offloading.storage_events_port "
+            "must be greater than 0"
+        )
+
+    config = {
+        "pvc_name": str(
+            raw_config.get("pvc_name") or "llm-d-storage-offloading-cache"
+        ).strip(),
+        "storage_class": str(raw_config.get("storage_class") or "nfs-rwx").strip(),
+        "size": str(raw_config.get("size") or "2500Gi").strip(),
+        "access_mode": str(raw_config.get("access_mode") or "ReadWriteMany").strip(),
+        "mount_path": str(raw_config.get("mount_path") or "/mnt/files-storage").rstrip(
+            "/"
+        ),
+        "storage_events_port": storage_events_port,
+    }
+    for key in ("pvc_name", "size", "access_mode", "mount_path"):
+        if not config[key]:
+            raise CommandError(
+                f"deployment profile options.storage_offloading.{key} must not be empty"
+            )
+    return config
+
+
+def _ensure_storage_offloading_pvc(
+    plan: ResolvedRunPlan, kubectl_cmd: str, config: dict[str, Any]
+) -> None:
+    pvc_name = config["pvc_name"]
+    step(f"Ensuring shared storage offloading PVC {pvc_name}")
+    spec: dict[str, Any] = {
+        "accessModes": [config["access_mode"]],
+        "resources": {"requests": {"storage": config["size"]}},
+    }
+    if config["storage_class"]:
+        spec["storageClassName"] = config["storage_class"]
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {
+            "name": pvc_name,
+            "namespace": plan.deployment.namespace,
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                "benchflow.io/purpose": "llm-d-storage-offloading",
+            },
+        },
+        "spec": spec,
+    }
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text=yaml.safe_dump(manifest, sort_keys=False),
+    )
+
+
 def _ensure_container(values: dict[str, Any]) -> dict[str, Any]:
     decode = values.setdefault("decode", {})
     containers = decode.setdefault("containers", [])
@@ -476,6 +553,7 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
 
 def _llmd_custom_epp_config_context(plan: ResolvedRunPlan) -> dict[str, Any]:
     runtime = plan.deployment.runtime
+    storage_offloading = _storage_offloading_config(plan) or {}
     return {
         "release_name": plan.deployment.release_name,
         "namespace": plan.deployment.namespace,
@@ -496,6 +574,7 @@ def _llmd_custom_epp_config_context(plan: ResolvedRunPlan) -> dict[str, Any]:
         "runtime_tolerations": runtime.tolerations,
         "runtime_image_pull_secrets": runtime.image_pull_secrets,
         "runtime_resources": runtime.resources,
+        "storage_offloading": storage_offloading,
     }
 
 
@@ -656,11 +735,103 @@ def _recipe_modelserver_container(values: dict[str, Any]) -> dict[str, Any]:
     return containers[0]
 
 
+def _ensure_container_port(container: dict[str, Any], name: str, port: int) -> None:
+    ports = container.setdefault("ports", [])
+    for port_spec in ports:
+        if str(port_spec.get("name") or "") == name:
+            port_spec["containerPort"] = port
+            port_spec["protocol"] = "TCP"
+            return
+    ports.append({"name": name, "containerPort": port, "protocol": "TCP"})
+
+
+def _apply_recipe_storage_offloading(
+    *,
+    overlay_dir: Path,
+    kustomization: dict[str, Any],
+    patch: dict[str, Any],
+    container: dict[str, Any],
+    plan: ResolvedRunPlan,
+    guide_name: str,
+    config: dict[str, Any],
+) -> None:
+    storage_events_port = int(config["storage_events_port"])
+    volume_mounts = container.setdefault("volumeMounts", [])
+    if not any(
+        str(volume_mount.get("name") or "") == _STORAGE_OFFLOADING_VOLUME_NAME
+        for volume_mount in volume_mounts
+    ):
+        volume_mounts.append(
+            {
+                "name": _STORAGE_OFFLOADING_VOLUME_NAME,
+                "mountPath": config["mount_path"],
+                "readOnly": False,
+            }
+        )
+
+    pod_spec = (
+        patch.setdefault("spec", {}).setdefault("template", {}).setdefault("spec", {})
+    )
+    volumes = pod_spec.setdefault("volumes", [])
+    if not any(
+        str(volume.get("name") or "") == _STORAGE_OFFLOADING_VOLUME_NAME
+        for volume in volumes
+    ):
+        volumes.append(
+            {
+                "name": _STORAGE_OFFLOADING_VOLUME_NAME,
+                "persistentVolumeClaim": {"claimName": config["pvc_name"]},
+            }
+        )
+
+    _ensure_container_port(container, "storage-events", storage_events_port)
+
+    service_path = overlay_dir / _STORAGE_OFFLOADING_SERVICE_FILE
+    service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": "storage-events",
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                _BENCHFLOW_RELEASE_LABEL: plan.deployment.release_name,
+            },
+        },
+        "spec": {
+            "selector": {
+                _BENCHFLOW_RELEASE_LABEL: plan.deployment.release_name,
+                _BENCHFLOW_GUIDE_LABEL: guide_name,
+            },
+            "ports": [
+                {
+                    "name": "storage-events",
+                    "port": storage_events_port,
+                    "targetPort": "storage-events",
+                    "protocol": "TCP",
+                }
+            ],
+        },
+    }
+    service_path.write_text(yaml.safe_dump(service, sort_keys=False), encoding="utf-8")
+
+    resources = kustomization.get("resources")
+    if resources is None:
+        resources = []
+        kustomization["resources"] = resources
+    if not isinstance(resources, list):
+        raise CommandError(
+            "expected llm-d modelserver kustomization resources to be a list"
+        )
+    if _STORAGE_OFFLOADING_SERVICE_FILE not in resources:
+        resources.append(_STORAGE_OFFLOADING_SERVICE_FILE)
+
+
 def _patch_recipe_modelserver_overlay(plan: ResolvedRunPlan, overlay_dir: Path) -> None:
     guide_name = _llmd_recipe_guide_name(plan)
     kustomization_path = overlay_dir / "kustomization.yaml"
     patch_path = overlay_dir / "patch-vllm.yaml"
     storage = plan.deployment.model_storage
+    storage_offloading = _storage_offloading_config(plan)
 
     kustomization = yaml.safe_load(kustomization_path.read_text(encoding="utf-8"))
     if not isinstance(kustomization, dict):
@@ -698,10 +869,6 @@ def _patch_recipe_modelserver_overlay(plan: ResolvedRunPlan, overlay_dir: Path) 
                 }
                 if service_field not in fields:
                     fields.append(service_field)
-    kustomization_path.write_text(
-        yaml.safe_dump(kustomization, sort_keys=False), encoding="utf-8"
-    )
-
     patch = yaml.safe_load(patch_path.read_text(encoding="utf-8"))
     if not isinstance(patch, dict):
         raise CommandError(f"expected llm-d modelserver patch not found: {patch_path}")
@@ -822,6 +989,20 @@ def _patch_recipe_modelserver_overlay(plan: ResolvedRunPlan, overlay_dir: Path) 
     if runtime.image_pull_secrets:
         pod_spec["imagePullSecrets"] = list(runtime.image_pull_secrets)
 
+    if storage_offloading:
+        _apply_recipe_storage_offloading(
+            overlay_dir=overlay_dir,
+            kustomization=kustomization,
+            patch=patch,
+            container=container,
+            plan=plan,
+            guide_name=guide_name,
+            config=storage_offloading,
+        )
+
+    kustomization_path.write_text(
+        yaml.safe_dump(kustomization, sort_keys=False), encoding="utf-8"
+    )
     patch_path.write_text(yaml.safe_dump(patch, sort_keys=False), encoding="utf-8")
 
 
@@ -1278,6 +1459,7 @@ def deploy_llmd(
     _record_llmd_repo_head(plan, kubectl_cmd, repo_head)
 
     recipe_layout = _llmd_recipe_layout_available(checkout_dir)
+    storage_offloading = _storage_offloading_config(plan)
     if recipe_layout:
         gateway_mode = str(plan.deployment.gateway or "").strip()
         if gateway_mode not in {"istio", "standalone"}:
@@ -1315,6 +1497,8 @@ def deploy_llmd(
         if gateway_dir is not None:
             _patch_recipe_gateway(plan, gateway_dir)
         _patch_recipe_modelserver_overlay(plan, overlay_dir)
+        if storage_offloading:
+            _ensure_storage_offloading_pvc(plan, kubectl_cmd, storage_offloading)
 
         env = {
             **os.environ,
@@ -1435,6 +1619,10 @@ def deploy_llmd(
             f"in namespace {plan.deployment.namespace}"
         )
     else:
+        if storage_offloading:
+            raise CommandError(
+                "llm-d storage_offloading requires the upstream recipe layout"
+            )
         guide_layout = _llmd_guide_layout(plan)
         guide_dir = checkout_dir / "guides" / guide_layout["guide_dirname"]
         values_file = guide_dir / Path(guide_layout["model_values_relpath"])

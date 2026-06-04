@@ -553,6 +553,13 @@ When RHOAI verbosity is set without a custom EPP config, BenchFlow renders the
 scheduler template with the default scheduler configuration and only adds the
 verbosity flag.
 
+Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
+storage offloading with `spec.options.storage_offloading`. When present,
+BenchFlow creates or reuses a static PVC, mounts it writable in the modelserver,
+exposes the configured storage event port on the modelserver container, and adds
+a storage-event Service to the modelserver overlay. This is intended for the
+`llm-d-storage-offloading` profile, not for ad hoc experiment overrides.
+
 This is intended for deployment-profile variants, not experiment overrides:
 
 ```yaml
