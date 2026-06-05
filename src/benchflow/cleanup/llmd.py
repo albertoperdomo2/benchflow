@@ -35,6 +35,74 @@ def _llmd_recipe_layout_from_repo_ref(repo_ref: str) -> bool:
     return version >= (0, 6, 0)
 
 
+def _storage_offloading_pvc_name(plan: ResolvedRunPlan) -> str:
+    raw_config = plan.deployment.options.get("storage_offloading")
+    if raw_config in (None, "", False):
+        return ""
+    if not isinstance(raw_config, dict):
+        raise CommandError(
+            "deployment profile options.storage_offloading must be a mapping"
+        )
+    if raw_config.get("enabled") is False:
+        return ""
+    return str(raw_config.get("pvc_name") or "llm-d-storage-offloading-cache").strip()
+
+
+def _pvc_exists(kubectl_cmd: str, namespace: str, pvc_name: str) -> bool:
+    probe = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "pvc",
+            pvc_name,
+            "-n",
+            namespace,
+            "-o",
+            "name",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    return probe.returncode == 0 and bool(str(probe.stdout or "").strip())
+
+
+def _delete_storage_offloading_pvc(
+    plan: ResolvedRunPlan,
+    kubectl_cmd: str,
+    *,
+    wait_for_deletion: bool,
+    timeout_seconds: int,
+) -> bool:
+    pvc_name = _storage_offloading_pvc_name(plan)
+    if not pvc_name:
+        return False
+
+    namespace = plan.deployment.namespace
+    existed = _pvc_exists(kubectl_cmd, namespace, pvc_name)
+    run_command(
+        [
+            kubectl_cmd,
+            "delete",
+            "pvc",
+            pvc_name,
+            "-n",
+            namespace,
+            "--ignore-not-found=true",
+        ],
+    )
+    if not wait_for_deletion or not existed:
+        return existed
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if not _pvc_exists(kubectl_cmd, namespace, pvc_name):
+            return True
+        time.sleep(5)
+    raise CommandError(
+        f"timed out waiting for storage offloading PVC deletion: {pvc_name}"
+    )
+
+
 def cleanup_llmd(
     plan: ResolvedRunPlan,
     *,
@@ -72,14 +140,42 @@ def cleanup_llmd(
             if probe.returncode == 0 and str(probe.stdout or "").strip():
                 existing = set()
             elif skip_if_not_exists:
+                _delete_storage_offloading_pvc(
+                    plan,
+                    kubectl_cmd,
+                    wait_for_deletion=wait_for_deletion,
+                    timeout_seconds=timeout_seconds,
+                )
                 return
             else:
+                pvc_deleted = _delete_storage_offloading_pvc(
+                    plan,
+                    kubectl_cmd,
+                    wait_for_deletion=wait_for_deletion,
+                    timeout_seconds=timeout_seconds,
+                )
+                if pvc_deleted:
+                    return
                 raise CommandError(
                     f"no llm-d releases found for {plan.deployment.release_name}"
                 )
         elif skip_if_not_exists:
+            _delete_storage_offloading_pvc(
+                plan,
+                kubectl_cmd,
+                wait_for_deletion=wait_for_deletion,
+                timeout_seconds=timeout_seconds,
+            )
             return
         else:
+            pvc_deleted = _delete_storage_offloading_pvc(
+                plan,
+                kubectl_cmd,
+                wait_for_deletion=wait_for_deletion,
+                timeout_seconds=timeout_seconds,
+            )
+            if pvc_deleted:
+                return
             raise CommandError(
                 f"no llm-d releases found for {plan.deployment.release_name}"
             )
@@ -158,3 +254,10 @@ def cleanup_llmd(
             raise CommandError(
                 f"timed out waiting for Helm release deletion: {release_name}"
             )
+
+    _delete_storage_offloading_pvc(
+        plan,
+        kubectl_cmd,
+        wait_for_deletion=wait_for_deletion,
+        timeout_seconds=timeout_seconds,
+    )
