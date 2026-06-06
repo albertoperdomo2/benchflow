@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import ssl
 import urllib.error
 import urllib.parse
@@ -12,6 +13,8 @@ from pathlib import Path
 from ..cluster import CommandError
 from ..models import ResolvedRunPlan
 from ..ui import detail, step, success, warning
+
+_NO_POD_MATCH = "a^"
 
 
 def _parse_iso8601(value: str) -> datetime:
@@ -127,6 +130,56 @@ def _normalize_series(
     return normalized
 
 
+def _llmd_uses_recipe_layout(repo_ref: str) -> bool:
+    normalized = str(repo_ref or "").strip().lower()
+    if normalized == "main":
+        return True
+    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+][a-z0-9_.-]+)?", normalized)
+    if match is None:
+        return False
+    version = tuple(int(part) for part in match.groups())
+    return version >= (0, 6, 0)
+
+
+def _query_template_values(
+    plan: ResolvedRunPlan, metrics_release_name: str
+) -> dict[str, str]:
+    platform = str(plan.deployment.platform or "").strip().lower()
+    mode = str(plan.deployment.mode or "").strip().lower()
+    modelserver_pod_regex = f".*{metrics_release_name}.*"
+    scheduler_pod_regex = _NO_POD_MATCH
+    scheduler_endpoint_regex = _NO_POD_MATCH
+
+    if platform == "llm-d":
+        if _llmd_uses_recipe_layout(plan.deployment.repo_ref):
+            modelserver_pod_regex = f"ms-{metrics_release_name}-.*"
+            scheduler_pod_regex = f"gaie-{metrics_release_name}-epp.*"
+        else:
+            scheduler_pod_regex = f".*{metrics_release_name}.*"
+        scheduler_endpoint_regex = "(metrics|http-metrics)"
+    elif platform == "rhoai":
+        if mode != "isvc":
+            scheduler_pod_regex = f".*{metrics_release_name}.*router-scheduler.*"
+            scheduler_endpoint_regex = "metrics"
+
+    return {
+        "$namespace": plan.deployment.namespace,
+        "$release": metrics_release_name,
+        "$modelserver_pod_regex": modelserver_pod_regex,
+        "$scheduler_pod_regex": scheduler_pod_regex,
+        "$scheduler_endpoint_regex": scheduler_endpoint_regex,
+    }
+
+
+def _resolve_query_template(query_template: str, values: dict[str, str]) -> str:
+    resolved = query_template
+    for key, value in sorted(
+        values.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        resolved = resolved.replace(key, value)
+    return resolved
+
+
 def collect_metrics(
     plan: ResolvedRunPlan,
     *,
@@ -156,6 +209,7 @@ def collect_metrics(
     metrics_release_name = plan.deployment.target.scoped_release_name(
         plan.deployment.release_name
     )
+    template_values = _query_template_values(plan, metrics_release_name)
 
     queries = plan.metrics.queries or {}
     if not queries:
@@ -204,6 +258,9 @@ def collect_metrics(
         "benchmark_end_time": end_time.isoformat().replace("+00:00", "Z"),
         "query_step": plan.metrics.query_step,
         "query_timeout": plan.metrics.query_timeout,
+        "query_context": {
+            key.lstrip("$"): value for key, value in template_values.items()
+        },
         "queries": {},
         "failures": {},
     }
@@ -212,9 +269,7 @@ def collect_metrics(
     )
 
     for metric_name, query_template in sorted(queries.items()):
-        resolved_query = query_template.replace(
-            "$namespace", plan.deployment.namespace
-        ).replace("$release", metrics_release_name)
+        resolved_query = _resolve_query_template(query_template, template_values)
         query_metadata[metric_name] = resolved_query
         detail(f"Querying metric {metric_name}")
         params = urllib.parse.urlencode(

@@ -333,6 +333,8 @@ def collect_artifacts(
             "inferencepool",
             "llminferenceservices",
             "httproutes",
+            "podmonitors",
+            "servicemonitors",
         ):
             get_result = run_command(
                 [kubectl_cmd, "get", resource_type, "-n", namespace, "-o", "json"],

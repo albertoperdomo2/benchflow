@@ -36,6 +36,7 @@ _BENCHFLOW_RELEASE_LABEL = "benchflow.io/release"
 _BENCHFLOW_EPP_CONFIG_FILE = "benchflow-epp-config.yaml"
 _STORAGE_OFFLOADING_VOLUME_NAME = "storage-offloading"
 _STORAGE_OFFLOADING_SERVICE_FILE = "benchflow-storage-events-service.yaml"
+_MODELSERVER_PODMONITOR_FILE = "benchflow-modelserver-podmonitor.yaml"
 
 
 def _llmd_guide_layout(plan: ResolvedRunPlan) -> dict[str, str]:
@@ -306,6 +307,76 @@ def _storage_offloading_config(plan: ResolvedRunPlan) -> dict[str, Any] | None:
     return config
 
 
+def _recipe_modelserver_podmonitor_manifest(
+    plan: ResolvedRunPlan, guide_name: str
+) -> dict[str, Any]:
+    release_name = plan.deployment.release_name
+    return {
+        "apiVersion": "monitoring.coreos.com/v1",
+        "kind": "PodMonitor",
+        "metadata": {
+            "name": "modelserver",
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                "benchflow.io/platform": "llm-d",
+                _BENCHFLOW_RELEASE_LABEL: release_name,
+            },
+        },
+        "spec": {
+            "selector": {
+                "matchLabels": {
+                    _BENCHFLOW_RELEASE_LABEL: release_name,
+                    _BENCHFLOW_GUIDE_LABEL: guide_name,
+                }
+            },
+            "podMetricsEndpoints": [
+                {
+                    "port": "modelserver",
+                    "path": "/metrics",
+                    "interval": "30s",
+                }
+            ],
+        },
+    }
+
+
+def _recipe_epp_podmonitor_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
+    release_name = plan.deployment.release_name
+    epp_name = f"{_llmd_recipe_scheduler_release_name(plan)}-epp"
+    return {
+        "apiVersion": "monitoring.coreos.com/v1",
+        "kind": "PodMonitor",
+        "metadata": {
+            "name": epp_name,
+            "namespace": plan.deployment.namespace,
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                "benchflow.io/platform": "llm-d",
+                _BENCHFLOW_RELEASE_LABEL: release_name,
+            },
+        },
+        "spec": {
+            "selector": {"matchLabels": {"inferencepool": epp_name}},
+            "podMetricsEndpoints": [
+                {
+                    "port": "metrics",
+                    "path": "/metrics",
+                    "interval": "30s",
+                }
+            ],
+        },
+    }
+
+
+def _apply_recipe_epp_podmonitor(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    manifest = _recipe_epp_podmonitor_manifest(plan)
+    step(f"Applying llm-d EPP PodMonitor {manifest['metadata']['name']}")
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text=yaml.safe_dump(manifest, sort_keys=False),
+    )
+
+
 def _ensure_storage_offloading_pvc(
     plan: ResolvedRunPlan, kubectl_cmd: str, config: dict[str, Any]
 ) -> None:
@@ -365,6 +436,19 @@ def _release_match_labels(release_name: str) -> dict[str, str]:
 
 def _recipe_release_match_labels(release_name: str) -> dict[str, str]:
     return {_BENCHFLOW_RELEASE_LABEL: release_name}
+
+
+def _append_kustomize_resource(kustomization: dict[str, Any], resource: str) -> None:
+    resources = kustomization.get("resources")
+    if resources is None:
+        resources = []
+        kustomization["resources"] = resources
+    if not isinstance(resources, list):
+        raise CommandError(
+            "expected llm-d modelserver kustomization resources to be a list"
+        )
+    if resource not in resources:
+        resources.append(resource)
 
 
 def _llmd_inference_pool_backend_group(repo_ref: str) -> str:
@@ -814,16 +898,7 @@ def _apply_recipe_storage_offloading(
     }
     service_path.write_text(yaml.safe_dump(service, sort_keys=False), encoding="utf-8")
 
-    resources = kustomization.get("resources")
-    if resources is None:
-        resources = []
-        kustomization["resources"] = resources
-    if not isinstance(resources, list):
-        raise CommandError(
-            "expected llm-d modelserver kustomization resources to be a list"
-        )
-    if _STORAGE_OFFLOADING_SERVICE_FILE not in resources:
-        resources.append(_STORAGE_OFFLOADING_SERVICE_FILE)
+    _append_kustomize_resource(kustomization, _STORAGE_OFFLOADING_SERVICE_FILE)
 
 
 def _patch_recipe_modelserver_overlay(plan: ResolvedRunPlan, overlay_dir: Path) -> None:
@@ -989,6 +1064,16 @@ def _patch_recipe_modelserver_overlay(plan: ResolvedRunPlan, overlay_dir: Path) 
     if runtime.image_pull_secrets:
         pod_spec["imagePullSecrets"] = list(runtime.image_pull_secrets)
 
+    podmonitor_path = overlay_dir / _MODELSERVER_PODMONITOR_FILE
+    podmonitor_path.write_text(
+        yaml.safe_dump(
+            _recipe_modelserver_podmonitor_manifest(plan, guide_name),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _append_kustomize_resource(kustomization, _MODELSERVER_PODMONITOR_FILE)
+
     if storage_offloading:
         _apply_recipe_storage_offloading(
             overlay_dir=overlay_dir,
@@ -1093,6 +1178,7 @@ def _capture_manifests(
 
 def _capture_recipe_inputs(
     *,
+    plan: ResolvedRunPlan,
     scheduler_values_file: Path,
     gateway_dir: Path | None,
     overlay_dir: Path,
@@ -1102,6 +1188,10 @@ def _capture_recipe_inputs(
     rendered_dir = manifests_dir / "rendered"
     rendered_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(scheduler_values_file, rendered_dir / "scheduler.values.yaml")
+    (rendered_dir / "epp-podmonitor.yaml").write_text(
+        yaml.safe_dump(_recipe_epp_podmonitor_manifest(plan), sort_keys=False),
+        encoding="utf-8",
+    )
     source_dirs = [(overlay_dir, "modelserver")]
     if gateway_dir is not None:
         source_dirs.insert(0, (gateway_dir, "gateway"))
@@ -1572,6 +1662,7 @@ def deploy_llmd(
         if manifests_dir is not None:
             step(f"Capturing rendered manifests in {manifests_dir}")
             _capture_recipe_inputs(
+                plan=plan,
                 scheduler_values_file=scheduler_values_file,
                 gateway_dir=gateway_dir,
                 overlay_dir=overlay_dir,
@@ -1583,6 +1674,7 @@ def deploy_llmd(
             f"into namespace {plan.deployment.namespace}"
         )
         run_command(helm_args, cwd=guide_dir, env=env)
+        _apply_recipe_epp_podmonitor(plan, kubectl_cmd)
 
         if gateway_mode == "standalone":
             # The official standalone chart renders the Envoy ConfigMap name from
