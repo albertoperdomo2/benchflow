@@ -54,6 +54,25 @@ from matplotlib import rcParams  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 from matplotlib.colors import BoundaryNorm, ListedColormap  # noqa: E402
 
+try:
+    from .load_axis import (
+        BENCHMARK_INDEX_KEY,
+        benchmark_axis_label,
+        benchmark_load_sort_key,
+        coerce_load_number,
+        extract_intended_load,
+        format_load_value,
+    )
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from load_axis import (  # type: ignore
+        BENCHMARK_INDEX_KEY,
+        benchmark_axis_label,
+        benchmark_load_sort_key,
+        coerce_load_number,
+        extract_intended_load,
+        format_load_value,
+    )
+
 # ============================================================================
 # CONFIGURATION: Match academic_plots.py exactly
 # ============================================================================
@@ -159,8 +178,14 @@ def load_benchmarks(path: Path) -> list[dict]:
         payload = json.load(handle)
 
     benchmarks = payload["benchmarks"]
-    benchmarks.sort(key=lambda item: item["config"]["strategy"]["max_concurrency"])
-    return benchmarks
+    indexed_benchmarks = []
+    for index, item in enumerate(benchmarks):
+        if not isinstance(item, dict):
+            continue
+        item.setdefault(BENCHMARK_INDEX_KEY, index)
+        indexed_benchmarks.append((index, item))
+    indexed_benchmarks.sort(key=lambda item: benchmark_load_sort_key(item[1], item[0]))
+    return [item for _, item in indexed_benchmarks]
 
 
 def get_percentile(metric_blob: dict, percentile_name: str) -> float:
@@ -333,12 +358,16 @@ def summarize_benchmarks(
         except (TypeError, ValueError):
             return default
 
-    for benchmark in benchmarks:
+    for benchmark_index, benchmark in enumerate(benchmarks):
         metrics = benchmark["metrics"]
         totals = metrics["request_totals"]
         requests = benchmark["requests"]["successful"]
         incomplete_requests = benchmark["requests"]["incomplete"]
-        concurrency = benchmark["config"]["strategy"]["max_concurrency"]
+        load_value = extract_intended_load(benchmark, benchmark_index)
+        concurrency = coerce_load_number(load_value)
+        if concurrency is None:
+            concurrency = float(benchmark_index + 1)
+        load_axis = benchmark_axis_label(benchmark, benchmark_index)
         duration = float(benchmark["duration"])
         total_requests = totals["total"]
         concurrency_per_gpu = concurrency / gpu_count if gpu_count else np.nan
@@ -380,6 +409,8 @@ def summarize_benchmarks(
             {
                 "benchmark": benchmark,
                 "concurrency": concurrency,
+                "load_axis": load_axis,
+                "load_label": format_load_value(concurrency),
                 "duration": duration,
                 "requests": requests,
                 "incomplete_requests": incomplete_requests,

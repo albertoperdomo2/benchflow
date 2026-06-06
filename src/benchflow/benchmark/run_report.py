@@ -16,7 +16,13 @@ from plotly.subplots import make_subplots
 
 from ..models import ValidationError
 from ..plotting import REPORT_COLOR_PALETTE
-from .processor.processor import _extract_intended_concurrency
+from .load_axis import (
+    BENCHMARK_INDEX_KEY,
+    benchmark_axis_label,
+    benchmark_load_sort_key,
+    extract_intended_load as _extract_intended_concurrency,
+    format_load_value,
+)
 from .run_report_insights import (
     parse_thresholds,
     summarize_benchmarks,
@@ -75,6 +81,7 @@ class RunReportMetadata:
     data_spec: str
     profile: str
     backend: str
+    load_axis: str
     load_points: str
     duration: str
     step: str
@@ -149,23 +156,18 @@ def _merge_rate_values(values: list[object]) -> list[object]:
         return deduplicated
 
 
-def _benchmark_sort_key(item: dict) -> tuple[float, float]:
+def _benchmark_sort_key(item: dict) -> tuple[float, tuple[int, float, str, int]]:
     try:
         start_time = float(item.get("start_time"))
     except (TypeError, ValueError):
         start_time = float("inf")
-    try:
-        concurrency = float(item["config"]["strategy"]["max_concurrency"])
-    except (KeyError, TypeError, ValueError):
-        concurrency = float("inf")
-    return (start_time, concurrency)
+    fallback_index = int(item.get(BENCHMARK_INDEX_KEY, 0) or 0)
+    return (start_time, benchmark_load_sort_key(item, fallback_index))
 
 
-def _benchmark_concurrency_key(item: dict) -> float:
-    try:
-        return float(item["config"]["strategy"]["max_concurrency"])
-    except (KeyError, TypeError, ValueError):
-        return float("inf")
+def _benchmark_load_key(item: dict) -> tuple[int, float, str, int]:
+    fallback_index = int(item.get(BENCHMARK_INDEX_KEY, 0) or 0)
+    return benchmark_load_sort_key(item, fallback_index)
 
 
 def _load_benchmark_payload(paths: ArtifactPaths) -> dict:
@@ -191,7 +193,11 @@ def _load_benchmark_payload(paths: ArtifactPaths) -> dict:
         benchmarks = payload.get("benchmarks", [])
         if not isinstance(benchmarks, list):
             raise ValidationError(f"{benchmark_json} must contain a 'benchmarks' list")
-        merged_benchmarks.extend(item for item in benchmarks if isinstance(item, dict))
+        for item in benchmarks:
+            if not isinstance(item, dict):
+                continue
+            item.setdefault(BENCHMARK_INDEX_KEY, len(merged_benchmarks))
+            merged_benchmarks.append(item)
 
     if merged_rates:
         merged_args["rate"] = _merge_rate_values(merged_rates)
@@ -206,7 +212,7 @@ def _load_benchmark_entries(paths: ArtifactPaths) -> list[dict]:
         raise ValidationError("benchmark results must contain a 'benchmarks' list")
     return sorted(
         (item for item in benchmarks if isinstance(item, dict)),
-        key=_benchmark_concurrency_key,
+        key=_benchmark_load_key,
     )
 
 
@@ -447,10 +453,15 @@ def _load_report_metadata(paths: ArtifactPaths) -> RunReportMetadata:
     backend_kwargs = args.get("backend_kwargs", {}) or {}
     benchmark_entries = benchmark.get("benchmarks", [])
     fallback_rates = [
-        item.get("config", {}).get("strategy", {}).get("max_concurrency")
-        for item in benchmark_entries
+        _extract_intended_concurrency(item, index)
+        for index, item in enumerate(benchmark_entries)
         if isinstance(item, dict)
     ]
+    load_axis = (
+        benchmark_axis_label(benchmark_entries[0], 0)
+        if benchmark_entries and isinstance(benchmark_entries[0], dict)
+        else "Concurrency"
+    )
 
     replicas = _required_int(metadata, "replicas")
     tp = _required_int(metadata, "tp")
@@ -476,7 +487,7 @@ def _load_report_metadata(paths: ArtifactPaths) -> RunReportMetadata:
     rates = args.get("rate") or fallback_rates
     try:
         load_points = ", ".join(
-            str(int(value)) for value in sorted(float(v) for v in rates)
+            format_load_value(value) for value in sorted(float(v) for v in rates)
         )
     except (TypeError, ValueError):
         load_points = ", ".join(str(v) for v in rates)
@@ -509,6 +520,7 @@ def _load_report_metadata(paths: ArtifactPaths) -> RunReportMetadata:
         data_spec=data_spec,
         profile=profile,
         backend=backend,
+        load_axis=load_axis,
         load_points=load_points,
         duration=duration_text,
         step=str(metrics_summary.get("query_step", "unknown")),
@@ -544,13 +556,15 @@ def _load_benchmark_phase_segments(
             continue
         concurrency = _extract_intended_concurrency(item, index)
         try:
-            concurrency_int = int(concurrency)
+            load_value = float(concurrency)
         except (TypeError, ValueError):
             continue
+        load_axis = benchmark_axis_label(item, index)
+        load_prefix = "RPS" if load_axis == "RPS" else "C"
         segments.append(
             {
-                "concurrency": concurrency_int,
-                "label": f"C={concurrency_int}",
+                "concurrency": load_value,
+                "label": f"{load_prefix}={format_load_value(load_value)}",
                 "start_ts": start,
                 "end_ts": end,
                 "start_min": (start - global_start) / 60.0,
@@ -797,7 +811,7 @@ def _build_gpu_frontier_figure(
             x=[entry["value"] for entry in phase_gpu],
             y=[entry["value"] for entry in phase_tok],
             mode="markers+text",
-            text=[str(entry["concurrency"]) for entry in phase_gpu],
+            text=[format_load_value(entry["concurrency"]) for entry in phase_gpu],
             textposition="top center",
             name="Load point",
             marker={
@@ -816,7 +830,7 @@ def _build_gpu_frontier_figure(
                 dtype=object,
             ).T,
             hovertemplate=(
-                "Concurrency %{text}<br>"
+                "Load point %{text}<br>"
                 "Phase %{customdata[1]}<br>"
                 "Avg GPU util %{x:.1f}%<br>"
                 "Output tok/s/GPU %{y:.1f}<br>"
@@ -972,9 +986,12 @@ def _resolve_output_path(
 
 def _build_header_figure(metadata: RunReportMetadata, columns: int) -> go.Figure:
     width = columns * FIGURE_WIDTH + max(columns - 1, 0) * 24
+    load_axis_text = (
+        "RPS levels" if metadata.load_axis == "RPS" else "concurrency levels"
+    )
     subtitle = (
         f"{metadata.data_spec} | "
-        f"concurrency levels {metadata.load_points} | "
+        f"{load_axis_text} {metadata.load_points} | "
         f"TP {metadata.tp} | replicas {metadata.replicas}"
     )
 

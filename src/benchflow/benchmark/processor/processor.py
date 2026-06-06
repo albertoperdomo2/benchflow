@@ -14,6 +14,10 @@ import yaml
 from botocore.exceptions import ClientError
 from plotly.subplots import make_subplots
 
+from ..load_axis import (
+    benchmark_axis_label as _benchmark_axis_label,
+    extract_intended_load as _extract_intended_concurrency,
+)
 from ...plotting import REPORT_COLOR_PALETTE
 from ...ui import configure_logging
 
@@ -155,85 +159,6 @@ def _ordered_data_profile_items(data_profile: Dict[str, Any]) -> list[tuple[str,
         key=lambda item: item[0],
     )
     return [*preferred, *remaining]
-
-
-def _extract_intended_concurrency(
-    benchmark_run: Dict[str, Any], benchmark_index: int
-) -> Any:
-    """Extract the sweep axis across old and new GuideLLM schemas."""
-
-    def axis_value(values: Any) -> Any:
-        if not isinstance(values, list):
-            return values
-        if len(values) == 1:
-            return values[0]
-        if benchmark_index < len(values):
-            return values[benchmark_index]
-        return values[0] if values else None
-
-    streams_value = _get_nested(benchmark_run, "scheduler", "strategy", "streams")
-    if streams_value is not None:
-        return streams_value
-
-    strategy_rate = _get_nested(benchmark_run, "config", "strategy", "rate")
-    if strategy_rate is not None:
-        return axis_value(strategy_rate)
-
-    profile_args = _get_nested(benchmark_run, "config", "profile") or _get_nested(
-        benchmark_run, "args", "profile", default={}
-    )
-    streams = profile_args.get("streams", [])
-    if streams:
-        return axis_value(streams)
-    profile_rate = profile_args.get("rate", [])
-    return axis_value(profile_rate) if profile_rate else None
-
-
-def _is_rate_based_benchmark(benchmark_run: Dict[str, Any]) -> bool:
-    """Return true when the GuideLLM sweep axis is request rate, not concurrency."""
-    explicit_axis = benchmark_run.get("load axis")
-    if explicit_axis is not None:
-        return str(explicit_axis).strip().upper() == "RPS"
-
-    strategy = _get_nested(benchmark_run, "config", "strategy", default={})
-    profile = _get_nested(benchmark_run, "config", "profile", default={})
-    args_profile = _get_nested(benchmark_run, "args", "profile")
-    if args_profile is None:
-        args_profile = benchmark_run.get("profile")
-
-    rate_strategy_types = {
-        "poisson",
-        "fixed",
-        "fixed_rate",
-        "fixed-rate",
-        "fixed_schedule",
-        "fixed-schedule",
-    }
-    observed_types: set[str] = set()
-    for raw_value in (
-        strategy.get("type_") if isinstance(strategy, dict) else None,
-        profile.get("type_") if isinstance(profile, dict) else None,
-        profile.get("strategy_type") if isinstance(profile, dict) else None,
-        args_profile,
-    ):
-        if raw_value is not None:
-            observed_types.add(str(raw_value).strip().lower())
-
-    if observed_types & rate_strategy_types:
-        return True
-
-    strategy_types = profile.get("strategy_types") if isinstance(profile, dict) else []
-    if isinstance(strategy_types, list) and strategy_types:
-        normalized = {str(item).strip().lower() for item in strategy_types}
-        if normalized and normalized <= rate_strategy_types:
-            return True
-
-    return False
-
-
-def _benchmark_axis_label(benchmark_run: Dict[str, Any], benchmark_index: int) -> str:
-    """Choose the report x-axis label based on the benchmark sweep shape."""
-    return "RPS" if _is_rate_based_benchmark(benchmark_run) else "Concurrency"
 
 
 def _has_metric_samples(metric_group: Dict[str, Any]) -> bool:

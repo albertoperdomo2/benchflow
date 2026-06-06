@@ -33,6 +33,7 @@ from .run_report_insights import (
     actual_concurrency_percentiles,
     ccdf,
     compute_slo_sweep,
+    format_load_value,
     load_benchmarks,
     pareto_frontier,
     parse_thresholds,
@@ -128,6 +129,32 @@ def title_text(title: str, subtitle: str) -> str:
     )
 
 
+def row_load_label(row: dict) -> str:
+    return str(row.get("load_label") or format_load_value(row["concurrency"]))
+
+
+def load_axis_label(rows: list[dict]) -> str:
+    labels = {
+        str(row.get("load_axis") or "Concurrency").strip() or "Concurrency"
+        for row in rows
+    }
+    return labels.pop() if len(labels) == 1 else "Load"
+
+
+def target_load_axis_title(rows: list[dict], *, per_gpu: bool = False) -> str:
+    axis_label = load_axis_label(rows)
+    if axis_label == "RPS":
+        return "Target RPS per GPU" if per_gpu else "Target RPS"
+    if axis_label == "Concurrency":
+        return "Target concurrency per GPU" if per_gpu else "Target concurrency"
+    return f"Target {axis_label.lower()} per GPU" if per_gpu else f"Target {axis_label}"
+
+
+def load_hover_label(rows: list[dict]) -> str:
+    axis_label = load_axis_label(rows)
+    return "Load point" if axis_label == "Load" else axis_label
+
+
 def load_report_metadata(
     input_path: Path, rows: list[dict], gpu_count: float
 ) -> dict[str, str]:
@@ -158,7 +185,7 @@ def load_report_metadata(
     config_backend = first_benchmark.get("config", {}).get("backend", {}) or {}
     config_environment = first_benchmark.get("config", {}).get("environment", {}) or {}
 
-    load_points = ", ".join(str(int(row["concurrency"])) for row in rows)
+    load_points = ", ".join(row_load_label(row) for row in rows)
 
     duration_text = (
         f"{int(max_seconds)}s cap"
@@ -354,7 +381,8 @@ def discrete_colorscale(colors: list[str]) -> list[list[float | str]]:
 
 
 def build_completion_breakdown(rows: list[dict]) -> go.Figure:
-    concurrency = [str(int(row["concurrency"])) for row in rows]
+    concurrency = [row_load_label(row) for row in rows]
+    hover_label = load_hover_label(rows)
     success_pct = [row["success_rate"] * 100.0 for row in rows]
     incomplete_pct = [row["incomplete_rate"] * 100.0 for row in rows]
     errored_pct = [row["errored_rate"] * 100.0 for row in rows]
@@ -366,7 +394,7 @@ def build_completion_breakdown(rows: list[dict]) -> go.Figure:
         name="Successful",
         marker_color=COLORS["blue"],
         customdata=[[row["successful"], row["total"]] for row in rows],
-        hovertemplate="Concurrency=%{x}<br>Successful=%{y:.2f}%<br>Count=%{customdata[0]}/%{customdata[1]}<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Successful=%{{y:.2f}}%<br>Count=%{{customdata[0]}}/%{{customdata[1]}}<extra></extra>",
     )
     fig.add_bar(
         x=concurrency,
@@ -374,7 +402,7 @@ def build_completion_breakdown(rows: list[dict]) -> go.Figure:
         name="Incomplete",
         marker_color=COLORS["orange"],
         customdata=[[row["incomplete"], row["total"]] for row in rows],
-        hovertemplate="Concurrency=%{x}<br>Incomplete=%{y:.2f}%<br>Count=%{customdata[0]}/%{customdata[1]}<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Incomplete=%{{y:.2f}}%<br>Count=%{{customdata[0]}}/%{{customdata[1]}}<extra></extra>",
     )
     if any(value > 0 for value in errored_pct):
         fig.add_bar(
@@ -383,7 +411,7 @@ def build_completion_breakdown(rows: list[dict]) -> go.Figure:
             name="Errored",
             marker_color=COLORS["red"],
             customdata=[[row["errored"], row["total"]] for row in rows],
-            hovertemplate="Concurrency=%{x}<br>Errored=%{y:.2f}%<br>Count=%{customdata[0]}/%{customdata[1]}<extra></extra>",
+            hovertemplate=f"{hover_label}=%{{x}}<br>Errored=%{{y:.2f}}%<br>Count=%{{customdata[0]}}/%{{customdata[1]}}<extra></extra>",
         )
 
     fig.update_layout(barmode="stack")
@@ -393,7 +421,7 @@ def build_completion_breakdown(rows: list[dict]) -> go.Figure:
         showgrid=True,
         gridcolor="rgba(0,0,0,0.08)",
     )
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     return apply_layout(
         fig,
         title="(a) Completion Breakdown",
@@ -405,6 +433,7 @@ def build_completion_breakdown(rows: list[dict]) -> go.Figure:
 
 def build_tail_amplification(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     series = [
         ("TTFT p95/p50", "ttft_tail_p95_p50", COLORS["blue"], "solid", "circle"),
@@ -420,10 +449,10 @@ def build_tail_amplification(rows: list[dict]) -> go.Figure:
             name=name,
             line={"color": color, "width": 2, "dash": dash},
             marker={"symbol": symbol, "size": 8},
-            hovertemplate="Concurrency=%{x}<br>" + name + "=%{y:.2f}<extra></extra>",
+            hovertemplate=f"{hover_label}=%{{x}}<br>{name}=%{{y:.2f}}<extra></extra>",
         )
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Tail amplification ratio (pXX/p50)",
         showgrid=True,
@@ -438,6 +467,7 @@ def build_tail_amplification(rows: list[dict]) -> go.Figure:
 
 def build_ttft_tpot_coupling(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     fig.add_scatter(
         x=concurrency,
@@ -445,13 +475,13 @@ def build_ttft_tpot_coupling(rows: list[dict]) -> go.Figure:
         mode="lines+markers",
         line={"color": COLORS["purple"], "width": 2},
         marker={"size": 8},
-        hovertemplate="Concurrency=%{x}<br>Correlation=%{y:.3f}<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Correlation=%{{y:.3f}}<extra></extra>",
         name="Correlation",
         showlegend=False,
     )
     fig.add_hline(y=0.0, line_dash="dash", line_color=COLORS["gray"], line_width=1)
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Correlation: TTFT vs TPOT",
         range=[-0.1, 1.0],
@@ -470,6 +500,7 @@ def build_ttft_ccdf(rows: list[dict]) -> go.Figure:
     row_by_concurrency = {row["concurrency"]: row for row in rows}
     colors = [COLORS["blue"], COLORS["orange"], COLORS["green"], COLORS["red"]]
     symbols = ["circle", "square", "triangle-up", "triangle-down"]
+    level_prefix = "RPS" if load_axis_label(rows) == "RPS" else "C"
 
     fig = go.Figure()
     for level, color, symbol in zip(levels, colors, symbols):
@@ -484,7 +515,7 @@ def build_ttft_ccdf(rows: list[dict]) -> go.Figure:
             mode="lines+markers",
             line={"color": color, "width": 2, "shape": "hv"},
             marker={"symbol": symbol, "size": 6},
-            name=f"C={level}",
+            name=f"{level_prefix}={format_load_value(level)}",
             hovertemplate="TTFT=%{x:.1f} ms<br>P(TTFT > x)=%{y:.4f}<extra></extra>",
         )
 
@@ -508,10 +539,12 @@ def build_ttft_box_distribution(rows: list[dict]) -> go.Figure:
     categories = []
     ttft_values = []
     for row in rows:
-        label = str(int(row["concurrency"]))
+        label = row_load_label(row)
         values = [request["time_to_first_token_ms"] for request in row["requests"]]
         categories.extend([label] * len(values))
         ttft_values.extend(values)
+    category_order = [row_load_label(row) for row in rows]
+    hover_label = load_hover_label(rows)
 
     fig = go.Figure()
     fig.add_box(
@@ -521,30 +554,30 @@ def build_ttft_box_distribution(rows: list[dict]) -> go.Figure:
         boxpoints=False,
         line={"color": COLORS["blue"]},
         fillcolor="rgba(50,116,161,0.45)",
-        hovertemplate="Concurrency=%{x}<br>TTFT=%{y:.1f} ms<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>TTFT=%{{y:.1f}} ms<extra></extra>",
     )
     fig.add_scatter(
-        x=[str(int(row["concurrency"])) for row in rows],
+        x=category_order,
         y=[row["ttft_p50_ms"] for row in rows],
         mode="lines+markers",
         line={"color": COLORS["green"], "width": 2},
         marker={"size": 8},
         name="p50",
-        hovertemplate="Concurrency=%{x}<br>TTFT p50=%{y:.1f} ms<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>TTFT p50=%{{y:.1f}} ms<extra></extra>",
     )
     fig.add_scatter(
-        x=[str(int(row["concurrency"])) for row in rows],
+        x=category_order,
         y=[row["ttft_p95_ms"] for row in rows],
         mode="lines+markers",
         line={"color": COLORS["orange"], "width": 2, "dash": "dash"},
         marker={"size": 8},
         name="p95",
-        hovertemplate="Concurrency=%{x}<br>TTFT p95=%{y:.1f} ms<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>TTFT p95=%{{y:.1f}} ms<extra></extra>",
     )
     fig.update_xaxes(
-        title_text="Concurrency",
+        title_text=load_axis_label(rows),
         categoryorder="array",
-        categoryarray=[str(int(row["concurrency"])) for row in rows],
+        categoryarray=category_order,
     )
     fig.update_yaxes(
         type="log", title_text="TTFT (ms)", showgrid=True, gridcolor="rgba(0,0,0,0.08)"
@@ -558,12 +591,13 @@ def build_ttft_box_distribution(rows: list[dict]) -> go.Figure:
 
 def build_throughput_latency_frontier(rows: list[dict]) -> go.Figure:
     frontier = pareto_frontier(rows)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     fig.add_scatter(
         x=[row["ttft_p95_ms"] for row in rows],
         y=[row["raw_success_rps"] for row in rows],
         mode="markers+text",
-        text=[str(row["concurrency"]) for row in rows],
+        text=[row_load_label(row) for row in rows],
         textposition="top center",
         marker={
             "size": 10,
@@ -572,7 +606,7 @@ def build_throughput_latency_frontier(rows: list[dict]) -> go.Figure:
             "opacity": 0.8,
         },
         name="Tested points",
-        hovertemplate="Concurrency=%{text}<br>TTFT p95=%{x:.1f} ms<br>Successful req/s=%{y:.3f}<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{text}}<br>TTFT p95=%{{x:.1f}} ms<br>Successful req/s=%{{y:.3f}}<extra></extra>",
     )
     fig.add_scatter(
         x=[row["ttft_p95_ms"] for row in frontier],
@@ -651,6 +685,7 @@ def build_temporal_stability(rows: list[dict], bin_count: int) -> go.Figure:
 
 def build_request_throughput(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     fig.add_scatter(
         x=concurrency,
@@ -659,11 +694,11 @@ def build_request_throughput(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["blue"], "width": 2},
         marker={"size": 8},
         name="Successful req/s",
-        hovertemplate="Concurrency=%{x}<br>Successful req/s=%{y:.3f}<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Successful req/s=%{{y:.3f}}<extra></extra>",
         showlegend=False,
     )
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Successful request throughput (req/s)",
         showgrid=True,
@@ -678,6 +713,7 @@ def build_request_throughput(rows: list[dict]) -> go.Figure:
 
 def build_delivered_token_throughput(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     series = [
         (
@@ -707,12 +743,10 @@ def build_delivered_token_throughput(rows: list[dict]) -> go.Figure:
             line={"color": color, "width": 2},
             marker={"size": 8, "symbol": symbol},
             name=name,
-            hovertemplate="Concurrency=%{x}<br>"
-            + name
-            + "=%{y:.3f} k tok/s<extra></extra>",
+            hovertemplate=f"{hover_label}=%{{x}}<br>{name}=%{{y:.3f}} k tok/s<extra></extra>",
         )
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Delivered token throughput (k tok/s)",
         showgrid=True,
@@ -728,13 +762,16 @@ def build_delivered_token_throughput(rows: list[dict]) -> go.Figure:
 def build_scaling_efficiency(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
     baseline = min(rows, key=lambda row: row["concurrency"])
+    hover_label = load_hover_label(rows)
+    baseline_load = baseline["concurrency"] or 1.0
     req_eff = [
-        row["raw_success_rps"] / (baseline["raw_success_rps"] * row["concurrency"])
+        row["raw_success_rps"]
+        / (baseline["raw_success_rps"] * (row["concurrency"] / baseline_load))
         for row in rows
     ]
     tok_eff = [
         row["successful_output_toksps"]
-        / (baseline["successful_output_toksps"] * row["concurrency"])
+        / (baseline["successful_output_toksps"] * (row["concurrency"] / baseline_load))
         for row in rows
     ]
 
@@ -746,7 +783,7 @@ def build_scaling_efficiency(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["gray"], "width": 2},
         marker={"size": 8},
         name="Req/s",
-        hovertemplate="Concurrency=%{x}<br>Req/s efficiency=%{y:.3f}<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Req/s efficiency=%{{y:.3f}}<extra></extra>",
     )
     fig.add_scatter(
         x=concurrency,
@@ -755,11 +792,11 @@ def build_scaling_efficiency(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["orange"], "width": 2},
         marker={"size": 8, "symbol": "square"},
         name="Output tok/s",
-        hovertemplate="Concurrency=%{x}<br>Output tok/s efficiency=%{y:.3f}<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Output tok/s efficiency=%{{y:.3f}}<extra></extra>",
     )
     fig.add_hline(y=1.0, line_dash="dash", line_color=COLORS["gray"], line_width=1)
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Scaling efficiency = observed / linear baseline",
         showgrid=True,
@@ -768,12 +805,13 @@ def build_scaling_efficiency(rows: list[dict]) -> go.Figure:
     return apply_layout(
         fig,
         title="(j) Scaling Efficiency",
-        subtitle="Computed as throughput / (single-stream baseline throughput x target concurrency), shown for req/s and output tok/s. Values closer to 1 are better.",
+        subtitle=f"Computed as throughput / (baseline throughput x target {load_axis_label(rows).lower()} ratio), shown for req/s and output tok/s. Values closer to 1 are better.",
     )
 
 
 def build_per_request_decode_rate(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     fig.add_scatter(
         x=concurrency,
@@ -782,7 +820,7 @@ def build_per_request_decode_rate(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["blue"], "width": 2},
         marker={"size": 8},
         name="p50",
-        hovertemplate="Concurrency=%{x}<br>p50=%{y:.2f} output tok/s<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>p50=%{{y:.2f}} output tok/s<extra></extra>",
     )
     fig.add_scatter(
         x=concurrency,
@@ -791,10 +829,10 @@ def build_per_request_decode_rate(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["red"], "width": 2},
         marker={"size": 8, "symbol": "square"},
         name="p05",
-        hovertemplate="Concurrency=%{x}<br>p05=%{y:.2f} output tok/s<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>p05=%{{y:.2f}} output tok/s<extra></extra>",
     )
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Per-request decode rate (output tok/s)",
         showgrid=True,
@@ -834,7 +872,9 @@ def build_best_concurrency_sweep(
     rows: list[dict], ttft_thresholds: list[float], itl_thresholds: list[float]
 ) -> go.Figure:
     _, best_concurrency = compute_slo_sweep(rows, ttft_thresholds, itl_thresholds)
-    unique_concurrency = sorted({int(row["concurrency"]) for row in rows})
+    unique_concurrency = sorted({float(row["concurrency"]) for row in rows})
+    axis_label = load_axis_label(rows)
+    best_axis_title = "Best RPS" if axis_label == "RPS" else "Best concurrency"
     palette = [
         COLORS["blue"],
         COLORS["orange"],
@@ -855,25 +895,26 @@ def build_best_concurrency_sweep(
             zmax=max(unique_concurrency) + 0.5,
             colorscale=colorscale,
             colorbar={
-                "title": "Concurrency",
+                "title": axis_label,
                 "tickmode": "array",
                 "tickvals": unique_concurrency,
-                "ticktext": [str(value) for value in unique_concurrency],
+                "ticktext": [format_load_value(value) for value in unique_concurrency],
             },
-            hovertemplate="TTFT threshold=%{y:.0f} ms<br>ITL threshold=%{x:.0f} ms<br>Best concurrency=%{z:.0f}<extra></extra>",
+            hovertemplate=f"TTFT threshold=%{{y:.0f}} ms<br>ITL threshold=%{{x:.0f}} ms<br>{best_axis_title}=%{{z:g}}<extra></extra>",
         )
     )
     fig.update_xaxes(title_text="ITL threshold (ms)", tickangle=45, showgrid=False)
     fig.update_yaxes(title_text="TTFT threshold (ms)", showgrid=False)
     return apply_layout(
         fig,
-        title="(m) Best Concurrency by SLO",
-        subtitle="Each cell shows which tested concurrency maximizes goodput for that candidate SLO; it turns a latency target into an operating point.",
+        title=f"(m) {best_axis_title} by SLO",
+        subtitle=f"Each cell shows which tested {axis_label.lower()} maximizes goodput for that candidate SLO; it turns a latency target into an operating point.",
     )
 
 
 def build_scheduler_queue_wait(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     fig.add_scatter(
         x=concurrency,
@@ -882,7 +923,7 @@ def build_scheduler_queue_wait(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["blue"], "width": 2},
         marker={"size": 8},
         name="p50",
-        hovertemplate="Concurrency=%{x}<br>Queue wait p50=%{y:.4f} s<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Queue wait p50=%{{y:.4f}} s<extra></extra>",
     )
     fig.add_scatter(
         x=concurrency,
@@ -891,10 +932,10 @@ def build_scheduler_queue_wait(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["red"], "width": 2},
         marker={"size": 8, "symbol": "square"},
         name="p95",
-        hovertemplate="Concurrency=%{x}<br>Queue wait p95=%{y:.4f} s<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Queue wait p95=%{{y:.4f}} s<extra></extra>",
     )
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         type="log",
         title_text="Scheduler queue wait (s)",
@@ -910,6 +951,7 @@ def build_scheduler_queue_wait(rows: list[dict]) -> go.Figure:
 
 def build_effective_prefill_decode_rate(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     fig.add_scatter(
         x=concurrency,
@@ -918,7 +960,7 @@ def build_effective_prefill_decode_rate(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["green"], "width": 2},
         marker={"size": 8},
         name="Prefill tok/s p50",
-        hovertemplate="Concurrency=%{x}<br>Prefill p50=%{y:.3f} k tok/s<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Prefill p50=%{{y:.3f}} k tok/s<extra></extra>",
     )
     fig.add_scatter(
         x=concurrency,
@@ -927,10 +969,10 @@ def build_effective_prefill_decode_rate(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["orange"], "width": 2},
         marker={"size": 8, "symbol": "square"},
         name="Decode tok/s p50",
-        hovertemplate="Concurrency=%{x}<br>Decode p50=%{y:.3f} k tok/s<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Decode p50=%{{y:.3f}} k tok/s<extra></extra>",
     )
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Effective stage throughput (k tok/s)",
         showgrid=True,
@@ -944,7 +986,8 @@ def build_effective_prefill_decode_rate(rows: list[dict]) -> go.Figure:
 
 
 def build_useful_vs_wasted_output(rows: list[dict]) -> go.Figure:
-    concurrency = [str(int(row["concurrency"])) for row in rows]
+    concurrency = [row_load_label(row) for row in rows]
+    hover_label = load_hover_label(rows)
     useful = [row["successful_output_toksps"] / 1000.0 for row in rows]
     wasted = [row["incomplete_output_toksps"] / 1000.0 for row in rows]
     fig = go.Figure()
@@ -953,17 +996,17 @@ def build_useful_vs_wasted_output(rows: list[dict]) -> go.Figure:
         y=useful,
         name="Useful output tok/s",
         marker_color=COLORS["blue"],
-        hovertemplate="Concurrency=%{x}<br>Useful output=%{y:.3f} k tok/s<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Useful output=%{{y:.3f}} k tok/s<extra></extra>",
     )
     fig.add_bar(
         x=concurrency,
         y=wasted,
         name="Wasted partial output tok/s",
         marker_color=COLORS["orange"],
-        hovertemplate="Concurrency=%{x}<br>Wasted output=%{y:.3f} k tok/s<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Wasted output=%{{y:.3f}} k tok/s<extra></extra>",
     )
     fig.update_layout(barmode="stack")
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Output token throughput (k tok/s)",
         showgrid=True,
@@ -978,6 +1021,7 @@ def build_useful_vs_wasted_output(rows: list[dict]) -> go.Figure:
 
 def build_cancelled_request_progress(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     fig.add_scatter(
         x=concurrency,
@@ -986,7 +1030,7 @@ def build_cancelled_request_progress(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["blue"], "width": 2},
         marker={"size": 8},
         name="Mean",
-        hovertemplate="Concurrency=%{x}<br>Mean progress=%{y:.1f}%<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Mean progress=%{{y:.1f}}%<extra></extra>",
     )
     fig.add_scatter(
         x=concurrency,
@@ -995,10 +1039,10 @@ def build_cancelled_request_progress(rows: list[dict]) -> go.Figure:
         line={"color": COLORS["orange"], "width": 2},
         marker={"size": 8, "symbol": "square"},
         name="p50",
-        hovertemplate="Concurrency=%{x}<br>p50 progress=%{y:.1f}%<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{x}}<br>p50 progress=%{{y:.1f}}%<extra></extra>",
     )
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         title_text="Cancelled progress (% of target output)",
         showgrid=True,
@@ -1015,6 +1059,7 @@ def build_token_throughput_per_gpu(rows: list[dict]) -> go.Figure:
     concurrency_per_gpu = np.asarray(
         [row["concurrency_per_gpu"] for row in rows], dtype=float
     )
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     series = [
         (
@@ -1044,12 +1089,10 @@ def build_token_throughput_per_gpu(rows: list[dict]) -> go.Figure:
             line={"color": color, "width": 2},
             marker={"size": 8, "symbol": symbol},
             name=name,
-            hovertemplate="Concurrency/GPU=%{x:g}<br>"
-            + name
-            + "=%{y:.3f} k tok/s/GPU<extra></extra>",
+            hovertemplate=f"{hover_label}/GPU=%{{x:g}}<br>{name}=%{{y:.3f}} k tok/s/GPU<extra></extra>",
         )
     apply_log_concurrency_axis(fig, "x", concurrency_per_gpu)
-    fig.update_xaxes(title_text="Target concurrency per GPU")
+    fig.update_xaxes(title_text=target_load_axis_title(rows, per_gpu=True))
     fig.update_yaxes(
         title_text="Delivered token throughput (k tok/s/GPU)",
         showgrid=True,
@@ -1058,11 +1101,14 @@ def build_token_throughput_per_gpu(rows: list[dict]) -> go.Figure:
     return apply_layout(
         fig,
         title="(r) Token Throughput per GPU",
-        subtitle="Computed as delivered prompt, output, and total tok/s divided by GPU count; x is target concurrency per GPU. Higher is better.",
+        subtitle=f"Computed as delivered prompt, output, and total tok/s divided by GPU count; x is {target_load_axis_title(rows, per_gpu=True).lower()}. Higher is better.",
     )
 
 
 def build_throughput_efficiency_per_gpu(rows: list[dict]) -> go.Figure:
+    axis_label = load_axis_label(rows)
+    axis_label_lower = axis_label.lower()
+    hover_label = load_hover_label(rows)
     interactivity = [
         row["successful_output_toksps"] / row["concurrency"] for row in rows
     ]
@@ -1078,17 +1124,17 @@ def build_throughput_efficiency_per_gpu(rows: list[dict]) -> go.Figure:
             "color": COLORS["orange"],
             "line": {"color": "black", "width": 0.6},
         },
-        text=[str(int(row["concurrency"])) for row in rows],
+        text=[row_load_label(row) for row in rows],
         textposition="top center",
         name="Load point",
         hovertemplate=(
-            "Concurrency=%{text}<br>"
-            "Interactivity=%{x:.2f} output tok/s/concurrency<br>"
+            f"{hover_label}=%{{text}}<br>"
+            f"Interactivity=%{{x:.2f}} output tok/s/{axis_label_lower}<br>"
             "Output throughput=%{y:.2f} tok/s/GPU<extra></extra>"
         ),
     )
     fig.update_xaxes(
-        title_text="Interactivity (output tok/s per target concurrency)",
+        title_text=f"Interactivity (output tok/s per target {axis_label_lower})",
         showgrid=True,
         gridcolor="rgba(0,0,0,0.08)",
     )
@@ -1100,7 +1146,7 @@ def build_throughput_efficiency_per_gpu(rows: list[dict]) -> go.Figure:
     return apply_layout(
         fig,
         title="(s) Throughput Efficiency per GPU",
-        subtitle="Computed as x = successful output tok/s / target concurrency and y = successful output tok/s / GPU count. Up-right is better.",
+        subtitle=f"Computed as x = successful output tok/s / target {axis_label_lower} and y = successful output tok/s / GPU count. Up-right is better.",
     )
 
 
@@ -1158,6 +1204,7 @@ def build_ttft_vs_actual_concurrency(rows: list[dict]) -> go.Figure:
 
 def build_delay_decomposition(rows: list[dict]) -> go.Figure:
     concurrency = np.asarray([row["concurrency"] for row in rows], dtype=float)
+    hover_label = load_hover_label(rows)
     fig = go.Figure()
     series = [
         (
@@ -1211,10 +1258,10 @@ def build_delay_decomposition(rows: list[dict]) -> go.Figure:
             line={"color": color, "width": 2, "dash": dash},
             marker={"symbol": symbol, "size": 8},
             name=name,
-            hovertemplate="Concurrency=%{x}<br>" + name + "=%{y:.4f} s<extra></extra>",
+            hovertemplate=f"{hover_label}=%{{x}}<br>{name}=%{{y:.4f}} s<extra></extra>",
         )
     apply_log_concurrency_axis(fig, "x", concurrency)
-    fig.update_xaxes(title_text="Target concurrency")
+    fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
         type="log",
         title_text="Latency component (s)",
