@@ -56,6 +56,8 @@ PLOTLY_CONFIG = {
 FIGURE_WIDTH = 640
 FIGURE_HEIGHT = 520
 SUBTITLE_WRAP = 64
+PHASE_LABEL_ALL_LIMIT = 8
+PHASE_LABEL_DENSE_LIMIT = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,12 +397,24 @@ def _apply_common_axes(fig: go.Figure) -> None:
     fig.update_yaxes(showgrid=True, gridcolor="#e8e8e8", zeroline=False)
 
 
+def _phase_label_indices(segment_count: int) -> set[int]:
+    if segment_count <= PHASE_LABEL_ALL_LIMIT:
+        return set(range(segment_count))
+
+    label_count = min(PHASE_LABEL_DENSE_LIMIT, segment_count)
+    last_index = segment_count - 1
+    return {
+        round(index * last_index / (label_count - 1)) for index in range(label_count)
+    }
+
+
 def _apply_phase_bands(
     fig: go.Figure,
     segments: list[dict[str, float | int | str]],
     *,
     label_y: float = 1.06,
 ) -> None:
+    label_indices = _phase_label_indices(len(segments))
     for index, segment in enumerate(segments):
         if index % 2 == 0:
             fig.add_vrect(
@@ -410,6 +424,8 @@ def _apply_phase_bands(
                 line_width=0,
                 layer="below",
             )
+        if index not in label_indices:
+            continue
         fig.add_annotation(
             x=float(segment["mid_min"]),
             y=label_y,
