@@ -350,6 +350,38 @@ def _workload_pod_label(row: dict) -> str:
     return _short_pod_name(pod)
 
 
+def _kv_offload_transfer_label(row: dict) -> str:
+    labels = row.get("labels", {})
+    transfer_type = str(labels.get("transfer_type") or "unknown")
+    if transfer_type == "GPU_to_SHARED_STORAGE":
+        return "write"
+    if transfer_type == "SHARED_STORAGE_to_GPU":
+        return "read"
+    return transfer_type.lower() or "unknown"
+
+
+def _kv_offload_pod_transfer_label(row: dict) -> str:
+    return f"{_workload_pod_label(row)} {_kv_offload_transfer_label(row)}"
+
+
+def _short_node_name(name: str) -> str:
+    if not name:
+        return "unknown"
+    return name.split("-")[-1] or name
+
+
+def _nfs_node_method_label(row: dict) -> str:
+    labels = row.get("labels", {})
+    node = _short_node_name(str(labels.get("instance") or row.get("series") or ""))
+    method = str(labels.get("method") or "unknown").lower()
+    return f"{node} {method}"
+
+
+def _node_label(row: dict) -> str:
+    labels = row.get("labels", {})
+    return _short_node_name(str(labels.get("instance") or row.get("series") or ""))
+
+
 def _sort_labels(labels: list[str]) -> list[str]:
     def key(label: str):
         match = re.match(r"(.+)/g(\d+)$", label)
@@ -599,6 +631,13 @@ def _common_timestamps(*series_dicts: dict[int, float]) -> list[int]:
     return timestamps
 
 
+def _grouped_timestamps(grouped: dict[str, dict[int, float]]) -> list[int]:
+    timestamps: set[int] = set()
+    for series in grouped.values():
+        timestamps.update(series.keys())
+    return sorted(timestamps)
+
+
 def _heatmap_matrix(
     grouped: dict[str, dict[int, float]],
     timestamps: list[int],
@@ -780,6 +819,57 @@ def _build_prefix_cache_hit_rate_figure(
     return fig
 
 
+def _build_grouped_line_figure(
+    *,
+    minutes: list[float],
+    timestamps: list[int],
+    grouped: dict[str, dict[int, float]],
+    segments: list[dict[str, float | int | str]],
+    title: str,
+    subtitle: str,
+    yaxis_title: str,
+    scale: float = 1.0,
+    hover_value: str = "%{y:.2f}",
+    hover_label: str | None = None,
+) -> go.Figure:
+    labels = _sort_labels(list(grouped.keys()))
+    palette = list(REPORT_COLOR_PALETTE)
+    value_label = hover_label or yaxis_title
+    fig = go.Figure()
+    for index, label in enumerate(labels):
+        values = _align_series(timestamps, grouped[label]) * scale
+        fig.add_trace(
+            go.Scatter(
+                x=minutes,
+                y=values,
+                mode="lines",
+                name=label,
+                line={"color": palette[index % len(palette)], "width": 1.8},
+                hovertemplate=(
+                    f"{label}<br>Run minute %{{x:.1f}}<br>"
+                    f"{value_label} {hover_value}<extra></extra>"
+                ),
+            )
+        )
+
+    layout = _base_layout(height=570)
+    layout["margin"] = {"l": 75, "r": 85, "t": 135, "b": 60}
+    fig.update_layout(
+        title={
+            "text": _title_text(title, subtitle),
+            "x": 0.5,
+            "xanchor": "center",
+            "y": 0.97,
+        },
+        **layout,
+    )
+    fig.update_xaxes(title_text="Run progress (min)")
+    fig.update_yaxes(title_text=yaxis_title, rangemode="tozero")
+    _apply_common_axes(fig)
+    _apply_phase_bands(fig, segments, label_y=1.12)
+    return fig
+
+
 def _build_gpu_heatmap_figure(
     minutes: list[float],
     timestamps: list[int],
@@ -897,7 +987,7 @@ def _build_gpu_frontier_figure(
     fig.update_layout(
         title={
             "text": _title_text(
-                "(ab) Per-GPU productivity frontier by load point",
+                "(ae) Per-GPU productivity frontier by load point",
                 "Each marker uses phase-median average GPU utilization and output tok/s divided by GPU count. Higher and further right is better only if TTFT stays controlled.",
             ),
             "x": 0.5,
@@ -927,6 +1017,22 @@ def _build_system_figures(
     )
     prefix_cache_hit_rate = _rows_to_series(
         _metric_rows(paths, "prefix_cache_hit_rate")
+    )
+    kv_offload_bytes_rate_by_pod = _rows_to_grouped_series(
+        _metric_rows(paths, "kv_offload_bytes_rate_by_pod"),
+        _kv_offload_pod_transfer_label,
+    )
+    kv_offload_seconds_per_gib_by_pod = _rows_to_grouped_series(
+        _metric_rows(paths, "kv_offload_seconds_per_gib_by_pod"),
+        _kv_offload_pod_transfer_label,
+    )
+    storage_nfs_requests_rate_by_node_method = _rows_to_grouped_series(
+        _metric_rows(paths, "storage_nfs_requests_rate_by_node_method"),
+        _nfs_node_method_label,
+    )
+    storage_nfs_retransmissions_rate_by_node = _rows_to_grouped_series(
+        _metric_rows(paths, "storage_nfs_retransmissions_rate_by_node"),
+        _node_label,
     )
 
     token_rate_by_pod = _rows_to_grouped_series(
@@ -979,6 +1085,91 @@ def _build_system_figures(
                     _relative_minutes(timestamps),
                     _align_series(timestamps, prefix_cache_hit_rate),
                     segments,
+                )
+            )
+
+    if kv_offload_bytes_rate_by_pod:
+        timestamps = _grouped_timestamps(kv_offload_bytes_rate_by_pod)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=kv_offload_bytes_rate_by_pod,
+                    segments=segments,
+                    title="(aa) KV offload throughput by replica",
+                    subtitle=(
+                        "Derived from vLLM KV offload byte counters by pod and "
+                        "transfer direction. Sustained zero or asymmetric rates "
+                        "show replicas that are not participating in storage traffic."
+                    ),
+                    yaxis_title="KV offload throughput (MiB/s)",
+                    scale=1.0 / 1024.0 / 1024.0,
+                    hover_value="%{y:.1f} MiB/s",
+                    hover_label="Throughput",
+                )
+            )
+
+    if kv_offload_seconds_per_gib_by_pod:
+        timestamps = _grouped_timestamps(kv_offload_seconds_per_gib_by_pod)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=kv_offload_seconds_per_gib_by_pod,
+                    segments=segments,
+                    title="(ab) KV offload cost by replica",
+                    subtitle=(
+                        "Computed as vLLM KV offload time divided by bytes moved. "
+                        "Higher seconds per GiB means the replica spends more wall "
+                        "time moving KV through shared storage."
+                    ),
+                    yaxis_title="KV offload cost (s/GiB)",
+                    hover_value="%{y:.2f} s/GiB",
+                    hover_label="Cost",
+                )
+            )
+
+    if storage_nfs_requests_rate_by_node_method:
+        timestamps = _grouped_timestamps(storage_nfs_requests_rate_by_node_method)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=storage_nfs_requests_rate_by_node_method,
+                    segments=segments,
+                    title="(ac) Node NFS request rate",
+                    subtitle=(
+                        "Node-level NFS client request rate from node-exporter. "
+                        "This is not pod-specific, but it helps identify whether "
+                        "one node is driving or waiting on more NFS traffic."
+                    ),
+                    yaxis_title="NFS requests (ops/s)",
+                    hover_value="%{y:.2f} ops/s",
+                    hover_label="Request rate",
+                )
+            )
+
+    if storage_nfs_retransmissions_rate_by_node:
+        timestamps = _grouped_timestamps(storage_nfs_retransmissions_rate_by_node)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=storage_nfs_retransmissions_rate_by_node,
+                    segments=segments,
+                    title="(ad) Node NFS retransmissions",
+                    subtitle=(
+                        "Node-level NFS RPC retransmission rate from node-exporter. "
+                        "Spikes indicate transport or storage pressure that can "
+                        "make offload reads or writes stall."
+                    ),
+                    yaxis_title="NFS retransmissions (ops/s)",
+                    hover_value="%{y:.3f} ops/s",
+                    hover_label="Retransmissions",
                 )
             )
 

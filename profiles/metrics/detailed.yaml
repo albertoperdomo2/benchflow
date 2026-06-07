@@ -43,6 +43,9 @@ spec:
     inference_time_p99_seconds: histogram_quantile(0.99, sum(rate({__name__=~"(vllm|kserve_vllm):request_inference_time_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) by (le))
     kv_cache_usage_percent: '{__name__=~"(vllm|kserve_vllm):kv_cache_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"}'
     prefix_cache_hit_rate: sum(rate({__name__=~"(vllm|kserve_vllm):prefix_cache_hits(_total)?", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum(rate({__name__=~"(vllm|kserve_vllm):prefix_cache_queries(_total)?", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 1)
+    kv_offload_bytes_rate_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_time_rate_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_seconds_per_gib_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / 1024 / 1024 / 1024, 0.001)
     num_preemptions_rate: rate({__name__=~"(vllm|kserve_vllm):num_preemptions_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])
     scheduler_up: up{namespace="$namespace", pod=~"$scheduler_pod_regex", endpoint=~"$scheduler_endpoint_regex"}
     scheduler_ready_pods: kserve_inference_pool_ready_pods{namespace="$namespace", pod=~"$scheduler_pod_regex"}
@@ -67,3 +70,5 @@ spec:
     memory_working_set_bytes_by_pod: container_memory_working_set_bytes{namespace="$namespace", pod=~".*$release.*"}
     network_receive_bytes_per_second: rate(container_network_receive_bytes_total{namespace="$namespace", pod=~".*$release.*"}[5m])
     network_transmit_bytes_per_second: rate(container_network_transmit_bytes_total{namespace="$namespace", pod=~".*$release.*"}[5m])
+    storage_nfs_requests_rate_by_node_method: sum by (instance, method) (rate(node_nfs_requests_total{method=~"read|write|commit|Read|Write|Commit|READ|WRITE|COMMIT"}[5m]))
+    storage_nfs_retransmissions_rate_by_node: sum by (instance) (rate(node_nfs_rpc_retransmissions_total[5m]))
