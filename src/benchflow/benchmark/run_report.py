@@ -725,6 +725,45 @@ def _build_replica_share_figure(
     return fig
 
 
+def _build_prefix_cache_hit_rate_figure(
+    minutes: list[float],
+    hit_rate: np.ndarray,
+    segments: list[dict[str, float | int | str]],
+) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=minutes,
+            y=hit_rate,
+            mode="lines",
+            name="Prefix cache hit ratio",
+            line={"color": COLORS["teal"], "width": 2.2},
+            hovertemplate="Run minute %{x:.1f}<br>Hit ratio %{y:.1%}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title={
+            "text": _title_text(
+                "(y) Prefix cache hit ratio",
+                "Computed from Prometheus counters as prefix cache hits divided by prefix cache queries over the collection interval. Higher is better when prefix reuse is expected.",
+            ),
+            "x": 0.5,
+            "xanchor": "center",
+            "y": 0.97,
+        },
+        **_base_layout(),
+    )
+    fig.update_xaxes(title_text="Run progress (min)")
+    fig.update_yaxes(
+        title_text="Prefix cache hit ratio (%)",
+        range=[0, 1],
+        tickformat=".0%",
+    )
+    _apply_common_axes(fig)
+    _apply_phase_bands(fig, segments)
+    return fig
+
+
 def _build_gpu_heatmap_figure(
     minutes: list[float],
     timestamps: list[int],
@@ -870,6 +909,9 @@ def _build_system_figures(
     total_output_tok_rate = _rows_to_series(
         _metric_rows(paths, "generation_token_rate_sum_per_second")
     )
+    prefix_cache_hit_rate = _rows_to_series(
+        _metric_rows(paths, "prefix_cache_hit_rate")
+    )
 
     token_rate_by_pod = _rows_to_grouped_series(
         _metric_rows(paths, "generation_token_rate_per_second"),
@@ -909,6 +951,17 @@ def _build_system_figures(
                     minutes,
                     timestamps,
                     token_rate_by_pod,
+                    segments,
+                )
+            )
+
+    if prefix_cache_hit_rate:
+        timestamps = sorted(prefix_cache_hit_rate.keys())
+        if timestamps:
+            figures.append(
+                _build_prefix_cache_hit_rate_figure(
+                    _relative_minutes(timestamps),
+                    _align_series(timestamps, prefix_cache_hit_rate),
                     segments,
                 )
             )

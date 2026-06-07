@@ -42,7 +42,7 @@ spec:
     inference_time_p90_seconds: histogram_quantile(0.9, sum(rate({__name__=~"(vllm|kserve_vllm):request_inference_time_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) by (le))
     inference_time_p99_seconds: histogram_quantile(0.99, sum(rate({__name__=~"(vllm|kserve_vllm):request_inference_time_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) by (le))
     kv_cache_usage_percent: '{__name__=~"(vllm|kserve_vllm):kv_cache_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"}'
-    prefix_cache_hit_rate: rate({__name__=~"(vllm|kserve_vllm):prefix_cache_hits_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]) / clamp_min(rate({__name__=~"(vllm|kserve_vllm):prefix_cache_queries_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), 1)
+    prefix_cache_hit_rate: sum(rate({__name__=~"(vllm|kserve_vllm):prefix_cache_hits(_total)?", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum(rate({__name__=~"(vllm|kserve_vllm):prefix_cache_queries(_total)?", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 1)
     num_preemptions_rate: rate({__name__=~"(vllm|kserve_vllm):num_preemptions_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])
     scheduler_up: up{namespace="$namespace", pod=~"$scheduler_pod_regex", endpoint=~"$scheduler_endpoint_regex"}
     scheduler_ready_pods: kserve_inference_pool_ready_pods{namespace="$namespace", pod=~"$scheduler_pod_regex"}
