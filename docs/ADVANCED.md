@@ -555,11 +555,30 @@ verbosity flag.
 
 Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
 storage offloading with `spec.options.storage_offloading`. When present,
-BenchFlow creates or reuses a static PVC, mounts it writable in the modelserver,
-exposes the configured storage event port on the modelserver container, and adds
-a storage-event Service to the modelserver overlay. Cleanup deletes the
-profile-managed storage offloading PVC by name. This is intended for the
-`llm-d-storage-offloading` profile, not for ad hoc experiment overrides.
+BenchFlow mounts writable storage in the modelserver, exposes the configured
+storage event port on the modelserver container, and adds a storage-event
+Service to the modelserver overlay. The storage source can be either a managed
+PVC or a hostPath:
+
+- `type: pvc` creates or reuses a static PVC and deletes that PVC during
+  cleanup.
+- `type: hostPath` mounts a node-local path and deletes the mounted directory
+  contents during cleanup, before the model pods are removed.
+
+BenchFlow uses `mount_path` for the volume mount and `directory_path` for the
+actual offload data directory to inspect and clean. If `directory_path` is not
+set, it defaults to `<mount_path>/kv-cache`.
+
+When artifact collection runs, BenchFlow also captures per-pod storage
+offloading directory size logs under `logs/storage-offloading/` so you can
+confirm the offload directory is actually being populated.
+
+`hostPath` is only appropriate for single-node or otherwise deliberately
+node-local experiments. If replicas land on different nodes, each node gets its
+own isolated hostPath contents.
+
+This is intended for deployment-profile variants such as
+`llm-d-storage-offloading`, not for ad hoc experiment overrides.
 
 This is intended for deployment-profile variants, not experiment overrides:
 

@@ -27,6 +27,11 @@ from ..platform_state import (
     setup_key_for_plan,
 )
 from ..repository import clone_repo
+from ..storage_offloading import (
+    STORAGE_OFFLOADING_TYPE_HOST_PATH,
+    STORAGE_OFFLOADING_TYPE_PVC,
+    storage_offloading_config as _storage_offloading_config,
+)
 from ..ui import detail, step, success
 
 _LLMD_INFERENCE_SERVING_LABEL = "llm-d.ai/inferenceServing"
@@ -262,51 +267,6 @@ def _port_from_values(values: dict[str, Any]) -> int:
         return 8000
 
 
-def _storage_offloading_config(plan: ResolvedRunPlan) -> dict[str, Any] | None:
-    raw_config = plan.deployment.options.get("storage_offloading")
-    if raw_config in (None, "", False):
-        return None
-    if not isinstance(raw_config, dict):
-        raise CommandError(
-            "deployment profile options.storage_offloading must be a mapping"
-        )
-    if raw_config.get("enabled") is False:
-        return None
-
-    port_raw = raw_config.get("storage_events_port", 5559)
-    try:
-        storage_events_port = int(str(port_raw).strip())
-    except ValueError as exc:
-        raise CommandError(
-            "deployment profile options.storage_offloading.storage_events_port "
-            "must be an integer"
-        ) from exc
-    if storage_events_port <= 0:
-        raise CommandError(
-            "deployment profile options.storage_offloading.storage_events_port "
-            "must be greater than 0"
-        )
-
-    config = {
-        "pvc_name": str(
-            raw_config.get("pvc_name") or "llm-d-storage-offloading-cache"
-        ).strip(),
-        "storage_class": str(raw_config.get("storage_class") or "nfs-rwx").strip(),
-        "size": str(raw_config.get("size") or "2500Gi").strip(),
-        "access_mode": str(raw_config.get("access_mode") or "ReadWriteMany").strip(),
-        "mount_path": str(raw_config.get("mount_path") or "/mnt/files-storage").rstrip(
-            "/"
-        ),
-        "storage_events_port": storage_events_port,
-    }
-    for key in ("pvc_name", "size", "access_mode", "mount_path"):
-        if not config[key]:
-            raise CommandError(
-                f"deployment profile options.storage_offloading.{key} must not be empty"
-            )
-    return config
-
-
 def _recipe_modelserver_podmonitor_manifest(
     plan: ResolvedRunPlan, guide_name: str
 ) -> dict[str, Any]:
@@ -380,6 +340,8 @@ def _apply_recipe_epp_podmonitor(plan: ResolvedRunPlan, kubectl_cmd: str) -> Non
 def _ensure_storage_offloading_pvc(
     plan: ResolvedRunPlan, kubectl_cmd: str, config: dict[str, Any]
 ) -> None:
+    if config["type"] != STORAGE_OFFLOADING_TYPE_PVC:
+        return
     pvc_name = config["pvc_name"]
     step(f"Ensuring shared storage offloading PVC {pvc_name}")
     spec: dict[str, Any] = {
@@ -840,6 +802,7 @@ def _apply_recipe_storage_offloading(
     config: dict[str, Any],
 ) -> None:
     storage_events_port = int(config["storage_events_port"])
+    storage_type = str(config["type"])
     volume_mounts = container.setdefault("volumeMounts", [])
     if not any(
         str(volume_mount.get("name") or "") == _STORAGE_OFFLOADING_VOLUME_NAME
@@ -861,12 +824,18 @@ def _apply_recipe_storage_offloading(
         str(volume.get("name") or "") == _STORAGE_OFFLOADING_VOLUME_NAME
         for volume in volumes
     ):
-        volumes.append(
-            {
-                "name": _STORAGE_OFFLOADING_VOLUME_NAME,
-                "persistentVolumeClaim": {"claimName": config["pvc_name"]},
+        if storage_type == STORAGE_OFFLOADING_TYPE_PVC:
+            source = {"persistentVolumeClaim": {"claimName": config["pvc_name"]}}
+        elif storage_type == STORAGE_OFFLOADING_TYPE_HOST_PATH:
+            source = {
+                "hostPath": {
+                    "path": config["host_path"],
+                    "type": config["host_path_type"],
+                }
             }
-        )
+        else:
+            raise CommandError(f"unsupported storage_offloading type: {storage_type}")
+        volumes.append({"name": _STORAGE_OFFLOADING_VOLUME_NAME, **source})
 
     _ensure_container_port(container, "storage-events", storage_events_port)
 

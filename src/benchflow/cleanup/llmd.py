@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shlex
 import time
 
 from ..cluster import (
@@ -12,6 +13,12 @@ from ..cluster import (
     run_json_command,
 )
 from ..models import ResolvedRunPlan
+from ..storage_offloading import (
+    STORAGE_OFFLOADING_TYPE_HOST_PATH,
+    STORAGE_OFFLOADING_TYPE_PVC,
+    storage_offloading_config,
+)
+from ..ui import detail
 
 
 def _release_names(plan: ResolvedRunPlan) -> list[str]:
@@ -33,19 +40,6 @@ def _llmd_recipe_layout_from_repo_ref(repo_ref: str) -> bool:
         return False
     version = tuple(int(part) for part in match.groups())
     return version >= (0, 6, 0)
-
-
-def _storage_offloading_pvc_name(plan: ResolvedRunPlan) -> str:
-    raw_config = plan.deployment.options.get("storage_offloading")
-    if raw_config in (None, "", False):
-        return ""
-    if not isinstance(raw_config, dict):
-        raise CommandError(
-            "deployment profile options.storage_offloading must be a mapping"
-        )
-    if raw_config.get("enabled") is False:
-        return ""
-    return str(raw_config.get("pvc_name") or "llm-d-storage-offloading-cache").strip()
 
 
 def _pvc_exists(kubectl_cmd: str, namespace: str, pvc_name: str) -> bool:
@@ -73,9 +67,10 @@ def _delete_storage_offloading_pvc(
     wait_for_deletion: bool,
     timeout_seconds: int,
 ) -> bool:
-    pvc_name = _storage_offloading_pvc_name(plan)
-    if not pvc_name:
+    config = storage_offloading_config(plan)
+    if not config or config["type"] != STORAGE_OFFLOADING_TYPE_PVC:
         return False
+    pvc_name = config["pvc_name"]
 
     namespace = plan.deployment.namespace
     existed = _pvc_exists(kubectl_cmd, namespace, pvc_name)
@@ -101,6 +96,105 @@ def _delete_storage_offloading_pvc(
     raise CommandError(
         f"timed out waiting for storage offloading PVC deletion: {pvc_name}"
     )
+
+
+def _pod_container_name(pod: dict) -> str:
+    containers = pod.get("spec", {}).get("containers", [])
+    if not isinstance(containers, list):
+        return ""
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        name = str(container.get("name") or "").strip()
+        if name:
+            return name
+    return ""
+
+
+def _release_pods(kubectl_cmd: str, namespace: str, release_label: str) -> list[dict]:
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            release_label,
+            "-o",
+            "json",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    import json
+
+    payload = json.loads(result.stdout or "{}")
+    items = payload.get("items", [])
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _delete_storage_offloading_host_path_contents(
+    plan: ResolvedRunPlan,
+    kubectl_cmd: str,
+    release_label: str,
+) -> bool:
+    config = storage_offloading_config(plan)
+    if not config or config["type"] != STORAGE_OFFLOADING_TYPE_HOST_PATH:
+        return False
+
+    namespace = plan.deployment.namespace
+    directory_path = str(config["directory_path"])
+    target = shlex.quote(directory_path)
+    script = (
+        "set -eu; "
+        f"if [ -d {target} ]; then "
+        f"du -sh {target} 2>/dev/null || true; "
+        f"find {target} -mindepth 1 -maxdepth 1 -exec rm -rf -- {{}} +; "
+        "fi"
+    )
+    deleted = False
+    for pod in _release_pods(kubectl_cmd, namespace, release_label):
+        metadata = pod.get("metadata", {})
+        pod_name = str(metadata.get("name") or "").strip()
+        if not pod_name or not pod_name.startswith(
+            f"ms-{plan.deployment.release_name}"
+        ):
+            continue
+        container = _pod_container_name(pod)
+        if not container:
+            continue
+        result = run_command(
+            [
+                kubectl_cmd,
+                "exec",
+                pod_name,
+                "-c",
+                container,
+                "-n",
+                namespace,
+                "--",
+                "sh",
+                "-lc",
+                script,
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail(
+                "Failed to delete storage offloading hostPath contents from "
+                f"{pod_name}: {str(result.stderr or result.stdout or '').strip()}"
+            )
+            continue
+        deleted = True
+    if deleted:
+        detail(
+            f"Deleted storage offloading hostPath contents mounted at {directory_path}"
+        )
+    return deleted
 
 
 def cleanup_llmd(
@@ -214,6 +308,8 @@ def cleanup_llmd(
             "--ignore-not-found=true",
         ],
     )
+
+    _delete_storage_offloading_host_path_contents(plan, kubectl_cmd, release_label)
 
     if recipe_layout:
         for kind in (

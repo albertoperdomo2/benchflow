@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .benchmark import benchmark_version_from_plan
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .models import ResolvedRunPlan
+from .storage_offloading import storage_offloading_config
 from .ui import detail, step, success
 
 RHOAI_PROFILER_OUTPUT_DIR = "/tmp/benchflow-profiler"
@@ -80,11 +82,7 @@ def _collect_pod_logs(
         )
     except CommandError:
         return False
-    containers = [
-        entry.get("name")
-        for entry in payload.get("spec", {}).get("containers", [])
-        if entry.get("name")
-    ]
+    containers = _pod_container_names(payload)
     has_logs = False
     for container in containers:
         log_file = log_dir / f"{pod_name}_{container}.log"
@@ -101,16 +99,91 @@ def _collect_pod_logs(
     return has_logs
 
 
+def _pod_container_names(pod: dict) -> list[str]:
+    containers = pod.get("spec", {}).get("containers", [])
+    if not isinstance(containers, list):
+        return []
+    return [
+        str(entry.get("name") or "")
+        for entry in containers
+        if isinstance(entry, dict) and entry.get("name")
+    ]
+
+
 def _ensure_artifact_layout(artifacts_dir: Path) -> None:
     for relative in (
         "logs/pipeline",
         "logs/model",
         "logs/gaie",
         "logs/infra",
+        "logs/storage-offloading",
         "manifests",
         "profiling",
     ):
         (artifacts_dir / relative).mkdir(parents=True, exist_ok=True)
+
+
+def _collect_storage_offloading_dir_size(
+    kubectl_cmd: str,
+    namespace: str,
+    pod_name: str,
+    artifacts_dir: Path,
+    mount_path: str,
+) -> bool:
+    try:
+        payload = run_json_command(
+            [kubectl_cmd, "get", "pod", pod_name, "-n", namespace, "-o", "json"]
+        )
+    except CommandError:
+        return False
+
+    containers = _pod_container_names(payload)
+    if not containers:
+        return False
+
+    quoted_path = shlex.quote(mount_path)
+    script = (
+        "set -u; "
+        f"target={quoted_path}; "
+        'echo "path=${target}"; '
+        'if [ ! -d "${target}" ]; then echo "status=missing"; exit 0; fi; '
+        'echo "status=present"; '
+        'du -sh "${target}" 2>/dev/null || true; '
+        'du -sb "${target}" 2>/dev/null || true; '
+        'find "${target}" -mindepth 1 -maxdepth 2 '
+        "-exec du -sh {} + 2>/dev/null | sort -h | tail -50 || true"
+    )
+    container = containers[0]
+    result = run_command(
+        [
+            kubectl_cmd,
+            "exec",
+            pod_name,
+            "-c",
+            container,
+            "-n",
+            namespace,
+            "--",
+            "sh",
+            "-lc",
+            script,
+        ],
+        capture_output=True,
+        check=False,
+    )
+
+    output = result.stdout or result.stderr or ""
+    if not output.strip():
+        return False
+
+    log_dir = artifacts_dir / "logs" / "storage-offloading"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "log" if result.returncode == 0 else "error.log"
+    (log_dir / f"{pod_name}_{container}_dir-size.{suffix}").write_text(
+        output,
+        encoding="utf-8",
+    )
+    return result.returncode == 0
 
 
 def _collect_profiling_artifacts(
@@ -264,6 +337,8 @@ def collect_artifacts(
     gaie_count = 0
     infra_count = 0
     model_pod_names: list[str] = []
+    storage_offloading_log_count = 0
+    storage_offloading = storage_offloading_config(plan)
     if include_workload:
         payload = run_json_command(
             [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"]
@@ -289,10 +364,27 @@ def collect_artifacts(
                     gaie_count += 1
                 else:
                     infra_count += 1
+            if (
+                pod_type == "model"
+                and storage_offloading
+                and _collect_storage_offloading_dir_size(
+                    kubectl_cmd,
+                    namespace,
+                    pod_name,
+                    artifacts_dir,
+                    str(storage_offloading["directory_path"]),
+                )
+            ):
+                storage_offloading_log_count += 1
         detail(
             f"Collected workload logs from {model_count} model pod(s), "
             f"{gaie_count} gaie pod(s), and {infra_count} infra pod(s)"
         )
+        if storage_offloading:
+            detail(
+                "Collected storage offloading directory size logs from "
+                f"{storage_offloading_log_count} model pod(s)"
+            )
 
     profiling_pods: list[str] = []
     profiling_file_count = 0
@@ -403,6 +495,7 @@ def collect_artifacts(
         "infra_pods": infra_count,
         "profiling_pods": profiling_pods,
         "profiling_files": profiling_file_count,
+        "storage_offloading_logs": storage_offloading_log_count,
         "manifest_files": manifest_count,
         "timestamp": datetime.now(timezone.utc)
         .replace(microsecond=0)

@@ -7,12 +7,12 @@ spec:
   guidellm:
     backend_type: openai_http
     profile: poisson
-    rates: [15, 3, 10, 15, 20, 22, 25, 30, 35, 40, 43, 46, 49, 52, 55, 57, 60]
+    rates: [3, 10, 15, 20, 22, 25, 30, 35, 40, 43, 46, 49, 52, 55, 57, 60]
     data: prompt_tokens=1200,output_tokens=1000,prefix_tokens=6000,prefix_count=150                                                                                                                                                                               
     data_samples: 750  # 750 samples pool for the whole benchmark
     max_seconds: 30
     pre_warmup:
-      rate: 10
-      max_seconds: 60  # populate common-prefix KV cache before the measured sweep
+      rate: 15
+      max_seconds: 50  # populate common-prefix KV cache before the measured sweep
   env:
     GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "INFO"

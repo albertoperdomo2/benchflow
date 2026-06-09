@@ -10,4 +10,8 @@ spec:
   benchmark_profile:
     - guidellm-x-70r-6kSys
   metrics_profile: detailed
+  mlflow:
+    tags:
+      deployment_type: "epp-v0.8.0+llmd-fs-backend-main-6e5f7da (offloading, no events)"
+      deployment_profile: "epp-v0.8.0+llmd-fs-backend-main-6e5f7da (offloading, no events)"
   namespace: benchflow
