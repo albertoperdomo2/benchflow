@@ -130,7 +130,7 @@ def print_bootstrap_summary(
     step("Required secrets if you have not already created them")
     detail("config/cluster/secrets/huggingface-token.example.yaml")
     detail("config/cluster/secrets/mlflow-auth.example.yaml")
-    detail("config/cluster/secrets/mlflow-s3-creds.example.yaml")
+    detail("config/cluster/secrets/mlflow-s3-creds.example.yaml (optional)")
     step("Example run")
     detail("pip install -e .")
     if bootstrap_mode == "single-cluster":

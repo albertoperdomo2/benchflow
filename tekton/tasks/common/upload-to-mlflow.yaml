@@ -56,6 +56,12 @@ spec:
               name: mlflow-ui-auth
               key: password
               optional: true
+        - name: MLFLOW_WORKSPACE
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: workspace
+              optional: true
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:

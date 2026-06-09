@@ -88,6 +88,12 @@ Typical flow:
 ```bash
 cp config/cluster/secrets/huggingface-token.example.yaml config/cluster/secrets/huggingface-token.yaml
 cp config/cluster/secrets/mlflow-auth.example.yaml config/cluster/secrets/mlflow-auth.yaml
+```
+
+Optional legacy path if your setup still needs direct client-side S3
+credentials:
+
+```bash
 cp config/cluster/secrets/mlflow-s3-creds.example.yaml config/cluster/secrets/mlflow-s3-creds.yaml
 ```
 
@@ -1235,6 +1241,10 @@ Older servers such as MLflow 2.18 still work with BenchFlow as long as you do
 not set `MLFLOW_WORKSPACE`. If you do set `MLFLOW_WORKSPACE`, BenchFlow checks
 `/api/3.0/mlflow/server-info` first and fails explicitly when the server does
 not advertise workspace support.
+
+For cluster-run BenchFlow executions, you can also provide `MLFLOW_WORKSPACE`
+through the `mlflow-ui-auth` secret via the `workspace` key instead of setting
+it ad hoc in the task environment.
 
 With those environment variables set, you can omit `--mlflow-tracking-uri`:
 
