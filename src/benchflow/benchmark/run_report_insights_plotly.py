@@ -53,9 +53,9 @@ PLOTLY_CONFIG = {
     ],
 }
 
-FIGURE_HEIGHT = 580
+FIGURE_HEIGHT = 610
 FIGURE_WIDTH = 640
-SUBTITLE_WRAP = 58
+SUBTITLE_WRAP = 52
 
 
 def parse_args() -> argparse.Namespace:
@@ -125,7 +125,7 @@ def title_text(title: str, subtitle: str) -> str:
     wrapped = "<br>".join(fill(subtitle, width=SUBTITLE_WRAP).splitlines())
     return (
         f"{title}"
-        f"<br><span style='font-size:11px;color:{COLORS['gray']}'>{wrapped}</span>"
+        f"<br><span style='font-size:10px;color:{COLORS['gray']}'>{wrapped}</span>"
     )
 
 
@@ -308,14 +308,14 @@ def apply_layout(
             "text": title_text(title, subtitle),
             "x": 0.5,
             "xanchor": "center",
-            "y": 0.97,
+            "y": 0.985,
             "yanchor": "top",
             "font": {"size": 18},
             "automargin": True,
         },
         height=height,
         width=FIGURE_WIDTH,
-        margin={"l": 70, "r": 40, "t": 145, "b": 70},
+        margin={"l": 70, "r": 40, "t": 175, "b": 85},
         legend={
             "bgcolor": "rgba(255,255,255,0.85)",
             "bordercolor": "black",
@@ -325,6 +325,15 @@ def apply_layout(
             "y": legend_y,
         },
         hovermode="closest",
+    )
+    fig.update_xaxes(
+        side="bottom",
+        title_standoff=18,
+        automargin=True,
+    )
+    fig.update_yaxes(
+        title_standoff=14,
+        automargin=True,
     )
     return fig
 
