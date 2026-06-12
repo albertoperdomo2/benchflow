@@ -1654,6 +1654,7 @@ def generate_plot_only_report(
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
     include_total_throughput: bool = False,
+    baseline_version: str | None = None,
 ) -> str:
     """
     Generate HTML report from existing MLflow runs without running benchmarks.
@@ -1669,6 +1670,7 @@ def generate_plot_only_report(
         notes: Optional subtitle note lines
         repeat_section_legends: Repeat side legends per section for screenshots
         include_total_throughput: Render dashed total-throughput overlay in throughput charts
+        baseline_version: Optional displayed version label to use as the comparison-table baseline
 
     Returns:
         Path to generated HTML report
@@ -1928,6 +1930,7 @@ def generate_plot_only_report(
         notes=notes or [],
         repeat_section_legends=repeat_section_legends,
         include_total_throughput=include_total_throughput,
+        baseline_version=baseline_version,
     )
 
     # Override with our merged and filtered data
@@ -2016,6 +2019,7 @@ def _run_plot_only_mode(
     mlflow_tracking_uri: str | None,
     additional_csv_files: tuple[str, ...],
     versions_override_values: tuple[str, ...],
+    baseline_version: str | None,
 ) -> int:
     logger.info("Plot-only mode enabled")
 
@@ -2053,6 +2057,7 @@ def _run_plot_only_mode(
             mlflow_tracking_uri=mlflow_tracking_uri,
             additional_csv_files=list(additional_csv_files) or None,
             versions_override=versions_override,
+            baseline_version=baseline_version,
         )
 
         if html_report:
@@ -2282,6 +2287,11 @@ def _run_benchmark_mode(
     help="Comma-separated versions to compare. Filters runs and sets compare_versions.",
 )
 @click.option(
+    "--baseline",
+    "baseline_version",
+    help="Displayed version label to use as the baseline for inline table deltas.",
+)
+@click.option(
     "--versions-override",
     "versions_override_values",
     multiple=True,
@@ -2327,6 +2337,7 @@ def cli(
     plot_only: bool,
     mlflow_run_ids: str | None,
     versions: str | None,
+    baseline_version: str | None,
     versions_override_values: tuple[str, ...],
     additional_csv_files: tuple[str, ...],
 ) -> int:
@@ -2341,6 +2352,7 @@ def cli(
             mlflow_tracking_uri=mlflow_tracking_uri,
             additional_csv_files=additional_csv_files,
             versions_override_values=versions_override_values,
+            baseline_version=baseline_version,
         )
 
     missing = []

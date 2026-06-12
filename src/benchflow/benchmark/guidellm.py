@@ -234,6 +234,7 @@ def generate_report(
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
     include_total_throughput: bool = False,
+    baseline_version: str | None = None,
 ) -> Path:
     module = _load_guidellm_module()
 
@@ -250,6 +251,7 @@ def generate_report(
             notes=notes or [],
             repeat_section_legends=repeat_section_legends,
             include_total_throughput=include_total_throughput,
+            baseline_version=baseline_version,
         )
         if not html_path:
             raise CommandError("GuideLLM report generation returned no output path")

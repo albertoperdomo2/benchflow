@@ -231,6 +231,7 @@ def generate_plan_report(
     notes: list[str] | tuple[str, ...] | None,
     repeat_section_legends: bool = False,
     include_total_throughput: bool = False,
+    baseline_version: str | None = None,
 ) -> Path:
     model = model_name or (plan.model.name if plan is not None else None)
     resolved_version = version or (
@@ -269,6 +270,7 @@ def generate_plan_report(
         notes=list(notes or []),
         repeat_section_legends=repeat_section_legends,
         include_total_throughput=include_total_throughput,
+        baseline_version=baseline_version,
     )
 
 

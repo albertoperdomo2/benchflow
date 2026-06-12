@@ -103,6 +103,7 @@ def generate_report(
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
     include_total_throughput: bool = False,
+    baseline_version: str | None = None,
 ) -> Path:
     tool = (
         plan.benchmark.tool
@@ -148,6 +149,7 @@ def generate_report(
         notes=notes,
         repeat_section_legends=repeat_section_legends,
         include_total_throughput=include_total_throughput,
+        baseline_version=baseline_version,
     )
 
 

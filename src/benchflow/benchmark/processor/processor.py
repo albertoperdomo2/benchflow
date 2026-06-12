@@ -263,6 +263,81 @@ def _format_table_number(value: Any) -> str:
     return f"{number:,.3f}"
 
 
+def _delta_css_class(
+    metric_key: str,
+    baseline_value: Any,
+    current_value: Any,
+) -> str:
+    higher_is_better = {
+        "output_tok/sec",
+        "total_tok/sec",
+    }
+    lower_is_better = {
+        "ttft_median",
+        "ttft_p90",
+        "ttft_p99",
+        "tpot_median",
+        "tpot_p90",
+        "itl_median",
+        "request_latency_median",
+        "request_latency_p90",
+    }
+    try:
+        baseline = float(baseline_value)
+        current = float(current_value)
+    except (TypeError, ValueError):
+        return "benchflow-report-delta-neutral"
+
+    if metric_key in higher_is_better:
+        if current > baseline:
+            return "benchflow-report-delta-good"
+        if current < baseline:
+            return "benchflow-report-delta-bad"
+        return "benchflow-report-delta-neutral"
+    if metric_key in lower_is_better:
+        if current < baseline:
+            return "benchflow-report-delta-good"
+        if current > baseline:
+            return "benchflow-report-delta-bad"
+        return "benchflow-report-delta-neutral"
+    return "benchflow-report-delta-neutral"
+
+
+def _render_table_value(
+    metric_key: str,
+    value: Any,
+    baseline_value: Any | None = None,
+    *,
+    is_baseline_row: bool = False,
+) -> str:
+    base_text = html.escape(_format_table_number(value))
+    if baseline_value is None:
+        return base_text
+    if is_baseline_row:
+        return (
+            f"{base_text}<br>"
+            "<span class='benchflow-report-delta benchflow-report-delta-baseline'>"
+            "Δ baseline"
+            "</span>"
+        )
+    try:
+        baseline = float(baseline_value)
+        current = float(value)
+    except (TypeError, ValueError):
+        return base_text
+    if baseline == 0:
+        return base_text
+    delta_pct = ((current - baseline) / baseline) * 100.0
+    delta_text = f"Δ {delta_pct:+.1f}%"
+    delta_class = _delta_css_class(metric_key, baseline, current)
+    return (
+        f"{base_text}<br>"
+        f"<span class='benchflow-report-delta {delta_class}'>"
+        f"{html.escape(delta_text)}"
+        "</span>"
+    )
+
+
 def _format_configuration_label(row: pd.Series) -> str:
     accelerator = str(row.get("accelerator") or "unknown")
     version = str(row.get("version") or "unknown")
@@ -277,7 +352,10 @@ def _format_configuration_label(row: pd.Series) -> str:
 
 
 def _render_comparison_table(
-    filtered_data: pd.DataFrame, *, axis_label: str = "Concurrency"
+    filtered_data: pd.DataFrame,
+    *,
+    axis_label: str = "Concurrency",
+    baseline_version: str | None = None,
 ) -> str:
     if filtered_data.empty:
         return ""
@@ -300,6 +378,14 @@ def _render_comparison_table(
     table_df["accelerator"] = table_df["accelerator"].fillna("unknown").astype(str)
     table_df["replicas"] = table_df["replicas"].fillna(1)
     table_df["TP"] = table_df["TP"].fillna(1)
+    if baseline_version is not None:
+        baseline_version = str(baseline_version).strip()
+        if not baseline_version:
+            baseline_version = None
+        elif baseline_version not in set(table_df["version"]):
+            raise ValueError(
+                f"Baseline version '{baseline_version}' is not present in the comparison data"
+            )
     table_df = table_df.sort_values(
         by=["intended concurrency", "accelerator", "version", "TP", "replicas"]
     )
@@ -323,9 +409,38 @@ def _render_comparison_table(
             f"<th colspan='{len(columns) + 1}'>{html.escape(axis_label)} {html.escape(_format_table_number(concurrency))}</th>"
             "</tr>"
         )
+        baseline_lookup: dict[tuple[str, str, str], pd.Series] = {}
+        if baseline_version is not None:
+            baseline_rows = group_data[group_data["version"] == baseline_version]
+            for _, baseline_row in baseline_rows.iterrows():
+                baseline_lookup[
+                    (
+                        str(baseline_row.get("accelerator") or "unknown"),
+                        str(_format_table_number(baseline_row.get("TP"))),
+                        str(_format_table_number(baseline_row.get("replicas"))),
+                    )
+                ] = baseline_row
         for _, row in group_data.iterrows():
+            baseline_row = baseline_lookup.get(
+                (
+                    str(row.get("accelerator") or "unknown"),
+                    str(_format_table_number(row.get("TP"))),
+                    str(_format_table_number(row.get("replicas"))),
+                )
+            )
+            is_baseline_row = (
+                baseline_version is not None
+                and str(row.get("version") or "unknown") == baseline_version
+            )
             value_cells = "".join(
-                f"<td>{html.escape(_format_table_number(row.get(metric_key)))}</td>"
+                "<td>"
+                + _render_table_value(
+                    metric_key,
+                    row.get(metric_key),
+                    baseline_row.get(metric_key) if baseline_row is not None else None,
+                    is_baseline_row=is_baseline_row,
+                )
+                + "</td>"
                 for _, metric_key in columns
             )
             table_rows.append(
@@ -336,7 +451,7 @@ def _render_comparison_table(
 <section class="benchflow-report-table-section">
   <details class="benchflow-report-table-details">
     <summary>Raw Comparison Table</summary>
-    <p>Exact benchmark metrics grouped by intended {html.escape(axis_label.lower())}.</p>
+    <p>Exact benchmark metrics grouped by intended {html.escape(axis_label.lower())}.{f" Inline Δ values compare each row to baseline version {html.escape(baseline_version)} for the same accelerator, TP, and replica shape." if baseline_version else ""}</p>
     <div class="benchflow-report-table-shell">
       <table class="benchflow-report-table">
         {colgroup}
@@ -389,6 +504,7 @@ class BenchmarkProcessor:
         notes: Optional[List[str]] = None,
         repeat_section_legends: bool = False,
         include_total_throughput: bool = False,
+        baseline_version: Optional[str] = None,
         include_plotlyjs: bool = True,
     ):
         """
@@ -417,6 +533,7 @@ class BenchmarkProcessor:
             notes: Optional subtitle note lines (optional)
             repeat_section_legends: Render repeated side legends per section (optional)
             include_total_throughput: Render dashed total-throughput overlay in throughput charts (optional)
+            baseline_version: Optional displayed version label to use as the comparison-table baseline
             include_plotlyjs: Inline Plotly JS in the generated HTML (optional)
         """
         self.json_path = json_path
@@ -432,6 +549,9 @@ class BenchmarkProcessor:
         self.output_html = output_html or "benchmark_report.html"
         self.repeat_section_legends = repeat_section_legends
         self.include_total_throughput = include_total_throughput
+        self.baseline_version = (
+            str(baseline_version).strip() if baseline_version is not None else None
+        ) or None
         self.include_plotlyjs = include_plotlyjs
         self.notes = [str(note).strip() for note in (notes or []) if str(note).strip()]
 
@@ -1909,7 +2029,9 @@ class BenchmarkProcessor:
             config={"responsive": False},
         )
         comparison_table_html = _render_comparison_table(
-            filtered_data, axis_label=axis_label
+            filtered_data,
+            axis_label=axis_label,
+            baseline_version=self.baseline_version,
         )
         full_html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1998,6 +2120,22 @@ class BenchmarkProcessor:
     }}
     .benchflow-report-table tbody tr:nth-child(even) td {{
       background: #fafbfc;
+    }}
+    .benchflow-report-delta {{
+      display: inline-block;
+      margin-top: 2px;
+      font-size: 10px;
+      font-weight: 700;
+    }}
+    .benchflow-report-delta-baseline,
+    .benchflow-report-delta-neutral {{
+      color: #667085;
+    }}
+    .benchflow-report-delta-good {{
+      color: #166534;
+    }}
+    .benchflow-report-delta-bad {{
+      color: #b42318;
     }}
   </style>
 </head>

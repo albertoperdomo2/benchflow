@@ -776,6 +776,7 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         versions=[item.strip() for item in args.versions.split(",") if item.strip()]
         if args.versions
         else None,
+        baseline_version=args.baseline_version,
         version_overrides=parse_version_overrides(args.version_override),
         additional_csv_files=args.additional_csv or None,
         notes=[item.strip() for item in args.note if item.strip()],
@@ -1715,6 +1716,14 @@ def _register_comparison_report_options(command):
     command = click.option(
         "--versions",
         help="Comma-separated version list for multi-run report generation.",
+    )(command)
+    command = click.option(
+        "--baseline",
+        "baseline_version",
+        help=(
+            "Displayed version label to use as the baseline for inline deltas "
+            "in the comparison table."
+        ),
     )(command)
     command = click.option(
         "--version-override",
