@@ -14,7 +14,7 @@ import click
 import mlflow
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 
-from ..mlflow_compat import configure_mlflow_tracking
+from ..mlflow_compat import configure_mlflow_tracking, create_mlflow_client
 from ..ui import configure_logging, emit
 
 # Disable SSL warnings if using self-signed certificates
@@ -1449,13 +1449,14 @@ def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:
         'epp' tag or, if absent, the 'deployment_type' tag to the base version.
     """
     configure_mlflow_tracking(mlflow_tracking_uri)
+    client = create_mlflow_client(mlflow_tracking_uri)
 
     runs_data = []
 
     for run_id in run_ids:
         try:
             logger.info(f"Fetching MLflow run: {run_id}")
-            run = mlflow.get_run(run_id)
+            run = client.get_run(run_id)
 
             params = run.data.params
             tags = run.data.tags
