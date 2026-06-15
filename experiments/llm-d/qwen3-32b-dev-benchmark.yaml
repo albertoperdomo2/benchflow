@@ -14,9 +14,11 @@ spec:
     tags:
       accelerator: H200
       version: "llm-d-v0.7.0"
+      deployment_type: "epp-v0.8.0"
+      deployment_profile: "epp-v0.8.0"
   namespace: benchflow
   execution:
     timeout: 8h
-  # overrides:
-  #   images:
-  #     scheduler: 
+  overrides:
+    images:
+      scheduler: ghcr.io/llm-d/llm-d-inference-scheduler:v0.8.0
