@@ -1,0 +1,21 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: aiperf-weka-trace
+spec:
+  tool: aiperf
+  env:
+    AIPERF_HTTP_SSL_VERIFY: "false"
+  requirements:
+    min_max_model_len: 131072
+  aiperf:
+    public_dataset: semianalysis_cc_traces_weka_with_subagents
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    fixed_schedule: true
+    synthesis_max_isl: 131072
+    max_seconds: 7200
+    # Optional debug exports for broken/truncated streamed responses.
+    # export_level: records
+    # export_http_trace: true

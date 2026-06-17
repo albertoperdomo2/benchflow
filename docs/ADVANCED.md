@@ -676,9 +676,10 @@ spec:
       rate: 15 # required when pre_warmup is present
       max_seconds: 30 # optional; inherited profile/data settings are used
   aiperf:
-    dataset_url: "" # required when tool: aiperf
+    public_dataset: "" # optional explicit public dataset loader
+    dataset_url: "" # required when tool: aiperf unless public_dataset is set
     dataset_name: "" # optional local/cache filename; defaults to the URL basename
-    dataset_type: mooncake_trace # required when tool: aiperf
+    dataset_type: mooncake_trace # required when tool: aiperf unless public_dataset is set
     endpoint_type: chat # required when tool: aiperf
     endpoint_path: /v1/chat/completions
     tokenizer: "" # defaults to spec.model.name when empty
@@ -714,14 +715,21 @@ spec:
 `data` is intentionally not overrideable. It is treated as part of what defines
 the benchmark profile itself.
 
-For AIPerf profiles, `dataset_name` is optional. When omitted, BenchFlow derives
-the cached file name from `dataset_url`, for example `toolagent_trace.jsonl`.
-Use `dataset_name` only when the URL does not have a useful basename or when a
-stable local/report label is needed.
+For AIPerf profiles, use exactly one dataset source:
 
-Use `aiperf.dataset_cap` to trim large JSONL datasets. BenchFlow downloads the
-full dataset once, writes a cached `-cap<N>` JSONL containing the first `N`
-non-empty records, and passes that trimmed file to `aiperf profile`.
+- `public_dataset` for a supported AIPerf public dataset loader such as the
+  blessed `aiperf-weka-trace` profile
+- `dataset_url` plus `dataset_type` for the existing downloaded JSONL path
+
+For downloaded JSONL datasets, `dataset_name` is optional. When omitted,
+BenchFlow derives the cached file name from `dataset_url`, for example
+`toolagent_trace.jsonl`. Use `dataset_name` only when the URL does not have a
+useful basename or when a stable local/report label is needed.
+
+Use `aiperf.dataset_cap` only with downloaded JSONL datasets. BenchFlow
+downloads the full dataset once, writes a cached `-cap<N>` JSONL containing the
+first `N` non-empty records, and passes that trimmed file to `aiperf profile`.
+`dataset_cap` is not supported with `public_dataset`.
 
 Full `MetricsProfile` schema:
 

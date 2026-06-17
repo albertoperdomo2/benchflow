@@ -19,7 +19,7 @@ dependencies = [
   "certifi==2025.7.9",
   "mistral-common",
   "rich>=13.9.0",
-  "aiperf==0.7.0",
+  "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx",
 ]
 
 [project.scripts]

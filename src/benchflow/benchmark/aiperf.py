@@ -261,10 +261,6 @@ def _build_command(
         aiperf.endpoint_type,
         "--endpoint",
         endpoint_path,
-        "--input-file",
-        str(dataset_path),
-        "--custom-dataset-type",
-        aiperf.dataset_type,
         "--tokenizer",
         tokenizer,
         "--artifact-dir",
@@ -272,6 +268,17 @@ def _build_command(
         "--ui",
         "none",
     ]
+    if aiperf.public_dataset:
+        command.extend(["--public-dataset", aiperf.public_dataset])
+    else:
+        command.extend(
+            [
+                "--input-file",
+                str(dataset_path),
+                "--custom-dataset-type",
+                aiperf.dataset_type,
+            ]
+        )
     if aiperf.streaming:
         command.append("--streaming")
     if aiperf.fixed_schedule:
@@ -312,13 +319,15 @@ def run_benchmark(
     benchmark_env.update(plan.benchmark.env)
     if output_dir is not None:
         benchmark_env["AIPERF_ARTIFACT_DIR"] = str(output_dir)
-    dataset_path = _cap_dataset_entries(
-        _download_dataset(
-            dataset_url=aiperf.dataset_url,
-            dataset_name=aiperf.dataset_name,
-        ),
-        dataset_cap=aiperf.dataset_cap,
-    )
+    dataset_path = Path("/tmp/benchflow-aiperf/public-dataset-placeholder.jsonl")
+    if not aiperf.public_dataset:
+        dataset_path = _cap_dataset_entries(
+            _download_dataset(
+                dataset_url=aiperf.dataset_url,
+                dataset_name=aiperf.dataset_name,
+            ),
+            dataset_cap=aiperf.dataset_cap,
+        )
     command = _build_command(
         plan=plan,
         target=benchmark_target,
@@ -336,7 +345,10 @@ def run_benchmark(
 
     step(f"Preparing AIPerf benchmark run for {plan.model.name}")
     detail(f"Target: {benchmark_target}")
-    detail(f"Dataset: {dataset_path}")
+    if aiperf.public_dataset:
+        detail(f"AIPerf public dataset: {aiperf.public_dataset}")
+    else:
+        detail(f"Dataset: {dataset_path}")
     detail(f"Artifact directory: {artifact_dir}")
     detail(f"MLflow: {'enabled' if enable_mlflow else 'disabled'}")
     try:
@@ -352,10 +364,13 @@ def run_benchmark(
                 run_id = run.info.run_id
                 mlflow.log_param("benchmark_tool", "aiperf")
                 mlflow.log_param("backend_type", plan.benchmark.backend_type)
-                mlflow.log_param("dataset_url", aiperf.dataset_url)
-                if aiperf.dataset_cap is not None:
-                    mlflow.log_param("dataset_cap", aiperf.dataset_cap)
-                mlflow.log_param("dataset_type", aiperf.dataset_type)
+                if aiperf.public_dataset:
+                    mlflow.log_param("public_dataset", aiperf.public_dataset)
+                else:
+                    mlflow.log_param("dataset_url", aiperf.dataset_url)
+                    if aiperf.dataset_cap is not None:
+                        mlflow.log_param("dataset_cap", aiperf.dataset_cap)
+                    mlflow.log_param("dataset_type", aiperf.dataset_type)
                 mlflow.log_param("endpoint_type", aiperf.endpoint_type)
                 if aiperf.export_level:
                     mlflow.log_param("export_level", aiperf.export_level)

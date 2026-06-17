@@ -48,11 +48,7 @@ from .models import (
     parse_model_spec,
 )
 
-_AIPERF_REQUIRED_FIELDS = {
-    "dataset_url",
-    "dataset_type",
-    "endpoint_type",
-}
+_AIPERF_REQUIRED_FIELDS = {"endpoint_type"}
 
 
 def _string_or_list(raw: Any, field_name: str) -> str | list[str] | None:
@@ -545,6 +541,9 @@ def _guidellm_pre_warmup_from_dict(raw: Any) -> GuidellmPreWarmupSpec:
 
 
 def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
+    public_dataset = str(raw.get("public_dataset", "") or "").strip()
+    dataset_url = str(raw.get("dataset_url", "") or "").strip()
+    dataset_type = str(raw.get("dataset_type", "") or "").strip()
     missing = [
         field_name
         for field_name in sorted(_AIPERF_REQUIRED_FIELDS)
@@ -553,11 +552,36 @@ def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
     if missing:
         joined = ", ".join(f"spec.aiperf.{field_name}" for field_name in missing)
         raise ValidationError(f"aiperf benchmark profile is missing {joined}")
+    if public_dataset:
+        if dataset_url:
+            raise ValidationError(
+                "spec.aiperf.public_dataset cannot be combined with spec.aiperf.dataset_url"
+            )
+        if dataset_type:
+            raise ValidationError(
+                "spec.aiperf.public_dataset cannot be combined with spec.aiperf.dataset_type"
+            )
+        if raw.get("dataset_cap") is not None:
+            raise ValidationError(
+                "spec.aiperf.dataset_cap is not supported with spec.aiperf.public_dataset"
+            )
+    else:
+        required_dataset_fields = []
+        if not dataset_url:
+            required_dataset_fields.append("spec.aiperf.dataset_url")
+        if not dataset_type:
+            required_dataset_fields.append("spec.aiperf.dataset_type")
+        if required_dataset_fields:
+            raise ValidationError(
+                "aiperf benchmark profile is missing "
+                + ", ".join(required_dataset_fields)
+            )
 
     return AiperfBenchmarkSpec(
-        dataset_url=str(raw.get("dataset_url", "") or "").strip(),
+        public_dataset=public_dataset,
+        dataset_url=dataset_url,
         dataset_name=str(raw.get("dataset_name", "") or "").strip(),
-        dataset_type=str(raw.get("dataset_type", "") or "").strip(),
+        dataset_type=dataset_type,
         endpoint_type=str(raw.get("endpoint_type", "") or "").strip(),
         endpoint_path=str(raw.get("endpoint_path", "") or "").strip(),
         tokenizer=str(raw.get("tokenizer", "") or "").strip(),

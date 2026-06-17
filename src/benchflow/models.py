@@ -439,6 +439,7 @@ class GuidellmPreWarmupSpec:
 
 @dataclass(slots=True)
 class AiperfBenchmarkSpec:
+    public_dataset: str = ""
     dataset_url: str = ""
     dataset_name: str = ""
     dataset_type: str = ""

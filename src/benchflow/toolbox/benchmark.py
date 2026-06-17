@@ -38,10 +38,13 @@ def _format_optional_rates(rates: list[int] | None) -> str:
 def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
     if plan.benchmark.tool == "aiperf":
         aiperf = plan.benchmark.aiperf
-        detail(
-            f"AIPerf dataset: {aiperf.dataset_name or aiperf.dataset_url} "
-            f"({aiperf.dataset_type})"
-        )
+        if aiperf.public_dataset:
+            detail(f"AIPerf public dataset: {aiperf.public_dataset}")
+        else:
+            detail(
+                f"AIPerf dataset: {aiperf.dataset_name or aiperf.dataset_url} "
+                f"({aiperf.dataset_type})"
+            )
         detail(
             "AIPerf endpoint: "
             f"{aiperf.endpoint_type} "
