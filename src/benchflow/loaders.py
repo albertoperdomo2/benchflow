@@ -49,6 +49,8 @@ from .models import (
 )
 
 _AIPERF_REQUIRED_FIELDS = {"endpoint_type"}
+_AIPERF_RESERVED_FIELDS = {"dataset_url", "dataset_name", "dataset_cap", "max_seconds"}
+_GUIDELLM_RESERVED_FIELDS = {"pre_warmup"}
 
 
 def _string_or_list(raw: Any, field_name: str) -> str | list[str] | None:
@@ -167,6 +169,17 @@ def _raw_value(raw: Any) -> Any | None:
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, separators=(",", ":"))
     return raw
+
+
+def _passthrough_value(raw: Any, field_name: str) -> Any | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        cleaned = raw.strip()
+        return cleaned or None
+    if isinstance(raw, (dict, list, bool, int, float)):
+        return raw
+    raise ValidationError(f"{field_name} has unsupported value: {raw!r}")
 
 
 def _nonempty_string(raw: Any, field_name: str) -> str | None:
@@ -483,26 +496,36 @@ def load_experiment(path: Path) -> Experiment:
 
 
 def _guidellm_benchmark_from_dict(raw: dict[str, Any]) -> GuidellmBenchmarkSpec:
+    args: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in _GUIDELLM_RESERVED_FIELDS:
+            continue
+        field_name = f"spec.guidellm.{key}"
+        if key == "rates":
+            normalized = _int_list(value, field_name)
+        elif key == "data_samples":
+            normalized = _optional_nonnegative_int(value, field_name)
+        elif key == "max_seconds":
+            normalized = _optional_positive_int(value, field_name)
+        elif key == "max_requests":
+            normalized = str(value).strip() if value is not None else None
+        elif key in {
+            "backend_type",
+            "request_type",
+            "profile",
+            "processor_args",
+            "rate_type",
+            "data",
+        }:
+            normalized = _nonempty_string(value, field_name)
+        else:
+            normalized = _passthrough_value(value, field_name)
+        if normalized is not None:
+            args[key] = normalized
+    args.setdefault("backend_type", "openai_http")
+    args.setdefault("data", "prompt_tokens=1000,output_tokens=1000")
     return GuidellmBenchmarkSpec(
-        backend_type=str(raw.get("backend_type", "openai_http")),
-        request_type=str(raw.get("request_type", "") or "").strip(),
-        profile=_nonempty_string(raw.get("profile"), "spec.guidellm.profile"),
-        processor_args=_nonempty_string(
-            raw.get("processor_args"), "spec.guidellm.processor_args"
-        ),
-        rate_type=_nonempty_string(raw.get("rate_type"), "spec.guidellm.rate_type"),
-        rates=_int_list(raw.get("rates"), "spec.guidellm.rates"),
-        data_samples=_optional_nonnegative_int(
-            raw.get("data_samples"), "spec.guidellm.data_samples"
-        ),
-        warmup=_raw_value(raw.get("warmup")),
-        data=str(raw.get("data", "prompt_tokens=1000,output_tokens=1000")),
-        max_seconds=_optional_positive_int(
-            raw.get("max_seconds"), "spec.guidellm.max_seconds"
-        ),
-        max_requests=str(raw["max_requests"]).strip()
-        if raw.get("max_requests") is not None
-        else None,
+        args=args,
         pre_warmup=_guidellm_pre_warmup_from_dict(raw.get("pre_warmup")),
     )
 
@@ -518,36 +541,64 @@ def _guidellm_pre_warmup_from_dict(raw: Any) -> GuidellmPreWarmupSpec:
     if enabled and rate is None:
         raise ValidationError("spec.guidellm.pre_warmup.rate is required")
 
-    return GuidellmPreWarmupSpec(
-        enabled=enabled,
-        rate=rate,
-        profile=_nonempty_string(
-            raw.get("profile"), "spec.guidellm.pre_warmup.profile"
-        ),
-        rate_type=_nonempty_string(
-            raw.get("rate_type"), "spec.guidellm.pre_warmup.rate_type"
-        ),
-        data_samples=_optional_nonnegative_int(
-            raw.get("data_samples"), "spec.guidellm.pre_warmup.data_samples"
-        ),
-        data=_nonempty_string(raw.get("data"), "spec.guidellm.pre_warmup.data"),
-        max_seconds=_optional_positive_int(
-            raw.get("max_seconds"), "spec.guidellm.pre_warmup.max_seconds"
-        ),
-        max_requests=str(raw["max_requests"]).strip()
-        if raw.get("max_requests") is not None
-        else None,
-    )
+    args: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key == "enabled":
+            continue
+        field_name = f"spec.guidellm.pre_warmup.{key}"
+        if key == "rate":
+            normalized = _positive_int(value, field_name)
+        elif key == "data_samples":
+            normalized = _optional_nonnegative_int(value, field_name)
+        elif key == "max_seconds":
+            normalized = _optional_positive_int(value, field_name)
+        elif key == "max_requests":
+            normalized = str(value).strip() if value is not None else None
+        elif key in {"profile", "rate_type", "data"}:
+            normalized = _nonempty_string(value, field_name)
+        else:
+            normalized = _passthrough_value(value, field_name)
+        if normalized is not None:
+            args[key] = normalized
+    return GuidellmPreWarmupSpec(enabled=enabled, args=args)
 
 
 def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
-    public_dataset = str(raw.get("public_dataset", "") or "").strip()
+    args: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in _AIPERF_RESERVED_FIELDS:
+            continue
+        field_name = f"spec.aiperf.{key}"
+        if key in {
+            "endpoint_type",
+            "endpoint_path",
+            "tokenizer",
+            "dataset_type",
+            "public_dataset",
+            "export_level",
+        }:
+            normalized = _nonempty_string(value, field_name)
+        elif key in {"streaming", "fixed_schedule", "fixed_schedule_auto_offset"}:
+            normalized = _as_bool(value, True)
+        elif key == "export_http_trace":
+            normalized = _as_bool(value, False)
+        elif key in {"synthesis_max_isl", "fixed_schedule_end_offset"}:
+            normalized = _optional_positive_int(value, field_name)
+        else:
+            normalized = _passthrough_value(value, field_name)
+        if normalized is not None:
+            args[key] = normalized
+    args.setdefault("streaming", True)
+    args.setdefault("fixed_schedule", True)
+    args.setdefault("fixed_schedule_auto_offset", True)
+
+    public_dataset = str(args.get("public_dataset", "") or "").strip()
     dataset_url = str(raw.get("dataset_url", "") or "").strip()
-    dataset_type = str(raw.get("dataset_type", "") or "").strip()
+    dataset_type = str(args.get("dataset_type", "") or "").strip()
     missing = [
         field_name
         for field_name in sorted(_AIPERF_REQUIRED_FIELDS)
-        if not str(raw.get(field_name, "") or "").strip()
+        if not str(args.get(field_name, "") or "").strip()
     ]
     if missing:
         joined = ", ".join(f"spec.aiperf.{field_name}" for field_name in missing)
@@ -578,30 +629,12 @@ def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
             )
 
     return AiperfBenchmarkSpec(
-        public_dataset=public_dataset,
+        args=args,
         dataset_url=dataset_url,
         dataset_name=str(raw.get("dataset_name", "") or "").strip(),
-        dataset_type=dataset_type,
-        endpoint_type=str(raw.get("endpoint_type", "") or "").strip(),
-        endpoint_path=str(raw.get("endpoint_path", "") or "").strip(),
-        tokenizer=str(raw.get("tokenizer", "") or "").strip(),
-        streaming=_as_bool(raw.get("streaming"), True),
-        fixed_schedule=_as_bool(raw.get("fixed_schedule"), True),
-        fixed_schedule_auto_offset=_as_bool(
-            raw.get("fixed_schedule_auto_offset"), True
-        ),
-        synthesis_max_isl=_optional_positive_int(
-            raw.get("synthesis_max_isl"), "spec.aiperf.synthesis_max_isl"
-        ),
-        fixed_schedule_end_offset=_optional_positive_int(
-            raw.get("fixed_schedule_end_offset"),
-            "spec.aiperf.fixed_schedule_end_offset",
-        ),
         dataset_cap=_optional_positive_int(
             raw.get("dataset_cap"), "spec.aiperf.dataset_cap"
         ),
-        export_level=str(raw.get("export_level", "") or "").strip(),
-        export_http_trace=_as_bool(raw.get("export_http_trace"), False),
         max_seconds=int(raw.get("max_seconds", 7200)),
     )
 
@@ -614,17 +647,16 @@ def _benchmark_profile_spec_from_dict(raw: dict[str, Any]) -> BenchmarkProfileSp
         )
     env = {str(key): str(value) for key, value in (raw.get("env") or {}).items()}
     guidellm_raw = raw.get("guidellm")
+    if tool == "guidellm" and guidellm_raw is None:
+        raise ValidationError("spec.guidellm is required when spec.tool is guidellm")
     if guidellm_raw is None:
-        guidellm_raw = raw
+        guidellm_raw = {}
     if not isinstance(guidellm_raw, dict):
         raise ValidationError("spec.guidellm must be a mapping")
 
     aiperf_raw = raw.get("aiperf")
-    if aiperf_raw is None and raw.get("options") is not None:
-        aiperf_raw = {
-            **dict(raw.get("options") or {}),
-            "max_seconds": raw.get("max_seconds", 7200),
-        }
+    if tool == "aiperf" and aiperf_raw is None:
+        raise ValidationError("spec.aiperf is required when spec.tool is aiperf")
     if aiperf_raw is None:
         aiperf_raw = {}
     if not isinstance(aiperf_raw, dict):
@@ -856,9 +888,7 @@ def list_profile_entries(profiles_dir: Path) -> list[ProfileIndexEntry]:
                 details["endpoint_type"] = str(aiperf.get("endpoint_type", ""))
                 details["dataset_type"] = str(aiperf.get("dataset_type", ""))
             else:
-                details["rate_type"] = str(
-                    guidellm.get("rate_type", spec.get("rate_type", "")) or ""
-                )
+                details["rate_type"] = str(guidellm.get("rate_type", "") or "")
             entries.append(
                 ProfileIndexEntry(
                     name=name, kind="benchmark", path=relative_path, details=details

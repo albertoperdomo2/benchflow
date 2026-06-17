@@ -28,6 +28,7 @@ from .common import (
     benchmark_version_from_plan,
     resolved_accelerator,
 )
+from .cli_args import render_cli_args
 
 _AIPERF_SUMMARY_CANDIDATES = (
     "results/profile_export_aiperf.json",
@@ -246,10 +247,11 @@ def _build_command(
     dataset_path: Path,
     aiperf: AiperfBenchmarkSpec,
 ) -> list[str]:
-    endpoint_path = (
-        aiperf.endpoint_path or plan.deployment.target.path or "/v1/chat/completions"
+    args = dict(aiperf.args)
+    args.setdefault(
+        "endpoint_path", plan.deployment.target.path or "/v1/chat/completions"
     )
-    tokenizer = aiperf.tokenizer or plan.model.name
+    args.setdefault("tokenizer", plan.model.name)
     command = [
         "aiperf",
         "profile",
@@ -257,44 +259,27 @@ def _build_command(
         plan.model.name,
         "--url",
         target,
-        "--endpoint-type",
-        aiperf.endpoint_type,
-        "--endpoint",
-        endpoint_path,
-        "--tokenizer",
-        tokenizer,
         "--artifact-dir",
         str(artifact_dir),
         "--ui",
         "none",
     ]
-    if aiperf.public_dataset:
-        command.extend(["--public-dataset", aiperf.public_dataset])
-    else:
+    if aiperf.dataset_url:
         command.extend(
             [
                 "--input-file",
                 str(dataset_path),
-                "--custom-dataset-type",
-                aiperf.dataset_type,
             ]
         )
-    if aiperf.streaming:
-        command.append("--streaming")
-    if aiperf.fixed_schedule:
-        command.append("--fixed-schedule")
-    if aiperf.fixed_schedule_auto_offset:
-        command.append("--fixed-schedule-auto-offset")
-    if aiperf.export_level:
-        command.extend(["--export-level", aiperf.export_level])
-    if aiperf.export_http_trace:
-        command.append("--export-http-trace")
-    if aiperf.synthesis_max_isl is not None:
-        command.extend(["--synthesis-max-isl", str(aiperf.synthesis_max_isl)])
-    if aiperf.fixed_schedule_end_offset is not None:
-        command.extend(
-            ["--fixed-schedule-end-offset", str(aiperf.fixed_schedule_end_offset)]
+    command.extend(
+        render_cli_args(
+            args,
+            aliases={
+                "endpoint_path": "endpoint",
+                "dataset_type": "custom_dataset_type",
+            },
         )
+    )
     return command
 
 
@@ -320,7 +305,8 @@ def run_benchmark(
     if output_dir is not None:
         benchmark_env["AIPERF_ARTIFACT_DIR"] = str(output_dir)
     dataset_path = Path("/tmp/benchflow-aiperf/public-dataset-placeholder.jsonl")
-    if not aiperf.public_dataset:
+    public_dataset = str(aiperf.args.get("public_dataset", "") or "").strip()
+    if not public_dataset:
         dataset_path = _cap_dataset_entries(
             _download_dataset(
                 dataset_url=aiperf.dataset_url,
@@ -345,8 +331,8 @@ def run_benchmark(
 
     step(f"Preparing AIPerf benchmark run for {plan.model.name}")
     detail(f"Target: {benchmark_target}")
-    if aiperf.public_dataset:
-        detail(f"AIPerf public dataset: {aiperf.public_dataset}")
+    if public_dataset:
+        detail(f"AIPerf public dataset: {public_dataset}")
     else:
         detail(f"Dataset: {dataset_path}")
     detail(f"Artifact directory: {artifact_dir}")
@@ -363,19 +349,19 @@ def run_benchmark(
             with mlflow.start_run(tags=tags) as run:
                 run_id = run.info.run_id
                 mlflow.log_param("benchmark_tool", "aiperf")
-                mlflow.log_param("backend_type", plan.benchmark.backend_type)
-                if aiperf.public_dataset:
-                    mlflow.log_param("public_dataset", aiperf.public_dataset)
+                mlflow.log_param("backend_type", "openai_http")
+                if public_dataset:
+                    mlflow.log_param("public_dataset", public_dataset)
                 else:
                     mlflow.log_param("dataset_url", aiperf.dataset_url)
                     if aiperf.dataset_cap is not None:
                         mlflow.log_param("dataset_cap", aiperf.dataset_cap)
-                    mlflow.log_param("dataset_type", aiperf.dataset_type)
-                mlflow.log_param("endpoint_type", aiperf.endpoint_type)
-                if aiperf.export_level:
-                    mlflow.log_param("export_level", aiperf.export_level)
-                if aiperf.export_http_trace:
-                    mlflow.log_param("export_http_trace", "true")
+                mlflow.log_param("max_seconds", aiperf.max_seconds)
+                for key, value in aiperf.args.items():
+                    mlflow.log_param(
+                        key,
+                        json.dumps(value) if isinstance(value, (dict, list)) else value,
+                    )
                 mlflow.log_param("target", benchmark_target)
                 mlflow.log_param("model", plan.model.name)
                 mlflow.log_param("tp", plan.deployment.runtime.tensor_parallelism)

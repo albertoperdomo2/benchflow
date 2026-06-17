@@ -108,31 +108,29 @@ def run_benchmark(
     benchmark_env = _configure_benchmark_runtime()
     benchmark_env.update(plan.benchmark.env)
     accelerator = resolved_accelerator(plan)
-    rate_values = _join_optional_rates(guidellm.rates)
-    rate_type = guidellm.rate_type if guidellm.rate_type else None
-    data_samples = guidellm.data_samples
-    warmup = guidellm.warmup
+    rate_values = _join_optional_rates(guidellm.args.get("rates"))
+    benchmark_args = dict(guidellm.args)
     if output_dir is not None:
         benchmark_env["GUIDELLM_OUTPUT_DIR"] = str(output_dir)
     step(f"Preparing benchmark run for {plan.model.name}")
     detail(f"Target: {benchmark_target}")
     if rate_values:
         detail(
-            f"Rates: {rate_values}, duration: {guidellm.max_seconds}s, max requests: "
-            f"{guidellm.max_requests if guidellm.max_requests is not None else 'unbounded'}"
+            f"Rates: {rate_values}, duration: {benchmark_args.get('max_seconds')}s, "
+            f"max requests: {benchmark_args.get('max_requests') if benchmark_args.get('max_requests') is not None else 'unbounded'}"
         )
     else:
         detail(
-            f"Rates: not set, duration: {guidellm.max_seconds}s, max requests: "
-            f"{guidellm.max_requests if guidellm.max_requests is not None else 'unbounded'}"
+            f"Rates: not set, duration: {benchmark_args.get('max_seconds')}s, "
+            f"max requests: {benchmark_args.get('max_requests') if benchmark_args.get('max_requests') is not None else 'unbounded'}"
         )
     detail(f"Benchmark output mode: {'MLflow' if enable_mlflow else 'local artifacts'}")
     detail(f"Runtime HOME: {benchmark_env['HOME']}")
     detail(f"Hugging Face cache: {benchmark_env['HF_HUB_CACHE']}")
     if output_dir is not None:
         detail(f"Output directory: {output_dir}")
-    if guidellm.processor_args:
-        detail(f"GuideLLM processor args: {guidellm.processor_args}")
+    if benchmark_args.get("processor_args"):
+        detail(f"GuideLLM processor args: {benchmark_args.get('processor_args')}")
 
     with _patched_environment(benchmark_env):
         try:
@@ -141,18 +139,8 @@ def run_benchmark(
                 run_id = module.run_benchmark_with_mlflow(
                     target=benchmark_target,
                     model=plan.model.name,
-                    rate=rate_values,
-                    backend_type=guidellm.backend_type,
-                    request_type=guidellm.request_type or None,
-                    profile=guidellm.profile,
-                    rate_type=rate_type,
-                    data_samples=data_samples,
-                    warmup=warmup,
-                    data=guidellm.data,
-                    max_seconds=guidellm.max_seconds,
-                    max_requests=guidellm.max_requests,
+                    benchmark_args=benchmark_args,
                     pre_warmup=guidellm.pre_warmup,
-                    processor_args=guidellm.processor_args,
                     accelerator=accelerator,
                     experiment_name=plan.mlflow.experiment,
                     mlflow_tracking_uri=mlflow_tracking_uri
@@ -173,18 +161,8 @@ def run_benchmark(
                 module.run_benchmark_without_mlflow(
                     target=benchmark_target,
                     model=plan.model.name,
-                    rate=rate_values,
-                    backend_type=guidellm.backend_type,
-                    request_type=guidellm.request_type or None,
-                    profile=guidellm.profile,
-                    rate_type=rate_type,
-                    data_samples=data_samples,
-                    warmup=warmup,
-                    data=guidellm.data,
-                    max_seconds=guidellm.max_seconds,
-                    max_requests=guidellm.max_requests,
+                    benchmark_args=benchmark_args,
                     pre_warmup=guidellm.pre_warmup,
-                    processor_args=guidellm.processor_args,
                     output_dir=str(output_dir),
                     accelerator=accelerator,
                     version=benchmark_version_from_plan(plan),

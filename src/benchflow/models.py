@@ -409,17 +409,7 @@ class BenchmarkRequirementsSpec:
 
 @dataclass(slots=True)
 class GuidellmBenchmarkSpec:
-    backend_type: str = "openai_http"
-    request_type: str = ""
-    profile: str | None = None
-    processor_args: str | None = None
-    rate_type: str | None = None
-    rates: list[int] | None = None
-    data_samples: int | None = None
-    warmup: Any | None = None
-    data: str = "prompt_tokens=1000,output_tokens=1000"
-    max_seconds: int | None = None
-    max_requests: str | None = None
+    args: dict[str, Any] = field(default_factory=dict)
     pre_warmup: "GuidellmPreWarmupSpec" = field(
         default_factory=lambda: GuidellmPreWarmupSpec()
     )
@@ -428,32 +418,15 @@ class GuidellmBenchmarkSpec:
 @dataclass(slots=True)
 class GuidellmPreWarmupSpec:
     enabled: bool = False
-    rate: int | None = None
-    profile: str | None = None
-    rate_type: str | None = None
-    data_samples: int | None = None
-    data: str | None = None
-    max_seconds: int | None = None
-    max_requests: str | None = None
+    args: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
 class AiperfBenchmarkSpec:
-    public_dataset: str = ""
+    args: dict[str, Any] = field(default_factory=dict)
     dataset_url: str = ""
     dataset_name: str = ""
-    dataset_type: str = ""
-    endpoint_type: str = ""
-    endpoint_path: str = ""
-    tokenizer: str = ""
-    streaming: bool = True
-    fixed_schedule: bool = True
-    fixed_schedule_auto_offset: bool = True
-    synthesis_max_isl: int | None = None
-    fixed_schedule_end_offset: int | None = None
     dataset_cap: int | None = None
-    export_level: str = ""
-    export_http_trace: bool = False
     max_seconds: int = 7200
 
 
@@ -466,61 +439,6 @@ class BenchmarkProfileSpec:
     requirements: BenchmarkRequirementsSpec = field(
         default_factory=BenchmarkRequirementsSpec
     )
-
-    @property
-    def backend_type(self) -> str:
-        if self.tool == "aiperf":
-            return "openai_http"
-        return self.guidellm.backend_type
-
-    @property
-    def request_type(self) -> str:
-        return self.guidellm.request_type
-
-    @request_type.setter
-    def request_type(self, value: str) -> None:
-        self.guidellm.request_type = value
-
-    @property
-    def rate_type(self) -> str | None:
-        return "fixed_schedule" if self.tool == "aiperf" else self.guidellm.rate_type
-
-    @property
-    def rates(self) -> list[int] | None:
-        return [] if self.tool == "aiperf" else self.guidellm.rates
-
-    @rates.setter
-    def rates(self, value: list[int] | None) -> None:
-        self.guidellm.rates = value
-
-    @property
-    def data(self) -> str:
-        if self.tool == "aiperf":
-            return self.aiperf.dataset_name or self.aiperf.dataset_url
-        return self.guidellm.data
-
-    @property
-    def max_seconds(self) -> int | None:
-        return (
-            self.aiperf.max_seconds
-            if self.tool == "aiperf"
-            else self.guidellm.max_seconds
-        )
-
-    @max_seconds.setter
-    def max_seconds(self, value: int | None) -> None:
-        if self.tool == "aiperf":
-            self.aiperf.max_seconds = value
-        else:
-            self.guidellm.max_seconds = value
-
-    @property
-    def max_requests(self) -> str | None:
-        return None if self.tool == "aiperf" else self.guidellm.max_requests
-
-    @max_requests.setter
-    def max_requests(self, value: str | None) -> None:
-        self.guidellm.max_requests = value
 
 
 @dataclass(slots=True)

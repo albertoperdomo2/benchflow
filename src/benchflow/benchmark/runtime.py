@@ -16,6 +16,7 @@ from mlflow.store.artifact.artifact_repository_registry import get_artifact_repo
 
 from ..mlflow_compat import configure_mlflow_tracking, create_mlflow_client
 from ..ui import configure_logging, emit
+from .cli_args import render_cli_args
 
 # Disable SSL warnings if using self-signed certificates
 if os.environ.get("MLFLOW_TRACKING_INSECURE_TLS", "false").lower() == "true":
@@ -82,37 +83,30 @@ _MLFLOW_METRIC_SECTIONS: dict[str, set[str]] = {
     },
 }
 
-NON_DATA_PROFILE_PARAMS = {
-    "target",
-    "model",
-    "backend_type",
-    "request_type",
-    "profile",
-    "rate_type",
-    "rates",
-    "tp",
-    "data_samples",
-    "warmup",
-    "replicas",
-    "prefill_replicas",
-    "decode_replicas",
-    "multiturn_mode",
-    "max_seconds",
-    "max_requests",
-    "processor",
-    "accelerator",
-    "version",
+DATA_PROFILE_PARAMS = {
+    "prompt_tokens",
+    "prompt_tokens_stdev",
+    "prompt_tokens_min",
+    "prompt_tokens_max",
+    "output_tokens",
+    "output_tokens_stdev",
+    "output_tokens_min",
+    "output_tokens_max",
+    "turns",
+    "prefix_tokens",
+    "prefix_count",
+    "prefix_buckets",
 }
 
 
 def _is_data_profile_param(key: str, value: Any) -> bool:
     if value is None:
         return False
-    if key in NON_DATA_PROFILE_PARAMS:
-        return False
     # Pre-warmup is an execution phase used to populate caches; it does not
     # define the benchmark workload shape being compared.
-    return not key.startswith("pre_warmup_")
+    if key.startswith("pre_warmup_"):
+        return False
+    return key in DATA_PROFILE_PARAMS
 
 
 class BenchmarkExecutionError(RuntimeError):
@@ -136,6 +130,38 @@ def _stringify_data_profile_value(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return json.dumps(value, separators=(",", ":"))
     return value
+
+
+def _rates_to_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        cleaned = [str(item).strip() for item in value if str(item).strip()]
+        return ",".join(cleaned) if cleaned else None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
+def _merged_guidellm_backend_args(target: str, user_value: Any) -> str:
+    payload: dict[str, Any] = {}
+    if user_value is not None:
+        if isinstance(user_value, str):
+            parsed = json.loads(user_value)
+        elif isinstance(user_value, dict):
+            parsed = dict(user_value)
+        else:
+            raise BenchmarkExecutionError(
+                "guidellm backend_args must be a JSON object or mapping"
+            )
+        if not isinstance(parsed, dict):
+            raise BenchmarkExecutionError(
+                "guidellm backend_args must be a JSON object or mapping"
+            )
+        payload.update(parsed)
+    payload.setdefault("timeout", 600)
+    if target.startswith("https://"):
+        payload.setdefault("verify", False)
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def _parse_data_profile_config(data: str | None) -> dict[str, Any]:
@@ -567,21 +593,12 @@ def extract_metrics_from_benchmark(benchmark: Dict[str, Any]) -> Dict[str, Any]:
 def run_guidellm_cli(
     target: str,
     model: str,
-    rate: str | None,
-    backend_type: str = "openai_http",
-    request_type: str | None = None,
-    profile: str | None = None,
-    rate_type: str | None = None,
-    data_samples: int | None = None,
-    warmup: str | None = None,
-    data: str = None,
-    max_seconds=None,
-    max_requests=None,
-    processor: str = None,
-    processor_args: str | None = None,
+    benchmark_args: dict[str, Any],
     output_path: str = "benchmark_output.json",
 ) -> tuple[str, str]:
     output_path_obj = Path(output_path)
+    args = dict(benchmark_args)
+    backend_args = _merged_guidellm_backend_args(target, args.pop("backend_args", None))
     cmd = [
         "guidellm",
         "benchmark",
@@ -597,33 +614,8 @@ def run_guidellm_cli(
         "--outputs",
         output_path_obj.name,
     ]
-
-    if rate is not None and str(rate).strip():
-        cmd.extend(["--rate", str(rate)])
-    if request_type:
-        cmd.extend(["--request-type", request_type])
-    if profile:
-        cmd.extend(["--profile", profile])
-    if rate_type:
-        cmd.extend(["--rate-type", rate_type])
-    if data_samples is not None:
-        cmd.extend(["--data-samples", str(data_samples)])
-    if warmup is not None and str(warmup).strip():
-        cmd.extend(["--warmup", str(warmup)])
-    cmd.extend(["--backend-args", '{"timeout": 600}'])
-    if target.startswith("https://"):
-        # cmd.extend(["--backend-kwargs", '{"verify": false}'])
-        cmd.extend(["--backend-args", '{"verify": false, "timeout": 600}'])
-    if data:
-        cmd.extend(["--data", data])
-    if max_seconds is not None:
-        cmd.extend(["--max-seconds", str(max_seconds)])
-    if max_requests:
-        cmd.extend(["--max-requests", str(max_requests)])
-    if processor:
-        cmd.extend(["--processor", processor])
-    if processor_args:
-        cmd.extend(["--processor-args", processor_args])
+    cmd.extend(render_cli_args(args, aliases={"rates": "rate"}, join_lists={"rates"}))
+    cmd.extend(["--backend-args", backend_args])
 
     logger.info(f"Running guidellm command: {' '.join(cmd)}")
 
@@ -671,7 +663,9 @@ def _pre_warmup_value(pre_warmup: Any, key: str, default: Any = None) -> Any:
     if isinstance(pre_warmup, dict):
         value = pre_warmup.get(key, default)
     else:
-        value = getattr(pre_warmup, key, default)
+        value = getattr(pre_warmup, key, None)
+        if value is None:
+            value = getattr(pre_warmup, "args", {}).get(key, default)
     return default if value is None else value
 
 
@@ -683,14 +677,7 @@ def _run_guidellm_pre_warmup(
     *,
     target: str,
     model: str,
-    backend_type: str,
-    request_type: str | None,
-    profile: str | None,
-    rate_type: str | None,
-    data_samples: int | None,
-    data: str | None,
-    processor: str | None,
-    processor_args: str | None,
+    benchmark_args: dict[str, Any],
     output_dir: str,
     pre_warmup: Any,
 ) -> tuple[str, str] | None:
@@ -703,12 +690,18 @@ def _run_guidellm_pre_warmup(
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     output_json = f"{output_dir}/pre_warmup_output.json"
-    warmup_profile = _pre_warmup_value(pre_warmup, "profile", profile)
-    warmup_rate_type = _pre_warmup_value(pre_warmup, "rate_type", rate_type)
-    warmup_data_samples = _pre_warmup_value(pre_warmup, "data_samples", data_samples)
-    warmup_data = _pre_warmup_value(pre_warmup, "data", data)
-    warmup_max_seconds = _pre_warmup_value(pre_warmup, "max_seconds")
-    warmup_max_requests = _pre_warmup_value(pre_warmup, "max_requests")
+    warmup_args = dict(benchmark_args)
+    warmup_args["rates"] = [int(rate)]
+    warmup_args.pop("warmup", None)
+    for key, value in (
+        pre_warmup.items()
+        if isinstance(pre_warmup, dict)
+        else getattr(pre_warmup, "args", {}).items()
+    ):
+        if key not in {"enabled", "rate"} and value is not None:
+            warmup_args[key] = value
+    warmup_max_seconds = warmup_args.get("max_seconds")
+    warmup_max_requests = warmup_args.get("max_requests")
 
     logger.info(
         "Running GuideLLM pre-warmup: rate=%s, duration=%s, max_requests=%s",
@@ -719,18 +712,7 @@ def _run_guidellm_pre_warmup(
     return run_guidellm_cli(
         target=target,
         model=model,
-        rate=str(rate),
-        backend_type=backend_type,
-        request_type=request_type,
-        profile=warmup_profile,
-        rate_type=warmup_rate_type,
-        data_samples=warmup_data_samples,
-        warmup=None,
-        data=warmup_data,
-        max_seconds=warmup_max_seconds,
-        max_requests=warmup_max_requests,
-        processor=processor,
-        processor_args=processor_args,
+        benchmark_args=warmup_args,
         output_path=output_json,
     )
 
@@ -831,18 +813,7 @@ def generate_visualization_report(
 def _run_and_process_benchmark(
     target: str,
     model: str,
-    rate: str | None,
-    backend_type: str,
-    request_type: str | None,
-    profile: str | None,
-    rate_type: str | None,
-    data_samples: int | None,
-    warmup: str | None,
-    data: str,
-    max_seconds,
-    max_requests,
-    processor: str,
-    processor_args: str | None,
+    benchmark_args: dict[str, Any],
     output_dir: str,
 ) -> tuple:
     """Helper to run guidellm and process results."""
@@ -852,18 +823,7 @@ def _run_and_process_benchmark(
     json_path, console_log_path = run_guidellm_cli(
         target=target,
         model=model,
-        rate=rate,
-        backend_type=backend_type,
-        request_type=request_type,
-        profile=profile,
-        rate_type=rate_type,
-        data_samples=data_samples,
-        warmup=warmup,
-        data=data,
-        max_seconds=max_seconds,
-        max_requests=max_requests,
-        processor=processor,
-        processor_args=processor_args,
+        benchmark_args=benchmark_args,
         output_path=output_json,
     )
 
@@ -886,19 +846,8 @@ def _run_and_process_benchmark(
 def run_benchmark_without_mlflow(
     target: str,
     model: str,
-    rate: str | None,
-    backend_type: str = "openai_http",
-    request_type: str | None = None,
-    profile: str | None = None,
-    rate_type: str | None = None,
-    data_samples: int | None = None,
-    warmup: str | None = None,
-    data: str = None,
-    max_seconds=None,
-    max_requests=None,
+    benchmark_args: dict[str, Any],
     pre_warmup: Any = None,
-    processor: str = None,
-    processor_args: str | None = None,
     output_dir: str = "/benchmark-results",
     accelerator: str = None,
     version: str = None,
@@ -907,6 +856,10 @@ def run_benchmark_without_mlflow(
     replicas: int = 1,
 ) -> str:
     """Run benchmark without MLflow tracking, saving results to specified directory."""
+    rate = _rates_to_string(benchmark_args.get("rates"))
+    data = benchmark_args.get("data")
+    max_seconds = benchmark_args.get("max_seconds")
+    max_requests = benchmark_args.get("max_requests")
     logger.info("Running benchmark without MLflow tracking")
     logger.info(
         f"Starting benchmark for rates: {rate if rate is not None else 'not set'}"
@@ -928,14 +881,7 @@ def run_benchmark_without_mlflow(
         _run_guidellm_pre_warmup(
             target=target,
             model=model,
-            backend_type=backend_type,
-            request_type=request_type,
-            profile=profile,
-            rate_type=rate_type,
-            data_samples=data_samples,
-            data=data,
-            processor=processor,
-            processor_args=processor_args,
+            benchmark_args=benchmark_args,
             output_dir=output_dir,
             pre_warmup=pre_warmup,
         )
@@ -967,21 +913,15 @@ def run_benchmark_without_mlflow(
             logger.info(f"  Parsed max_seconds: {parsed_max_seconds}")
 
             output_json = f"{output_dir}/benchmark_output_rate_{concurrency}.json"
+            iteration_args = dict(benchmark_args)
+            iteration_args["rates"] = [concurrency]
+            iteration_args["data"] = parsed_data
+            iteration_args["max_seconds"] = parsed_max_seconds
+            iteration_args["max_requests"] = parsed_max_requests
             json_path, console_log_path = run_guidellm_cli(
                 target=target,
                 model=model,
-                rate=concurrency_str,
-                backend_type=backend_type,
-                request_type=request_type,
-                profile=profile,
-                rate_type=rate_type,
-                data_samples=data_samples,
-                warmup=warmup,
-                data=parsed_data,
-                max_seconds=parsed_max_seconds,
-                max_requests=parsed_max_requests,
-                processor=processor,
-                processor_args=processor_args,
+                benchmark_args=iteration_args,
                 output_path=output_json,
             )
 
@@ -1014,14 +954,7 @@ def run_benchmark_without_mlflow(
     _run_guidellm_pre_warmup(
         target=target,
         model=model,
-        backend_type=backend_type,
-        request_type=request_type,
-        profile=profile,
-        rate_type=rate_type,
-        data_samples=data_samples,
-        data=data,
-        processor=processor,
-        processor_args=processor_args,
+        benchmark_args=benchmark_args,
         output_dir=output_dir,
         pre_warmup=pre_warmup,
     )
@@ -1029,18 +962,7 @@ def run_benchmark_without_mlflow(
     json_path, console_log_path, benchmarks = _run_and_process_benchmark(
         target=target,
         model=model,
-        rate=rate,
-        backend_type=backend_type,
-        request_type=request_type,
-        profile=profile,
-        rate_type=rate_type,
-        data_samples=data_samples,
-        warmup=warmup,
-        data=data,
-        max_seconds=max_seconds,
-        max_requests=max_requests,
-        processor=processor,
-        processor_args=processor_args,
+        benchmark_args=benchmark_args,
         output_dir=output_dir,
     )
 
@@ -1058,19 +980,8 @@ def run_benchmark_without_mlflow(
 def run_benchmark_with_mlflow(
     target: str,
     model: str,
-    rate: str | None,
-    backend_type: str = "openai_http",
-    request_type: str | None = None,
-    profile: str | None = None,
-    rate_type: str | None = None,
-    data_samples: int | None = None,
-    warmup: str | None = None,
-    data: str = None,
-    max_seconds=None,
-    max_requests=None,
+    benchmark_args: dict[str, Any],
     pre_warmup: Any = None,
-    processor: str = None,
-    processor_args: str | None = None,
     accelerator: str = None,
     experiment_name: str = "guidellm-benchmarks",
     mlflow_tracking_uri: str = None,
@@ -1086,6 +997,11 @@ def run_benchmark_with_mlflow(
     configure_mlflow_tracking(mlflow_tracking_uri)
 
     mlflow.set_experiment(experiment_name)
+    rate = _rates_to_string(benchmark_args.get("rates"))
+    data = benchmark_args.get("data")
+    max_seconds = benchmark_args.get("max_seconds")
+    max_requests = benchmark_args.get("max_requests")
+    rate_type = benchmark_args.get("rate_type")
 
     multiturn_mode = _multiturn_mode_enabled(
         data=data,
@@ -1116,53 +1032,35 @@ def run_benchmark_with_mlflow(
             params = {
                 "target": target,
                 "model": model,
-                "backend_type": backend_type,
                 "tp": tp_size,
                 "replicas": replicas,
                 "prefill_replicas": prefill_replicas,
                 "decode_replicas": decode_replicas,
                 "multiturn_mode": multiturn_mode,
             }
-            if rate_type:
-                params["rate_type"] = rate_type
-            if rate is not None and str(rate).strip():
-                params["rates"] = rate
-            if request_type:
-                params["request_type"] = request_type
-            if profile:
-                params["profile"] = profile
-            if data_samples is not None:
-                params["data_samples"] = data_samples
-            if warmup is not None:
-                params["warmup"] = warmup
-            if data:
-                params.update(_parse_data_profile_config(data))
-            if max_seconds is not None:
-                params["max_seconds"] = max_seconds
-            if max_requests:
-                params["max_requests"] = max_requests
+            for key, value in benchmark_args.items():
+                if value is None:
+                    continue
+                if key == "data" and value:
+                    params.update(_parse_data_profile_config(str(value)))
+                    continue
+                if key == "rates":
+                    rendered_rates = _rates_to_string(value)
+                    if rendered_rates:
+                        params["rates"] = rendered_rates
+                    continue
+                params[key] = _stringify_data_profile_value(value)
             if _pre_warmup_enabled(pre_warmup):
                 params["pre_warmup_rate"] = _pre_warmup_value(pre_warmup, "rate")
-                if _pre_warmup_value(pre_warmup, "profile"):
-                    params["pre_warmup_profile"] = _pre_warmup_value(
-                        pre_warmup, "profile"
-                    )
-                if _pre_warmup_value(pre_warmup, "rate_type"):
-                    params["pre_warmup_rate_type"] = _pre_warmup_value(
-                        pre_warmup, "rate_type"
-                    )
-                if _pre_warmup_value(pre_warmup, "max_seconds") is not None:
-                    params["pre_warmup_max_seconds"] = _pre_warmup_value(
-                        pre_warmup, "max_seconds"
-                    )
-                if _pre_warmup_value(pre_warmup, "max_requests") is not None:
-                    params["pre_warmup_max_requests"] = _pre_warmup_value(
-                        pre_warmup, "max_requests"
-                    )
-            if processor:
-                params["processor"] = processor
-            if processor_args:
-                params["processor_args"] = processor_args
+                for key, value in (
+                    pre_warmup.items()
+                    if isinstance(pre_warmup, dict)
+                    else getattr(pre_warmup, "args", {}).items()
+                ):
+                    if key not in {"enabled", "rate"} and value is not None:
+                        params[f"pre_warmup_{key}"] = _stringify_data_profile_value(
+                            value
+                        )
             if accelerator:
                 params["accelerator"] = accelerator
             if version:
@@ -1191,14 +1089,7 @@ def run_benchmark_with_mlflow(
             warmup_artifacts = _run_guidellm_pre_warmup(
                 target=target,
                 model=model,
-                backend_type=backend_type,
-                request_type=request_type,
-                profile=profile,
-                rate_type=rate_type,
-                data_samples=data_samples,
-                data=data,
-                processor=processor,
-                processor_args=processor_args,
+                benchmark_args=benchmark_args,
                 output_dir=output_dir or "/tmp",
                 pre_warmup=pre_warmup,
             )
@@ -1260,23 +1151,17 @@ def run_benchmark_with_mlflow(
                             / f"benchmark_output_rate_{concurrency}.json"
                         )
                         console_log_path = output_json.replace(".json", "_console.log")
+                        iteration_args = dict(benchmark_args)
+                        iteration_args["rates"] = [concurrency]
+                        iteration_args["data"] = parsed_data
+                        iteration_args["max_requests"] = parsed_max_requests
+                        iteration_args["max_seconds"] = parsed_max_seconds
 
                         # Run guidellm for this concurrency only
                         json_path, console_log = run_guidellm_cli(
                             target=target,
                             model=model,
-                            rate=concurrency_str,
-                            backend_type=backend_type,
-                            request_type=request_type,
-                            profile=profile,
-                            rate_type=rate_type,
-                            data_samples=data_samples,
-                            warmup=warmup,
-                            data=parsed_data,
-                            max_seconds=parsed_max_seconds,
-                            max_requests=parsed_max_requests,
-                            processor=processor,
-                            processor_args=processor_args,
+                            benchmark_args=iteration_args,
                             output_path=output_json,
                         )
 
@@ -1372,18 +1257,7 @@ def run_benchmark_with_mlflow(
                 ) = _run_and_process_benchmark(
                     target=target,
                     model=model,
-                    rate=rate,
-                    backend_type=backend_type,
-                    request_type=request_type,
-                    profile=profile,
-                    rate_type=rate_type,
-                    data_samples=data_samples,
-                    warmup=warmup,
-                    data=data,
-                    max_seconds=max_seconds,
-                    max_requests=max_requests,
-                    processor=processor,
-                    processor_args=processor_args,
+                    benchmark_args=benchmark_args,
                     output_dir=output_dir or "/tmp",
                 )
 
@@ -2097,6 +1971,25 @@ def _run_benchmark_mode(
     decode_replicas: str,
 ) -> int:
     parsed_tags = _parse_tag_mappings(tags)
+    benchmark_args: dict[str, Any] = {
+        "backend_type": backend_type,
+        "rates": [item.strip() for item in rate.split(",")] if rate else None,
+        "data": data,
+        "max_seconds": max_seconds,
+        "max_requests": max_requests,
+        "processor": processor,
+    }
+    if rate_type:
+        benchmark_args["rate_type"] = rate_type
+    if data_samples is not None:
+        benchmark_args["data_samples"] = data_samples
+    if warmup is not None:
+        benchmark_args["warmup"] = warmup
+    if profile:
+        benchmark_args["profile"] = profile
+    benchmark_args = {
+        key: value for key, value in benchmark_args.items() if value is not None
+    }
     logger.info(
         f"Starting benchmark sweep for rates: {rate if rate is not None else 'not set'}"
     )
@@ -2110,16 +2003,7 @@ def _run_benchmark_mode(
             json_path = run_benchmark_without_mlflow(
                 target=target,
                 model=model,
-                rate=rate,
-                backend_type=backend_type,
-                rate_type=rate_type,
-                data_samples=data_samples,
-                warmup=warmup,
-                data=data,
-                profile=profile,
-                max_seconds=max_seconds,
-                max_requests=max_requests,
-                processor=processor,
+                benchmark_args=benchmark_args,
                 output_dir="/benchmark-results",
                 accelerator=accelerator,
                 version=version,
@@ -2138,16 +2022,7 @@ def _run_benchmark_mode(
         run_id = run_benchmark_with_mlflow(
             target=target,
             model=model,
-            rate=rate,
-            backend_type=backend_type,
-            rate_type=rate_type,
-            data_samples=data_samples,
-            warmup=warmup,
-            data=data,
-            profile=profile,
-            max_seconds=max_seconds,
-            max_requests=max_requests,
-            processor=processor,
+            benchmark_args=benchmark_args,
             accelerator=accelerator,
             experiment_name=experiment_name,
             mlflow_tracking_uri=mlflow_tracking_uri,

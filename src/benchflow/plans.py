@@ -384,13 +384,19 @@ def resolve_run_plan(
 
     benchmark = deepcopy(benchmark_profile.spec)
     if overrides.benchmark.rates is not None:
-        benchmark.rates = list(overrides.benchmark.rates)
+        if benchmark.tool == "guidellm":
+            benchmark.guidellm.args["rates"] = list(overrides.benchmark.rates)
     if overrides.benchmark.max_seconds is not None:
-        benchmark.max_seconds = overrides.benchmark.max_seconds
+        if benchmark.tool == "aiperf":
+            benchmark.aiperf.max_seconds = overrides.benchmark.max_seconds
+        else:
+            benchmark.guidellm.args["max_seconds"] = overrides.benchmark.max_seconds
     if overrides.benchmark.max_requests is not None:
-        benchmark.max_requests = overrides.benchmark.max_requests
+        if benchmark.tool == "guidellm":
+            benchmark.guidellm.args["max_requests"] = overrides.benchmark.max_requests
     if overrides.benchmark.request_type is not None:
-        benchmark.request_type = overrides.benchmark.request_type
+        if benchmark.tool == "guidellm":
+            benchmark.guidellm.args["request_type"] = overrides.benchmark.request_type
     if overrides.benchmark.env is not None:
         benchmark.env = {
             **benchmark_profile.spec.env,

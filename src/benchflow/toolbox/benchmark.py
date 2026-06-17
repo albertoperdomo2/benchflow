@@ -38,41 +38,44 @@ def _format_optional_rates(rates: list[int] | None) -> str:
 def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
     if plan.benchmark.tool == "aiperf":
         aiperf = plan.benchmark.aiperf
-        if aiperf.public_dataset:
-            detail(f"AIPerf public dataset: {aiperf.public_dataset}")
+        public_dataset = str(aiperf.args.get("public_dataset", "") or "").strip()
+        if public_dataset:
+            detail(f"AIPerf public dataset: {public_dataset}")
         else:
             detail(
                 f"AIPerf dataset: {aiperf.dataset_name or aiperf.dataset_url} "
-                f"({aiperf.dataset_type})"
+                f"({aiperf.args.get('dataset_type', '')})"
             )
         detail(
             "AIPerf endpoint: "
-            f"{aiperf.endpoint_type} "
-            f"{aiperf.endpoint_path or plan.deployment.target.path}"
+            f"{aiperf.args.get('endpoint_type', '')} "
+            f"{aiperf.args.get('endpoint_path') or plan.deployment.target.path}"
         )
         detail(
             "AIPerf mode: "
-            f"streaming={aiperf.streaming}, fixed_schedule={aiperf.fixed_schedule}"
+            f"streaming={bool(aiperf.args.get('streaming'))}, "
+            f"fixed_schedule={bool(aiperf.args.get('fixed_schedule'))}"
         )
         return
 
     guidellm = plan.benchmark.guidellm
+    rates = guidellm.args.get("rates")
     detail(
         "Rates: "
-        + _format_optional_rates(guidellm.rates)
+        + _format_optional_rates(rates if isinstance(rates, list) else None)
         + (
-            f", rate type: {guidellm.rate_type}"
-            if guidellm.rate_type
+            f", rate type: {guidellm.args.get('rate_type')}"
+            if guidellm.args.get("rate_type")
             else ", rate type: not set"
         )
-        + f", backend: {guidellm.backend_type}"
+        + f", backend: {guidellm.args.get('backend_type', 'openai_http')}"
     )
-    detail(f"Benchmark data: {guidellm.data}")
+    detail(f"Benchmark data: {guidellm.args.get('data', '')}")
     if guidellm.pre_warmup.enabled:
         detail(
             "Pre-warmup: "
-            f"rate={guidellm.pre_warmup.rate}, "
-            f"duration={guidellm.pre_warmup.max_seconds or 'not set'}s"
+            f"rate={guidellm.pre_warmup.args.get('rate')}, "
+            f"duration={guidellm.pre_warmup.args.get('max_seconds') or 'not set'}s"
         )
 
 

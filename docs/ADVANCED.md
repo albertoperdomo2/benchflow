@@ -660,26 +660,26 @@ metadata:
 spec:
   tool: guidellm # supported values: guidellm, aiperf
   guidellm:
-    backend_type: openai_http # no CLI override today
-    rate_type: concurrent # optional; when omitted BenchFlow does not pass --rate-type
+    backend_type: openai_http
+    rate_type: concurrent
     rates:
-      - 1 # overridden by spec.overrides.benchmark.rates
-    request_type: "" # optional; if empty BenchFlow defers to GuideLLM's internal default
-    profile: poisson # optional; when set, BenchFlow passes --profile poisson
-    processor_args: '{"trust_remote_code": true}' # optional; when set, BenchFlow passes --processor-args exactly as given
-    data_samples: 750 # optional; when set, BenchFlow passes --data-samples 750
-    warmup: 10 # optional; when set, BenchFlow passes --warmup 10
-    data: prompt_tokens=1000,output_tokens=1000 # no CLI override today
+      - 1 # overridden by spec.overrides.benchmark.rates; rendered as --rate 1
+    request_type: ""
+    profile: poisson
+    processor_args: '{"trust_remote_code": true}'
+    data_samples: 750
+    warmup: 10
+    data: prompt_tokens=1000,output_tokens=1000
     max_seconds: 600 # overridden by spec.overrides.benchmark.max_seconds
     max_requests: null # overridden by spec.overrides.benchmark.max_requests
-    pre_warmup: # optional; one GuideLLM run before the measured sweep
+    pre_warmup: # BenchFlow-owned execution phase, not a direct GuideLLM flag
       rate: 15 # required when pre_warmup is present
-      max_seconds: 30 # optional; inherited profile/data settings are used
+      max_seconds: 30
   aiperf:
-    public_dataset: "" # optional explicit public dataset loader
-    dataset_url: "" # required when tool: aiperf unless public_dataset is set
+    public_dataset: ""
+    dataset_url: "" # BenchFlow-owned downloaded JSONL source
     dataset_name: "" # optional local/cache filename; defaults to the URL basename
-    dataset_type: mooncake_trace # required when tool: aiperf unless public_dataset is set
+    dataset_type: mooncake_trace # required with dataset_url; rendered as --custom-dataset-type
     endpoint_type: chat # required when tool: aiperf
     endpoint_path: /v1/chat/completions
     tokenizer: "" # defaults to spec.model.name when empty
@@ -697,6 +697,19 @@ spec:
   env:
     LOG_LEVEL: INFO # no CLI override today
 ```
+
+For benchmark profiles, the tool sections are now a thin CLI mapping by
+default. BenchFlow converts `snake_case` keys into `--kebab-case` flags,
+omits `false` / `null` / empty-string values, and emits bare flags for `true`.
+The current special cases are:
+
+- `guidellm.rates` renders as `--rate` with comma-joined values
+- `guidellm.pre_warmup` is BenchFlow-owned and runs before the measured sweep
+- `aiperf.dataset_url`, `aiperf.dataset_name`, and `aiperf.dataset_cap` are
+  BenchFlow-owned downloaded-dataset settings
+- `aiperf.dataset_type` renders as `--custom-dataset-type`
+- `aiperf.endpoint_path` renders as `--endpoint`
+- `aiperf.max_seconds` is a BenchFlow timeout hint, not a direct AIPerf flag
 
 Safe GuideLLM benchmark overrides can be applied from the `Experiment` without
 changing the benchmark profile identity:

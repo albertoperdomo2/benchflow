@@ -486,9 +486,21 @@ def collect_artifacts(
         "runtime_args": " ".join(plan.deployment.runtime.vllm_args),
         "replicas": plan.deployment.runtime.replicas,
         "tp": plan.deployment.runtime.tensor_parallelism,
-        "data_spec": plan.benchmark.data,
+        "data_spec": (
+            plan.benchmark.guidellm.args.get("data", "")
+            if plan.benchmark.tool == "guidellm"
+            else (
+                plan.benchmark.aiperf.args.get("public_dataset")
+                or plan.benchmark.aiperf.dataset_name
+                or plan.benchmark.aiperf.dataset_url
+            )
+        ),
         "profile": plan.profiles.benchmark,
-        "backend": plan.benchmark.backend_type,
+        "backend": (
+            plan.benchmark.guidellm.args.get("backend_type", "openai_http")
+            if plan.benchmark.tool == "guidellm"
+            else "openai_http"
+        ),
         "execution_pods": execution_pod_count,
         "model_pods": model_count,
         "gaie_pods": gaie_count,
