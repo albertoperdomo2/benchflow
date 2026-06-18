@@ -537,13 +537,26 @@ def _guidellm_pre_warmup_from_dict(raw: Any) -> GuidellmPreWarmupSpec:
         raise ValidationError("spec.guidellm.pre_warmup must be a mapping")
 
     enabled = _as_bool(raw.get("enabled"), True)
-    rate = _positive_int(raw.get("rate"), "spec.guidellm.pre_warmup.rate")
+    raw_rate = raw.get("rate")
+    raw_rates = raw.get("rates")
+    if raw_rate is not None and raw_rates is not None:
+        raise ValidationError("spec.guidellm.pre_warmup cannot set both rate and rates")
+    rate = _positive_int(raw_rate, "spec.guidellm.pre_warmup.rate")
+    if raw_rates is not None:
+        rates = _int_list(raw_rates, "spec.guidellm.pre_warmup.rates")
+        if rates is None or len(rates) != 1:
+            raise ValidationError(
+                "spec.guidellm.pre_warmup.rates must contain exactly one value"
+            )
+        rate = rates[0]
     if enabled and rate is None:
-        raise ValidationError("spec.guidellm.pre_warmup.rate is required")
+        raise ValidationError(
+            "spec.guidellm.pre_warmup requires a single rate; use rate: 15 or rates: [15]"
+        )
 
     args: dict[str, Any] = {}
     for key, value in raw.items():
-        if key == "enabled":
+        if key in {"enabled", "rates"}:
             continue
         field_name = f"spec.guidellm.pre_warmup.{key}"
         if key == "rate":
@@ -560,6 +573,8 @@ def _guidellm_pre_warmup_from_dict(raw: Any) -> GuidellmPreWarmupSpec:
             normalized = _passthrough_value(value, field_name)
         if normalized is not None:
             args[key] = normalized
+    if rate is not None:
+        args["rate"] = rate
     return GuidellmPreWarmupSpec(enabled=enabled, args=args)
 
 

@@ -673,7 +673,7 @@ spec:
     max_seconds: 600 # overridden by spec.overrides.benchmark.max_seconds
     max_requests: null # overridden by spec.overrides.benchmark.max_requests
     pre_warmup: # BenchFlow-owned execution phase, not a direct GuideLLM flag
-      rate: 15 # required when pre_warmup is present
+      rate: 15 # required when pre_warmup is present; rates: [15] also normalizes
       max_seconds: 30
   aiperf:
     public_dataset: ""
