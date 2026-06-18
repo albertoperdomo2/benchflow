@@ -688,6 +688,91 @@ def _benchmark_profile_spec_from_dict(raw: dict[str, Any]) -> BenchmarkProfileSp
     )
 
 
+def _resolved_guidellm_pre_warmup_from_dict(raw: Any) -> GuidellmPreWarmupSpec:
+    if raw is None:
+        return GuidellmPreWarmupSpec()
+    if not isinstance(raw, dict):
+        raise ValidationError("benchmark.guidellm.pre_warmup must be a mapping")
+    enabled = _as_bool(raw.get("enabled"), False)
+    args_raw = raw.get("args")
+    if args_raw is None:
+        return _guidellm_pre_warmup_from_dict(raw)
+    if not isinstance(args_raw, dict):
+        raise ValidationError("benchmark.guidellm.pre_warmup.args must be a mapping")
+    args = {
+        str(key): _passthrough_value(value, f"benchmark.guidellm.pre_warmup.args.{key}")
+        for key, value in args_raw.items()
+    }
+    return GuidellmPreWarmupSpec(
+        enabled=enabled, args={k: v for k, v in args.items() if v is not None}
+    )
+
+
+def _resolved_guidellm_benchmark_from_dict(
+    raw: dict[str, Any],
+) -> GuidellmBenchmarkSpec:
+    args_raw = raw.get("args")
+    if args_raw is None:
+        return _guidellm_benchmark_from_dict(raw)
+    if not isinstance(args_raw, dict):
+        raise ValidationError("benchmark.guidellm.args must be a mapping")
+    args = {
+        str(key): _passthrough_value(value, f"benchmark.guidellm.args.{key}")
+        for key, value in args_raw.items()
+    }
+    return GuidellmBenchmarkSpec(
+        args={k: v for k, v in args.items() if v is not None},
+        pre_warmup=_resolved_guidellm_pre_warmup_from_dict(raw.get("pre_warmup")),
+    )
+
+
+def _resolved_aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
+    args_raw = raw.get("args")
+    if args_raw is None:
+        return _aiperf_benchmark_from_dict(raw)
+    if not isinstance(args_raw, dict):
+        raise ValidationError("benchmark.aiperf.args must be a mapping")
+    args = {
+        str(key): _passthrough_value(value, f"benchmark.aiperf.args.{key}")
+        for key, value in args_raw.items()
+    }
+    return AiperfBenchmarkSpec(
+        args={k: v for k, v in args.items() if v is not None},
+        dataset_url=str(raw.get("dataset_url", "") or "").strip(),
+        dataset_name=str(raw.get("dataset_name", "") or "").strip(),
+        dataset_cap=_optional_positive_int(
+            raw.get("dataset_cap"), "benchmark.aiperf.dataset_cap"
+        ),
+        max_seconds=int(raw.get("max_seconds", 7200)),
+    )
+
+
+def _resolved_benchmark_profile_spec_from_dict(
+    raw: dict[str, Any],
+) -> BenchmarkProfileSpec:
+    tool = str(raw.get("tool", "guidellm") or "guidellm").strip()
+    if tool not in {"guidellm", "aiperf"}:
+        raise ValidationError(
+            f"unsupported benchmark tool: {tool}; supported tools are guidellm and aiperf"
+        )
+    env = {str(key): str(value) for key, value in (raw.get("env") or {}).items()}
+    guidellm_raw = raw.get("guidellm") or {}
+    aiperf_raw = raw.get("aiperf") or {}
+    if not isinstance(guidellm_raw, dict):
+        raise ValidationError("benchmark.guidellm must be a mapping")
+    if not isinstance(aiperf_raw, dict):
+        raise ValidationError("benchmark.aiperf must be a mapping")
+    return BenchmarkProfileSpec(
+        tool=tool,
+        env=env,
+        guidellm=_resolved_guidellm_benchmark_from_dict(guidellm_raw),
+        aiperf=_resolved_aiperf_benchmark_from_dict(aiperf_raw)
+        if tool == "aiperf"
+        else AiperfBenchmarkSpec(),
+        requirements=_benchmark_requirements_from_dict(raw.get("requirements")),
+    )
+
+
 def load_deployment_profile(path: Path) -> DeploymentProfile:
     raw = load_yaml_file(path)
     if raw.get("kind") != "DeploymentProfile":
@@ -821,7 +906,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
     )
 
     benchmark_raw = raw.get("benchmark") or {}
-    benchmark = _benchmark_profile_spec_from_dict(benchmark_raw)
+    benchmark = _resolved_benchmark_profile_spec_from_dict(benchmark_raw)
 
     metrics_raw = raw.get("metrics") or {}
     metrics = MetricsProfileSpec(
