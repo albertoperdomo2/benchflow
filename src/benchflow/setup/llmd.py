@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import yaml
 
@@ -21,6 +24,8 @@ from ..cluster import (
 from ..models import ResolvedRunPlan
 from ..repository import clone_repo
 from ..ui import detail, step, success
+
+RECIPE_LAYOUT_ISTIO_VERSION = "1.29.2"
 
 
 def _empty_state(plan: ResolvedRunPlan) -> dict[str, Any]:
@@ -54,7 +59,19 @@ def load_setup_state(state_path: Path | None) -> dict[str, Any]:
 
 
 def _gateway_provider_dir(checkout_root: Path) -> Path:
+    return checkout_root / "guides" / "recipes" / "gateway"
+
+
+def _legacy_gateway_provider_dir(checkout_root: Path) -> Path:
     return checkout_root / "guides" / "prereq" / "gateway-provider"
+
+
+def _uses_legacy_gateway_provider(checkout_root: Path) -> bool:
+    gateway_provider_dir = _legacy_gateway_provider_dir(checkout_root)
+    return (
+        gateway_provider_dir.exists()
+        and (gateway_provider_dir / "install-gateway-provider-dependencies.sh").exists()
+    )
 
 
 def _clone_llmd_repo_source(
@@ -240,8 +257,9 @@ def _gateway_dependencies_present(kubectl_cmd: str, repo_ref: str) -> bool:
 
 
 def llmd_platform_present(kubectl_cmd: str) -> bool:
-    if {"istio-base", "istiod"}.issubset(_helm_release_names("istio-system")):
-        return True
+    if shutil.which("helm") is not None:
+        if {"istio-base", "istiod"}.issubset(_helm_release_names("istio-system")):
+            return True
     for crd_name in (
         "inferencepools.inference.networking.x-k8s.io",
         "inferencepools.inference.networking.k8s.io",
@@ -340,16 +358,83 @@ def _restore_manifest(kubectl_cmd: str, manifest: dict[str, Any]) -> None:
 
 def _run_gateway_provider_script(gateway_provider_dir: Path, mode: str) -> None:
     run_command(
-        ["bash", "./install-gateway-provider-dependencies.sh", mode],
+        ["bash", "./install-gateway-crds.sh", mode],
+        cwd=gateway_provider_dir,
+    )
+
+
+def _run_legacy_gateway_provider_script(
+    gateway_provider_dir: Path, action: str
+) -> None:
+    run_command(
+        ["bash", "./install-gateway-provider-dependencies.sh", action],
         cwd=gateway_provider_dir,
     )
 
 
 def _run_istio_helmfile(gateway_provider_dir: Path, action: str) -> None:
+    helmfile_path = gateway_provider_dir / "istio.helmfile.yaml"
+    if not helmfile_path.exists():
+        raise CommandError(
+            f"checked-out llm-d ref does not ship istio.helmfile.yaml in {gateway_provider_dir}; "
+            "automatic repo-managed Istio installation is not available for this ref"
+        )
     run_command(
         ["helmfile", "-f", "istio.helmfile.yaml", action],
         cwd=gateway_provider_dir,
     )
+
+
+def _istio_gateway_api_extension_enabled(kubectl_cmd: str) -> bool:
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "deployment",
+            "istiod",
+            "-n",
+            "istio-system",
+            "-o",
+            "json",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    payload = json.loads(result.stdout or "{}")
+    containers = (
+        payload.get("spec", {})
+        .get("template", {})
+        .get("spec", {})
+        .get("containers", [])
+    )
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for env_var in container.get("env", []) or []:
+            if not isinstance(env_var, dict):
+                continue
+            if str(env_var.get("name") or "").strip() != (
+                "ENABLE_GATEWAY_API_INFERENCE_EXTENSION"
+            ):
+                continue
+            return str(env_var.get("value") or "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+    return False
+
+
+def _ensure_preinstalled_istio_for_recipe_layout(kubectl_cmd: str) -> None:
+    if not _istio_gateway_api_extension_enabled(kubectl_cmd):
+        raise CommandError(
+            "current llm-d refs require Istio to be preinstalled outside BenchFlow "
+            "with ENABLE_GATEWAY_API_INFERENCE_EXTENSION=true; install it with "
+            "istioctl before using gateway=istio"
+        )
+    _wait_for_istiod(kubectl_cmd, timeout_seconds=120)
 
 
 def _wait_for_istiod(kubectl_cmd: str, timeout_seconds: int) -> None:
@@ -368,6 +453,89 @@ def _wait_for_istiod(kubectl_cmd: str, timeout_seconds: int) -> None:
     )
 
 
+def _istiod_present(kubectl_cmd: str) -> bool:
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "deployment",
+            "istiod",
+            "-n",
+            "istio-system",
+            "-o",
+            "name",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _download_istio_install_script(target_path: Path) -> None:
+    try:
+        with urlopen("https://istio.io/downloadIstio", timeout=60) as response:
+            target_path.write_bytes(response.read())
+    except URLError as exc:
+        raise CommandError(
+            "failed to download the official Istio installer from https://istio.io/downloadIstio"
+        ) from exc
+
+
+def _with_env(base: dict[str, str], extra: dict[str, str]) -> dict[str, str]:
+    env = dict(base)
+    env.update(extra)
+    return env
+
+
+def _download_istioctl(workspace_dir: Path) -> Path:
+    install_script = workspace_dir / "downloadIstio"
+    _download_istio_install_script(install_script)
+    run_command(
+        ["bash", str(install_script)],
+        cwd=workspace_dir,
+        env=_with_env(os.environ, {"ISTIO_VERSION": RECIPE_LAYOUT_ISTIO_VERSION}),
+    )
+    istioctl_path = (
+        workspace_dir / f"istio-{RECIPE_LAYOUT_ISTIO_VERSION}" / "bin" / "istioctl"
+    )
+    if not istioctl_path.exists():
+        raise CommandError(
+            f"expected istioctl not found after download: {istioctl_path}"
+        )
+    return istioctl_path
+
+
+def _install_recipe_layout_istio(kubectl_cmd: str) -> None:
+    tempdir = Path(tempfile.mkdtemp(prefix="benchflow-istioctl-"))
+    try:
+        istioctl_path = _download_istioctl(tempdir)
+        run_command(
+            [
+                str(istioctl_path),
+                "install",
+                "-y",
+                "--set",
+                "values.pilot.env.ENABLE_GATEWAY_API_INFERENCE_EXTENSION=true",
+            ]
+        )
+        _wait_for_istiod(kubectl_cmd, timeout_seconds=120)
+        if not _istio_gateway_api_extension_enabled(kubectl_cmd):
+            raise CommandError(
+                "Istio installed but ENABLE_GATEWAY_API_INFERENCE_EXTENSION was not enabled"
+            )
+    finally:
+        shutil.rmtree(tempdir, ignore_errors=True)
+
+
+def _uninstall_recipe_layout_istio() -> None:
+    tempdir = Path(tempfile.mkdtemp(prefix="benchflow-istioctl-"))
+    try:
+        istioctl_path = _download_istioctl(tempdir)
+        run_command([str(istioctl_path), "uninstall", "--purge", "-y"])
+    finally:
+        shutil.rmtree(tempdir, ignore_errors=True)
+
+
 def reset_llmd_platform(
     *,
     repo_url: str,
@@ -383,9 +551,6 @@ def reset_llmd_platform(
 
     require_command("bash")
     require_command("git")
-    require_command("helm")
-    if gateway == "istio":
-        require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
     checkout_dir, created_tempdir, _repo_head = _clone_llmd_repo_source(
@@ -394,15 +559,30 @@ def reset_llmd_platform(
         workspace_dir=workspace_dir,
     )
     try:
-        gateway_provider_dir = _gateway_provider_dir(checkout_dir)
-        if gateway == "istio" and {"istio-base", "istiod"}.issubset(
-            _helm_release_names("istio-system")
+        legacy_gateway_provider = _uses_legacy_gateway_provider(checkout_dir)
+        gateway_provider_dir = (
+            _legacy_gateway_provider_dir(checkout_dir)
+            if legacy_gateway_provider
+            else _gateway_provider_dir(checkout_dir)
+        )
+        if (
+            gateway == "istio"
+            and legacy_gateway_provider
+            and {
+                "istio-base",
+                "istiod",
+            }.issubset(_helm_release_names("istio-system"))
         ):
+            require_command("helm")
+            require_command("helmfile")
             step("Removing upstream Istio before switching platforms")
             _run_istio_helmfile(gateway_provider_dir, "destroy")
         if llmd_platform_present(kubectl_cmd):
             step("Removing Gateway API and GAIE CRDs before switching platforms")
-            _run_gateway_provider_script(gateway_provider_dir, "delete")
+            if legacy_gateway_provider:
+                _run_legacy_gateway_provider_script(gateway_provider_dir, "delete")
+            else:
+                _run_gateway_provider_script(gateway_provider_dir, "delete")
         success("llm-d platform prerequisites have been reset")
     finally:
         if created_tempdir:
@@ -424,9 +604,6 @@ def setup_llmd(
 
     require_command("bash")
     require_command("git")
-    require_command("helm")
-    if gateway == "istio":
-        require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
     state = _empty_state(plan)
@@ -434,12 +611,17 @@ def setup_llmd(
 
     checkout_dir, created_tempdir, repo_head = _clone_llmd_repo(plan, workspace_dir)
     try:
-        gateway_provider_dir = _gateway_provider_dir(checkout_dir)
+        legacy_gateway_provider = _uses_legacy_gateway_provider(checkout_dir)
+        gateway_provider_dir = (
+            _legacy_gateway_provider_dir(checkout_dir)
+            if legacy_gateway_provider
+            else _gateway_provider_dir(checkout_dir)
+        )
         if not gateway_provider_dir.exists():
             raise CommandError(
-                f"expected llm-d gateway-provider directory not found: {gateway_provider_dir}"
+                f"expected llm-d gateway setup directory not found: {gateway_provider_dir}"
             )
-        detail(f"Gateway provider directory: {gateway_provider_dir}")
+        detail(f"Gateway setup directory: {gateway_provider_dir}")
         state["repo_head"] = repo_head
         _persist_state(state, state_path)
 
@@ -450,7 +632,10 @@ def setup_llmd(
             detail("Gateway API and GAIE CRD markers already present")
         else:
             step("Installing Gateway API and GAIE CRDs")
-            _run_gateway_provider_script(gateway_provider_dir, "apply")
+            if legacy_gateway_provider:
+                _run_legacy_gateway_provider_script(gateway_provider_dir, "apply")
+            else:
+                _run_gateway_provider_script(gateway_provider_dir, "apply")
             state["gateway_dependencies_managed"] = True
             _persist_state(state, state_path)
 
@@ -462,6 +647,20 @@ def setup_llmd(
         _ensure_namespace(kubectl_cmd, "istio-system")
         _apply_runner_rbac_in_istio_system(kubectl_cmd, plan.deployment.namespace)
 
+        if not legacy_gateway_provider:
+            if _istiod_present(kubectl_cmd):
+                step("Validating existing Istio for current llm-d gateway flow")
+                _ensure_preinstalled_istio_for_recipe_layout(kubectl_cmd)
+            else:
+                step("Installing Istio for current llm-d gateway flow")
+                _install_recipe_layout_istio(kubectl_cmd)
+                state["istio_releases_managed"] = True
+                _persist_state(state, state_path)
+            success("llm-d platform prerequisites are ready")
+            return state
+
+        require_command("helm")
+        require_command("helmfile")
         istio_releases_present_before = {
             "istio-base",
             "istiod",
@@ -534,9 +733,6 @@ def teardown_llmd(
 
     require_command("bash")
     require_command("git")
-    require_command("helm")
-    if gateway == "istio":
-        require_command("helmfile")
     kubectl_cmd = require_any_command("oc", "kubectl")
 
     repo_url = str(
@@ -556,11 +752,21 @@ def teardown_llmd(
         workspace_dir=workspace_dir,
     )
     try:
-        gateway_provider_dir = _gateway_provider_dir(checkout_dir)
+        legacy_gateway_provider = _uses_legacy_gateway_provider(checkout_dir)
+        gateway_provider_dir = (
+            _legacy_gateway_provider_dir(checkout_dir)
+            if legacy_gateway_provider
+            else _gateway_provider_dir(checkout_dir)
+        )
 
         if gateway == "istio" and state.get("istio_releases_managed"):
             step("Removing upstream Istio installed during llm-d setup")
-            _run_istio_helmfile(gateway_provider_dir, "destroy")
+            if legacy_gateway_provider:
+                require_command("helm")
+                require_command("helmfile")
+                _run_istio_helmfile(gateway_provider_dir, "destroy")
+            else:
+                _uninstall_recipe_layout_istio()
 
         patched_crds = list(state.get("patched_istio_crds") or [])
         if patched_crds:
@@ -569,7 +775,10 @@ def teardown_llmd(
 
         if state.get("gateway_dependencies_managed"):
             step("Removing Gateway API and GAIE CRDs installed during llm-d setup")
-            _run_gateway_provider_script(gateway_provider_dir, "delete")
+            if legacy_gateway_provider:
+                _run_legacy_gateway_provider_script(gateway_provider_dir, "delete")
+            else:
+                _run_gateway_provider_script(gateway_provider_dir, "delete")
 
         restorable_manifests = list(state.get("restorable_manifests") or [])
         if restorable_manifests:
