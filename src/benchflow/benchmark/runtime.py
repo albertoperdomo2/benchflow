@@ -598,6 +598,7 @@ def run_guidellm_cli(
 ) -> tuple[str, str]:
     output_path_obj = Path(output_path)
     args = dict(benchmark_args)
+    backend_type = str(args.pop("backend_type", "openai_http") or "openai_http")
     backend_args = _merged_guidellm_backend_args(target, args.pop("backend_args", None))
     cmd = [
         "guidellm",
