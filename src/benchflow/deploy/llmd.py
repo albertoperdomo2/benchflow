@@ -60,8 +60,20 @@ def _llmd_guide_layout(plan: ResolvedRunPlan) -> dict[str, str]:
 
 
 def _llmd_recipe_layout_available(checkout_dir: Path) -> bool:
+    return _llmd_recipe_scheduler_layout_available(
+        checkout_dir
+    ) or _llmd_recipe_router_layout_available(checkout_dir)
+
+
+def _llmd_recipe_scheduler_layout_available(checkout_dir: Path) -> bool:
     return (
         checkout_dir / "guides" / "recipes" / "scheduler" / "base.values.yaml"
+    ).exists()
+
+
+def _llmd_recipe_router_layout_available(checkout_dir: Path) -> bool:
+    return (
+        checkout_dir / "guides" / "recipes" / "router" / "base.values.yaml"
     ).exists()
 
 
@@ -97,26 +109,29 @@ def _record_llmd_repo_head(
     )
 
 
-def _llmd_recipe_guide_name(plan: ResolvedRunPlan) -> str:
+def _llmd_recipe_guide_name(plan: ResolvedRunPlan, *, router_chart: bool) -> str:
     mode = str(plan.deployment.mode or "").strip()
     if mode == "precise-prefix-cache":
-        return "precise-prefix-cache-aware"
+        return (
+            "precise-prefix-cache-routing"
+            if router_chart
+            else "precise-prefix-cache-aware"
+        )
     return "optimized-baseline"
 
 
 def _llmd_recipe_scheduler_values_path(
-    checkout_dir: Path, plan: ResolvedRunPlan
+    checkout_dir: Path, plan: ResolvedRunPlan, *, router_chart: bool
 ) -> Path:
-    guide_name = _llmd_recipe_guide_name(plan)
-    return (
-        checkout_dir / "guides" / guide_name / "scheduler" / f"{guide_name}.values.yaml"
-    )
+    guide_name = _llmd_recipe_guide_name(plan, router_chart=router_chart)
+    subdir = "router" if router_chart else "scheduler"
+    return checkout_dir / "guides" / guide_name / subdir / f"{guide_name}.values.yaml"
 
 
 def _llmd_recipe_modelserver_overlay_dir(
-    checkout_dir: Path, plan: ResolvedRunPlan
+    checkout_dir: Path, plan: ResolvedRunPlan, *, router_chart: bool
 ) -> Path:
-    guide_name = _llmd_recipe_guide_name(plan)
+    guide_name = _llmd_recipe_guide_name(plan, router_chart=router_chart)
     backend_dir = _llmd_recipe_modelserver_backend_dir(plan)
     provider = (
         str(plan.deployment.options.get("infra_provider") or "base").strip().lower()
@@ -150,6 +165,10 @@ def _llmd_recipe_gateway_dir(checkout_dir: Path) -> Path:
 
 def _llmd_recipe_scheduler_release_name(plan: ResolvedRunPlan) -> str:
     return f"gaie-{plan.deployment.release_name}"
+
+
+def _llmd_recipe_scheduler_release_name_for(release_name: str) -> str:
+    return f"gaie-{release_name}"
 
 
 def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
@@ -300,9 +319,20 @@ def _recipe_modelserver_podmonitor_manifest(
     }
 
 
-def _recipe_epp_podmonitor_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
+def _recipe_epp_podmonitor_manifest(
+    plan: ResolvedRunPlan, *, router_chart: bool
+) -> dict[str, Any]:
     release_name = plan.deployment.release_name
     epp_name = f"{_llmd_recipe_scheduler_release_name(plan)}-epp"
+    selector = (
+        {
+            "matchLabels": {
+                "app.kubernetes.io/instance": _llmd_recipe_scheduler_release_name(plan)
+            }
+        }
+        if router_chart
+        else {"matchLabels": {"inferencepool": epp_name}}
+    )
     return {
         "apiVersion": "monitoring.coreos.com/v1",
         "kind": "PodMonitor",
@@ -316,7 +346,7 @@ def _recipe_epp_podmonitor_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
             },
         },
         "spec": {
-            "selector": {"matchLabels": {"inferencepool": epp_name}},
+            "selector": selector,
             "podMetricsEndpoints": [
                 {
                     "port": "metrics",
@@ -328,8 +358,12 @@ def _recipe_epp_podmonitor_manifest(plan: ResolvedRunPlan) -> dict[str, Any]:
     }
 
 
-def _apply_recipe_epp_podmonitor(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
-    manifest = _recipe_epp_podmonitor_manifest(plan)
+def _apply_recipe_epp_podmonitor(
+    plan: ResolvedRunPlan, kubectl_cmd: str, *, router_chart: bool
+) -> None:
+    if router_chart:
+        return
+    manifest = _recipe_epp_podmonitor_manifest(plan, router_chart=router_chart)
     step(f"Applying llm-d EPP PodMonitor {manifest['metadata']['name']}")
     run_command(
         [kubectl_cmd, "apply", "-f", "-"],
@@ -680,8 +714,80 @@ def _patch_scheduler_values(
     values_file: Path,
     *,
     recipe_layout: bool,
+    router_chart: bool = False,
 ) -> None:
     values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
+    if router_chart:
+        router = values.setdefault("router", {})
+        epp = router.setdefault("epp", {})
+        model_servers = router.setdefault("modelServers", {})
+        match_labels = model_servers.setdefault("matchLabels", {})
+        if not isinstance(match_labels, dict):
+            match_labels = {}
+            model_servers["matchLabels"] = match_labels
+        match_labels.update(_recipe_release_match_labels(plan.deployment.release_name))
+
+        epp_verbosity = _llmd_epp_verbosity(plan)
+        if epp_verbosity is not None:
+            flags = epp.get("flags")
+            if not isinstance(flags, dict):
+                flags = {}
+                epp["flags"] = flags
+            flags["v"] = epp_verbosity
+
+        custom_epp_config = _render_llmd_custom_epp_config(plan)
+        if custom_epp_config:
+            epp["pluginsConfigFile"] = _BENCHFLOW_EPP_CONFIG_FILE
+            plugins_custom_config = epp.setdefault("pluginsCustomConfig", {})
+            if not isinstance(plugins_custom_config, dict):
+                plugins_custom_config = {}
+                epp["pluginsCustomConfig"] = plugins_custom_config
+            plugins_custom_config[_BENCHFLOW_EPP_CONFIG_FILE] = custom_epp_config
+        elif plan.deployment.mode == "precise-prefix-cache":
+            tokenizer = router.setdefault("tokenizer", {})
+            tokenizer["modelName"] = plan.model.name
+            plugins_config_name = str(epp.get("pluginsConfigFile") or "").strip()
+            plugins_custom_config = epp.setdefault("pluginsCustomConfig", {})
+            raw_plugins_config = str(
+                plugins_custom_config.get(plugins_config_name) or ""
+            )
+            if raw_plugins_config:
+                plugins_payload = yaml.safe_load(raw_plugins_config) or {}
+                for plugin in plugins_payload.get("plugins", []) or []:
+                    plugin_type = str(plugin.get("type") or "")
+                    parameters = plugin.setdefault("parameters", {})
+                    if plugin_type == "token-producer":
+                        parameters["modelName"] = plan.model.name
+                plugins_custom_config[plugins_config_name] = yaml.safe_dump(
+                    plugins_payload, sort_keys=False
+                )
+
+        for env_entry in epp.get("env", []) or []:
+            if str(env_entry.get("name") or "") != "HF_TOKEN":
+                continue
+            value_from = env_entry.get("valueFrom")
+            if not isinstance(value_from, dict):
+                continue
+            secret_ref = value_from.get("secretKeyRef")
+            if not isinstance(secret_ref, dict):
+                continue
+            secret_ref["name"] = "huggingface-token"
+
+        if plan.deployment.scheduler_image:
+            image = epp.setdefault("image", {})
+            components = _image_reference_components(plan.deployment.scheduler_image)
+            image.update(
+                {
+                    "registry": components["registry"],
+                    "repository": components["repository"],
+                    "tag": components["tag"],
+                }
+            )
+        values_file.write_text(
+            yaml.safe_dump(values, sort_keys=False), encoding="utf-8"
+        )
+        return
+
     inference_extension = values.setdefault("inferenceExtension", {})
     monitoring = inference_extension.setdefault("monitoring", {})
     secret_name = f"{plan.deployment.release_name}-gateway-sa-metrics-reader-secret"
@@ -870,8 +976,10 @@ def _apply_recipe_storage_offloading(
     _append_kustomize_resource(kustomization, _STORAGE_OFFLOADING_SERVICE_FILE)
 
 
-def _patch_recipe_modelserver_overlay(plan: ResolvedRunPlan, overlay_dir: Path) -> None:
-    guide_name = _llmd_recipe_guide_name(plan)
+def _patch_recipe_modelserver_overlay(
+    plan: ResolvedRunPlan, overlay_dir: Path, *, router_chart: bool
+) -> None:
+    guide_name = _llmd_recipe_guide_name(plan, router_chart=router_chart)
     kustomization_path = overlay_dir / "kustomization.yaml"
     patch_path = overlay_dir / "patch-vllm.yaml"
     storage = plan.deployment.model_storage
@@ -1152,15 +1260,20 @@ def _capture_recipe_inputs(
     gateway_dir: Path | None,
     overlay_dir: Path,
     manifests_dir: Path,
+    router_chart: bool,
 ) -> None:
     manifests_dir.mkdir(parents=True, exist_ok=True)
     rendered_dir = manifests_dir / "rendered"
     rendered_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(scheduler_values_file, rendered_dir / "scheduler.values.yaml")
-    (rendered_dir / "epp-podmonitor.yaml").write_text(
-        yaml.safe_dump(_recipe_epp_podmonitor_manifest(plan), sort_keys=False),
-        encoding="utf-8",
-    )
+    if not router_chart:
+        (rendered_dir / "epp-podmonitor.yaml").write_text(
+            yaml.safe_dump(
+                _recipe_epp_podmonitor_manifest(plan, router_chart=router_chart),
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
     source_dirs = [(overlay_dir, "modelserver")]
     if gateway_dir is not None:
         source_dirs.insert(0, (gateway_dir, "gateway"))
@@ -1376,8 +1489,31 @@ def _gateway_exists(
 
 
 def _httproute_exists(
-    namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
+    namespace: str,
+    release_name: str,
+    kubectl_cmd: str,
+    *,
+    recipe_layout: bool,
+    router_chart: bool,
 ) -> bool:
+    if router_chart:
+        result = run_command(
+            [
+                kubectl_cmd,
+                "get",
+                "httproute",
+                "-n",
+                namespace,
+                "-l",
+                "app.kubernetes.io/instance="
+                f"{_llmd_recipe_scheduler_release_name_for(release_name)}",
+                "-o",
+                "name",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0 and bool(str(result.stdout or "").strip())
     route_name = f"gaie-{release_name}" if recipe_layout else f"llm-d-{release_name}"
     result = run_command(
         [
@@ -1397,7 +1533,11 @@ def _httproute_exists(
 
 
 def _verify_deployment(
-    plan: ResolvedRunPlan, timeout_seconds: int, *, recipe_layout: bool
+    plan: ResolvedRunPlan,
+    timeout_seconds: int,
+    *,
+    recipe_layout: bool,
+    router_chart: bool = False,
 ) -> None:
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
@@ -1412,13 +1552,19 @@ def _verify_deployment(
     )
 
     while time.time() < deadline:
+        epp_selector = (
+            f"app.kubernetes.io/instance={_llmd_recipe_scheduler_release_name(plan)}"
+            if router_chart
+            else f"inferencepool=gaie-{release_name}-epp"
+        )
         epp_ready, epp_ready_count, epp_total = _pods_ready(
-            namespace, f"inferencepool=gaie-{release_name}-epp", kubectl_cmd
+            namespace, epp_selector, kubectl_cmd
         )
         if recipe_layout:
+            guide_name = _llmd_recipe_guide_name(plan, router_chart=router_chart)
             model_selector = (
                 f"{_BENCHFLOW_RELEASE_LABEL}={release_name},"
-                f"{_BENCHFLOW_GUIDE_LABEL}={_llmd_recipe_guide_name(plan)}"
+                f"{_BENCHFLOW_GUIDE_LABEL}={guide_name}"
             )
         else:
             model_selector = (
@@ -1434,7 +1580,11 @@ def _verify_deployment(
             namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
         )
         httproute_ready = standalone or _httproute_exists(
-            namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
+            namespace,
+            release_name,
+            kubectl_cmd,
+            recipe_layout=recipe_layout,
+            router_chart=router_chart,
         )
         snapshot = (
             epp_ready_count,
@@ -1491,7 +1641,10 @@ def deploy_llmd(
         plan.deployment.namespace, plan.deployment.release_name
     ):
         _ensure_gaie_rbac(plan, kubectl_cmd)
-        if str(plan.deployment.gateway or "").strip() == "standalone":
+        if (
+            str(plan.deployment.gateway or "").strip() == "standalone"
+            and str(plan.deployment.repo_ref or "").strip() != "main"
+        ):
             _patch_standalone_envoy_volume(plan, kubectl_cmd, skip_if_missing=True)
         success(
             "Skipping deploy; llm-d Helm release already exists for "
@@ -1518,6 +1671,7 @@ def deploy_llmd(
     _record_llmd_repo_head(plan, kubectl_cmd, repo_head)
 
     recipe_layout = _llmd_recipe_layout_available(checkout_dir)
+    router_chart = _llmd_recipe_router_layout_available(checkout_dir)
     storage_offloading = _storage_offloading_config(plan)
     if recipe_layout:
         gateway_mode = str(plan.deployment.gateway or "").strip()
@@ -1526,15 +1680,19 @@ def deploy_llmd(
                 "llm-d recipe layout currently supports gateway=istio or "
                 f"gateway=standalone, got {plan.deployment.gateway}"
             )
-        guide_name = _llmd_recipe_guide_name(plan)
+        guide_name = _llmd_recipe_guide_name(plan, router_chart=router_chart)
         guide_dir = checkout_dir / "guides" / guide_name
-        scheduler_values_file = _llmd_recipe_scheduler_values_path(checkout_dir, plan)
+        scheduler_values_file = _llmd_recipe_scheduler_values_path(
+            checkout_dir, plan, router_chart=router_chart
+        )
         gateway_dir = (
             None
             if gateway_mode == "standalone"
             else _llmd_recipe_gateway_dir(checkout_dir)
         )
-        overlay_dir = _llmd_recipe_modelserver_overlay_dir(checkout_dir, plan)
+        overlay_dir = _llmd_recipe_modelserver_overlay_dir(
+            checkout_dir, plan, router_chart=router_chart
+        )
         if not scheduler_values_file.exists():
             raise CommandError(
                 f"expected llm-d guide file not found: {scheduler_values_file}"
@@ -1552,10 +1710,15 @@ def deploy_llmd(
 
         step(f"Patching llm-d recipe values for release {plan.deployment.release_name}")
         detail(f"Guide directory: {guide_dir}")
-        _patch_scheduler_values(plan, scheduler_values_file, recipe_layout=True)
+        _patch_scheduler_values(
+            plan,
+            scheduler_values_file,
+            recipe_layout=True,
+            router_chart=router_chart,
+        )
         if gateway_dir is not None:
             _patch_recipe_gateway(plan, gateway_dir)
-        _patch_recipe_modelserver_overlay(plan, overlay_dir)
+        _patch_recipe_modelserver_overlay(plan, overlay_dir, router_chart=router_chart)
         if storage_offloading:
             _ensure_storage_offloading_pvc(plan, kubectl_cmd, storage_offloading)
 
@@ -1568,51 +1731,107 @@ def deploy_llmd(
             "HELM_PLUGINS": "/tmp/.local/share/helm/plugins",
             "RELEASE_NAME_POSTFIX": plan.deployment.release_name,
         }
-        chart_name = "standalone" if gateway_mode == "standalone" else "inferencepool"
-        helm_args = [
-            "helm",
-            "install",
-            _llmd_recipe_scheduler_release_name(plan),
-            "oci://registry.k8s.io/gateway-api-inference-extension/charts/"
-            f"{chart_name}",
-            "-f",
-            str(checkout_dir / "guides" / "recipes" / "scheduler" / "base.values.yaml"),
-            "-f",
-            str(scheduler_values_file),
-            "-n",
-            plan.deployment.namespace,
-            "--version",
-            "v1.5.0",
-        ]
-        if gateway_mode != "standalone":
-            helm_args.extend(
-                [
-                    "-f",
-                    str(
-                        checkout_dir
-                        / "guides"
-                        / "recipes"
-                        / "scheduler"
-                        / "features"
-                        / "httproute-flags.yaml"
-                    ),
-                    "--set",
-                    "provider.name=istio",
-                    "--set",
-                    "experimentalHttpRoute.enabled=true",
-                    "--set",
-                    "experimentalHttpRoute.inferenceGatewayName=llm-d-inference-gateway",
-                ]
+        if router_chart:
+            chart_ref = (
+                "oci://ghcr.io/llm-d/charts/llm-d-router-standalone-dev"
+                if gateway_mode == "standalone"
+                else "oci://ghcr.io/llm-d/charts/llm-d-router-gateway-dev"
             )
+            helm_args = [
+                "helm",
+                "install",
+                _llmd_recipe_scheduler_release_name(plan),
+                chart_ref,
+                "-f",
+                str(
+                    checkout_dir / "guides" / "recipes" / "router" / "base.values.yaml"
+                ),
+                "-f",
+                str(
+                    checkout_dir
+                    / "guides"
+                    / "recipes"
+                    / "router"
+                    / "features"
+                    / "monitoring.values.yaml"
+                ),
+                "-f",
+                str(scheduler_values_file),
+                "--set",
+                f"provider.name={'none' if gateway_mode == 'standalone' else 'istio'}",
+                "-n",
+                plan.deployment.namespace,
+                "--version",
+                "v0",
+            ]
+            if gateway_mode != "standalone":
+                helm_args.extend(
+                    [
+                        "-f",
+                        str(
+                            checkout_dir
+                            / "guides"
+                            / "recipes"
+                            / "router"
+                            / "features"
+                            / "httproute-flags.yaml"
+                        ),
+                    ]
+                )
         else:
-            helm_args.extend(
-                [
-                    "--set",
-                    "inferenceExtension.sidecar.configMap.name="
-                    f"{_llmd_recipe_standalone_envoy_configmap_name(plan)}",
-                ]
+            chart_name = (
+                "standalone" if gateway_mode == "standalone" else "inferencepool"
             )
-        if plan.deployment.mode == "precise-prefix-cache":
+            helm_args = [
+                "helm",
+                "install",
+                _llmd_recipe_scheduler_release_name(plan),
+                "oci://registry.k8s.io/gateway-api-inference-extension/charts/"
+                f"{chart_name}",
+                "-f",
+                str(
+                    checkout_dir
+                    / "guides"
+                    / "recipes"
+                    / "scheduler"
+                    / "base.values.yaml"
+                ),
+                "-f",
+                str(scheduler_values_file),
+                "-n",
+                plan.deployment.namespace,
+                "--version",
+                "v1.5.0",
+            ]
+            if gateway_mode != "standalone":
+                helm_args.extend(
+                    [
+                        "-f",
+                        str(
+                            checkout_dir
+                            / "guides"
+                            / "recipes"
+                            / "scheduler"
+                            / "features"
+                            / "httproute-flags.yaml"
+                        ),
+                        "--set",
+                        "provider.name=istio",
+                        "--set",
+                        "experimentalHttpRoute.enabled=true",
+                        "--set",
+                        "experimentalHttpRoute.inferenceGatewayName=llm-d-inference-gateway",
+                    ]
+                )
+            else:
+                helm_args.extend(
+                    [
+                        "--set",
+                        "inferenceExtension.sidecar.configMap.name="
+                        f"{_llmd_recipe_standalone_envoy_configmap_name(plan)}",
+                    ]
+                )
+        if plan.deployment.mode == "precise-prefix-cache" and not router_chart:
             helm_args.extend(
                 [
                     "--post-renderer",
@@ -1636,6 +1855,7 @@ def deploy_llmd(
                 gateway_dir=gateway_dir,
                 overlay_dir=overlay_dir,
                 manifests_dir=manifests_dir,
+                router_chart=router_chart,
             )
 
         step(
@@ -1643,9 +1863,9 @@ def deploy_llmd(
             f"into namespace {plan.deployment.namespace}"
         )
         run_command(helm_args, cwd=guide_dir, env=env)
-        _apply_recipe_epp_podmonitor(plan, kubectl_cmd)
+        _apply_recipe_epp_podmonitor(plan, kubectl_cmd, router_chart=router_chart)
 
-        if gateway_mode == "standalone":
+        if gateway_mode == "standalone" and not router_chart:
             # The official standalone chart renders the Envoy ConfigMap name from
             # values, but v1.5.0 still hard-codes the mounted volume reference to
             # "envoy". Patch the Deployment so parallel BenchFlow releases do not
@@ -1767,6 +1987,7 @@ def deploy_llmd(
             plan,
             verify_timeout_seconds,
             recipe_layout=recipe_layout,
+            router_chart=router_chart,
         )
 
     if created_tempdir:
