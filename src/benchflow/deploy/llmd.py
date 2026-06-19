@@ -790,6 +790,7 @@ def _patch_scheduler_values(
             if not isinstance(secret_ref, dict):
                 continue
             secret_ref["name"] = "huggingface-token"
+        _rewrite_huggingface_secret_refs(values)
 
         if plan.deployment.scheduler_image:
             image = epp.setdefault("image", {})
@@ -826,6 +827,7 @@ def _patch_scheduler_values(
             ) or {}
             secret_ref["name"] = "huggingface-token"
             env_entry["valueFrom"]["secretKeyRef"] = secret_ref
+    _rewrite_huggingface_secret_refs(values)
     inference_pool = values.setdefault("inferencePool", {})
     model_servers = inference_pool.setdefault("modelServers", {})
     match_labels = model_servers.setdefault("matchLabels", {})
@@ -913,6 +915,39 @@ def _ensure_container_port(container: dict[str, Any], name: str, port: int) -> N
             port_spec["protocol"] = "TCP"
             return
     ports.append({"name": name, "containerPort": port, "protocol": "TCP"})
+
+
+def _rewrite_huggingface_secret_refs(value: Any) -> None:
+    if isinstance(value, dict):
+        secret_ref = value.get("secretKeyRef")
+        if isinstance(secret_ref, dict) and str(secret_ref.get("name") or "") == (
+            "llm-d-hf-token"
+        ):
+            secret_ref["name"] = "huggingface-token"
+        for child in value.values():
+            _rewrite_huggingface_secret_refs(child)
+    elif isinstance(value, list):
+        for child in value:
+            _rewrite_huggingface_secret_refs(child)
+
+
+def _patch_legacy_precise_tokenizer_secret(checkout_dir: Path) -> None:
+    patch_path = (
+        checkout_dir
+        / "guides"
+        / "precise-prefix-cache-aware"
+        / "scheduler"
+        / "patches"
+        / "uds-tokenizer"
+        / "patch-uds-sidecar.yaml"
+    )
+    if not patch_path.exists():
+        return
+    patch = yaml.safe_load(patch_path.read_text(encoding="utf-8"))
+    if not isinstance(patch, dict):
+        raise CommandError(f"expected llm-d tokenizer patch not found: {patch_path}")
+    _rewrite_huggingface_secret_refs(patch)
+    patch_path.write_text(yaml.safe_dump(patch, sort_keys=False), encoding="utf-8")
 
 
 def _apply_recipe_storage_offloading(
@@ -1229,7 +1264,7 @@ def _patch_recipe_modelserver_overlay(
 
 
 def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
-    gateway_config_name = f"infra-{plan.deployment.release_name}-inference-gateway"
+    gateway_config_name = "llm-d-inference-gateway"
     shared_gateway_labels = {
         "app.kubernetes.io/name": "benchflow",
         "benchflow.io/platform": "llm-d",
@@ -1253,10 +1288,12 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
             manifest_labels = {}
             metadata["labels"] = manifest_labels
         # The recipe scheduler chart creates HTTPRoutes that target the upstream
-        # shared Gateway name. Keep that name stable and only make the Gateway
-        # point at the release-specific infrastructure ConfigMap.
+        # shared Gateway name. Keep the Gateway and its infrastructure
+        # ConfigMap shared so per-release cleanup does not break later runs.
         manifest_labels.update(
-            shared_gateway_labels if kind == "Gateway" else release_labels
+            shared_gateway_labels
+            if kind in {"Gateway", "ConfigMap"}
+            else release_labels
         )
         if kind == "Gateway":
             infrastructure = manifest.setdefault("spec", {}).setdefault(
@@ -1902,6 +1939,7 @@ def deploy_llmd(
                     ]
                 )
         if plan.deployment.mode == "precise-prefix-cache" and not router_chart:
+            _patch_legacy_precise_tokenizer_secret(checkout_dir)
             helm_args.extend(
                 [
                     "--post-renderer",

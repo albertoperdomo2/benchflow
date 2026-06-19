@@ -659,6 +659,12 @@ def setup_llmd(
             success("llm-d platform prerequisites are ready")
             return state
 
+        if _istiod_present(kubectl_cmd):
+            step("Validating existing Istio for legacy llm-d gateway flow")
+            _ensure_preinstalled_istio_for_recipe_layout(kubectl_cmd)
+            success("llm-d platform prerequisites are ready")
+            return state
+
         require_command("helm")
         require_command("helmfile")
         istio_releases_present_before = {
