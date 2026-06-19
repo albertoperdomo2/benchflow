@@ -167,7 +167,7 @@ def _llmd_uses_recipe_layout(repo_ref: str) -> bool:
     if match is None:
         return False
     version = tuple(int(part) for part in match.groups())
-    return version >= (0, 6, 0)
+    return version < (0, 6, 0)
 
 
 def _scalar_override(value, field_name: str):
