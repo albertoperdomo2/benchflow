@@ -185,6 +185,16 @@ def _llmd_router_epp_selector(release_name: str, gateway_mode: str) -> str:
     return f"{label_key}={epp_name}"
 
 
+def _llmd_router_epp_selectors(release_name: str, gateway_mode: str) -> list[str]:
+    epp_name = f"{_llmd_recipe_scheduler_release_name_for(release_name)}-epp"
+    selectors = [_llmd_router_epp_selector(release_name, gateway_mode)]
+    for label_key in ("llm-d-router-gateway", "llm-d-router-standalone"):
+        selector = f"{label_key}={epp_name}"
+        if selector not in selectors:
+            selectors.append(selector)
+    return selectors
+
+
 def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"gaie-{plan.deployment.release_name}-envoy"
 
@@ -1057,6 +1067,18 @@ def _patch_recipe_modelserver_overlay(
     patch = yaml.safe_load(patch_path.read_text(encoding="utf-8"))
     if not isinstance(patch, dict):
         raise CommandError(f"expected llm-d modelserver patch not found: {patch_path}")
+    patch_metadata = patch.setdefault("metadata", {})
+    patch_labels = patch_metadata.setdefault("labels", {})
+    if not isinstance(patch_labels, dict):
+        patch_labels = {}
+        patch_metadata["labels"] = patch_labels
+    patch_labels.update(
+        {
+            _BENCHFLOW_GUIDE_LABEL: guide_name,
+            _LLMD_MODEL_LABEL: _llmd_model_label_value(plan),
+            _BENCHFLOW_RELEASE_LABEL: plan.deployment.release_name,
+        }
+    )
     runtime = plan.deployment.runtime
     spec = patch.setdefault("spec", {})
     spec["replicas"] = runtime.replicas
@@ -1506,6 +1528,16 @@ def _pods_ready(
     return total > 0 and ready == total, ready, total
 
 
+def _pods_ready_any(
+    namespace: str, selectors: list[str], kubectl_cmd: str
+) -> tuple[bool, int, int]:
+    for selector in selectors:
+        ready, ready_count, total = _pods_ready(namespace, selector, kubectl_cmd)
+        if total > 0:
+            return ready, ready_count, total
+    return False, 0, 0
+
+
 def _gateway_exists(
     namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
 ) -> bool:
@@ -1598,13 +1630,13 @@ def _verify_deployment(
     )
 
     while time.time() < deadline:
-        epp_selector = (
-            _llmd_router_epp_selector(release_name, gateway_mode)
+        epp_selectors = (
+            _llmd_router_epp_selectors(release_name, gateway_mode)
             if router_chart
-            else f"inferencepool=gaie-{release_name}-epp"
+            else [f"inferencepool=gaie-{release_name}-epp"]
         )
-        epp_ready, epp_ready_count, epp_total = _pods_ready(
-            namespace, epp_selector, kubectl_cmd
+        epp_ready, epp_ready_count, epp_total = _pods_ready_any(
+            namespace, epp_selectors, kubectl_cmd
         )
         if recipe_layout:
             guide_name = _llmd_recipe_guide_name(plan, router_chart=router_chart)
