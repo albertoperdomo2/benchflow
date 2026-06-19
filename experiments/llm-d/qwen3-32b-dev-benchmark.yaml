@@ -7,18 +7,21 @@ spec:
     name: Qwen/Qwen3-32B
   deployment_profile:
     - llm-d-optimized-baseline-standalone
+    - llm-d-optimized-baseline-gateway
+    - llm-d-precise-prefix-cache-routing-standalone
+    - llm-d-precise-prefix-cache-routing-gateway
   benchmark_profile: 
     - guidellm-x-70r-6kSys
   metrics_profile: detailed
   mlflow:
     tags:
       accelerator: H200
-      version: "llm-d-v0.7.0"
-      deployment_type: "epp-v0.8.0"
-      deployment_profile: "epp-v0.8.0"
+      version: "main"
+      deployment_type: "epp-v0.9.0"
+      deployment_profile: "epp-v0.9.0"
   namespace: benchflow
   execution:
     timeout: 8h
   overrides:
     images:
-      scheduler: ghcr.io/llm-d/llm-d-inference-scheduler:v0.8.0
+      scheduler: ghcr.io/llm-d/llm-d-router-endpoint-picker:v0.9.0

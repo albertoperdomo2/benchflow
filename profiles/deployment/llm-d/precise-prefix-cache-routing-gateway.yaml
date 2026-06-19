@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: llm-d-precise-prefix-cache-routing
+  name: llm-d-precise-prefix-cache-routing-gateway
 spec:
   platform: llm-d
   mode: precise-prefix-cache
