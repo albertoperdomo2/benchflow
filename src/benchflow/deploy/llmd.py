@@ -1603,6 +1603,24 @@ def _httproute_exists(
     recipe_layout: bool,
     router_chart: bool,
 ) -> bool:
+    route_name = f"gaie-{release_name}" if recipe_layout else f"llm-d-{release_name}"
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "httproute",
+            route_name,
+            "-n",
+            namespace,
+            "-o",
+            "name",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True
+
     if router_chart:
         result = run_command(
             [
@@ -1621,22 +1639,7 @@ def _httproute_exists(
             check=False,
         )
         return result.returncode == 0 and bool(str(result.stdout or "").strip())
-    route_name = f"gaie-{release_name}" if recipe_layout else f"llm-d-{release_name}"
-    result = run_command(
-        [
-            kubectl_cmd,
-            "get",
-            "httproute",
-            route_name,
-            "-n",
-            namespace,
-            "-o",
-            "name",
-        ],
-        capture_output=True,
-        check=False,
-    )
-    return result.returncode == 0
+    return False
 
 
 def _verify_deployment(
