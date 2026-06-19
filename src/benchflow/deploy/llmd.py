@@ -1078,6 +1078,18 @@ def _patch_recipe_modelserver_overlay(
         for entry in list(container.get("env") or [])
         if str(entry.get("name") or "") not in managed_env_names
     ]
+    hf_token_rewritten = False
+    for env_entry in existing_env:
+        if str(env_entry.get("name") or "") != "HF_TOKEN":
+            continue
+        value_from = env_entry.get("valueFrom")
+        if not isinstance(value_from, dict):
+            continue
+        secret_ref = value_from.get("secretKeyRef")
+        if not isinstance(secret_ref, dict):
+            continue
+        secret_ref["name"] = "huggingface-token"
+        hf_token_rewritten = True
     existing_env.append(
         {
             "name": "CUDA_VISIBLE_DEVICES",
@@ -1087,14 +1099,15 @@ def _patch_recipe_modelserver_overlay(
     existing_env.extend(
         {"name": key, "value": value} for key, value in sorted(runtime.env.items())
     )
-    existing_env.append(
-        {
-            "name": "HF_TOKEN",
-            "valueFrom": {
-                "secretKeyRef": {"name": "huggingface-token", "key": "HF_TOKEN"}
-            },
-        }
-    )
+    if not hf_token_rewritten:
+        existing_env.append(
+            {
+                "name": "HF_TOKEN",
+                "valueFrom": {
+                    "secretKeyRef": {"name": "huggingface-token", "key": "HF_TOKEN"}
+                },
+            }
+        )
     existing_env.extend(env)
 
     container["command"] = ["vllm", "serve"]
