@@ -31,6 +31,14 @@ def _gaie_rbac_name(release_name: str) -> str:
     return f"benchflow-gaie-epp-rbac-{suffix}"
 
 
+def _modelserver_deployment_name(release_name: str) -> str:
+    return f"ms-{release_name}-decode"
+
+
+def _modelserver_service_account_name(release_name: str) -> str:
+    return f"ms-{release_name}-sa"
+
+
 def _llmd_recipe_layout_from_repo_ref(repo_ref: str) -> bool:
     normalized = repo_ref.strip().lower()
     if normalized == "main":
@@ -312,6 +320,24 @@ def cleanup_llmd(
     _delete_storage_offloading_host_path_contents(plan, kubectl_cmd, release_label)
 
     if recipe_layout:
+        for kind, name in (
+            ("deployment", _modelserver_deployment_name(plan.deployment.release_name)),
+            (
+                "serviceaccount",
+                _modelserver_service_account_name(plan.deployment.release_name),
+            ),
+        ):
+            run_command(
+                [
+                    kubectl_cmd,
+                    "delete",
+                    kind,
+                    name,
+                    "-n",
+                    namespace,
+                    "--ignore-not-found=true",
+                ],
+            )
         for kind in (
             "gateway",
             "configmap",

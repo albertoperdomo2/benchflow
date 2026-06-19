@@ -1035,8 +1035,25 @@ def _patch_recipe_modelserver_overlay(
                     "path": "metadata/labels",
                     "create": True,
                 }
-                if service_field not in fields:
-                    fields.append(service_field)
+                deployment_field = {
+                    "version": "apps/v1",
+                    "kind": "Deployment",
+                    "path": "metadata/labels",
+                    "create": True,
+                }
+                service_account_field = {
+                    "version": "v1",
+                    "kind": "ServiceAccount",
+                    "path": "metadata/labels",
+                    "create": True,
+                }
+                for field in (
+                    service_field,
+                    deployment_field,
+                    service_account_field,
+                ):
+                    if field not in fields:
+                        fields.append(field)
     patch = yaml.safe_load(patch_path.read_text(encoding="utf-8"))
     if not isinstance(patch, dict):
         raise CommandError(f"expected llm-d modelserver patch not found: {patch_path}")
