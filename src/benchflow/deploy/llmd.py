@@ -132,31 +132,23 @@ def _llmd_recipe_modelserver_overlay_dir(
     checkout_dir: Path, plan: ResolvedRunPlan, *, router_chart: bool
 ) -> Path:
     guide_name = _llmd_recipe_guide_name(plan, router_chart=router_chart)
-    backend_dir = _llmd_recipe_modelserver_backend_dir(plan)
     provider = (
         str(plan.deployment.options.get("infra_provider") or "base").strip().lower()
     )
-    if backend_dir.startswith("gpu/"):
-        if provider == "gke":
-            return (
-                checkout_dir
-                / "guides"
-                / guide_name
-                / "modelserver"
-                / "gpu"
-                / backend_dir.split("/", 1)[1]
-                / "gke"
+    modelserver_root = checkout_dir / "guides" / guide_name / "modelserver"
+    for backend_dir in _llmd_recipe_modelserver_backend_dirs(plan):
+        if backend_dir.startswith("gpu/"):
+            backend_name = backend_dir.split("/", 1)[1]
+            overlay_dir = (
+                modelserver_root / "gpu" / backend_name / "gke"
+                if provider == "gke"
+                else modelserver_root / "gpu" / backend_name / "base"
             )
-        return (
-            checkout_dir
-            / "guides"
-            / guide_name
-            / "modelserver"
-            / "gpu"
-            / backend_dir.split("/", 1)[1]
-            / "base"
-        )
-    return checkout_dir / "guides" / guide_name / "modelserver" / backend_dir
+        else:
+            overlay_dir = modelserver_root / backend_dir
+        if overlay_dir.exists():
+            return overlay_dir
+    return modelserver_root / _llmd_recipe_modelserver_backend_dirs(plan)[0]
 
 
 def _llmd_recipe_gateway_dir(checkout_dir: Path) -> Path:
@@ -199,7 +191,7 @@ def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"gaie-{plan.deployment.release_name}-envoy"
 
 
-def _llmd_recipe_modelserver_backend_dir(plan: ResolvedRunPlan) -> str:
+def _llmd_recipe_modelserver_backend_dirs(plan: ResolvedRunPlan) -> list[str]:
     accelerator = (
         str(
             plan.mlflow.tags.get("accelerator")
@@ -210,20 +202,20 @@ def _llmd_recipe_modelserver_backend_dir(plan: ResolvedRunPlan) -> str:
         .upper()
     )
     if not accelerator:
-        return "gpu/vllm"
+        return ["gpu/vllm"]
     if "AMD" in accelerator or accelerator.startswith("MI"):
-        return "amd/vllm"
+        return ["amd/vllm"]
     if "HPU" in accelerator or "GAUDI" in accelerator:
-        return "hpu/vllm"
+        return ["hpu/vllm"]
     if "XPU" in accelerator or "INTEL" in accelerator:
-        return "xpu/vllm"
+        return ["xpu/vllm"]
     if "CPU" in accelerator:
-        return "cpu/vllm"
+        return ["cpu/vllm"]
     if "TPU" in accelerator:
         if "V6" in accelerator:
-            return "tpu-v6/vllm"
-        return "tpu-v7/vllm"
-    return "gpu/vllm"
+            return ["tpu/v6/vllm", "tpu-v6/vllm"]
+        return ["tpu/v7/vllm", "tpu-v7/vllm"]
+    return ["gpu/vllm"]
 
 
 def _llmd_model_label_value(plan: ResolvedRunPlan) -> str:
