@@ -171,6 +171,20 @@ def _llmd_recipe_scheduler_release_name_for(release_name: str) -> str:
     return f"gaie-{release_name}"
 
 
+def _llmd_router_chart_label_key(gateway_mode: str) -> str:
+    return (
+        "llm-d-router-standalone"
+        if gateway_mode == "standalone"
+        else "llm-d-router-gateway"
+    )
+
+
+def _llmd_router_epp_selector(release_name: str, gateway_mode: str) -> str:
+    label_key = _llmd_router_chart_label_key(gateway_mode)
+    epp_name = f"{_llmd_recipe_scheduler_release_name_for(release_name)}-epp"
+    return f"{label_key}={epp_name}"
+
+
 def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"gaie-{plan.deployment.release_name}-envoy"
 
@@ -327,7 +341,9 @@ def _recipe_epp_podmonitor_manifest(
     selector = (
         {
             "matchLabels": {
-                "app.kubernetes.io/instance": _llmd_recipe_scheduler_release_name(plan)
+                _llmd_router_chart_label_key(
+                    str(plan.deployment.gateway or "").strip()
+                ): epp_name
             }
         }
         if router_chart
@@ -1566,7 +1582,7 @@ def _verify_deployment(
 
     while time.time() < deadline:
         epp_selector = (
-            f"app.kubernetes.io/instance={_llmd_recipe_scheduler_release_name(plan)}"
+            _llmd_router_epp_selector(release_name, gateway_mode)
             if router_chart
             else f"inferencepool=gaie-{release_name}-epp"
         )
