@@ -529,6 +529,39 @@ def _image_reference_components(image: str) -> dict[str, str]:
     }
 
 
+def _version_tuple(value: str) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", value.strip())
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def _validate_recipe_scheduler_image_compatibility(
+    plan: ResolvedRunPlan, *, router_chart: bool
+) -> None:
+    if router_chart:
+        return
+    if plan.deployment.mode != "precise-prefix-cache":
+        return
+    if not plan.deployment.scheduler_image:
+        return
+
+    components = _image_reference_components(plan.deployment.scheduler_image)
+    image_version = _version_tuple(components["tag"])
+    if image_version is None or image_version < (0, 9, 0):
+        return
+
+    raise CommandError(
+        "llm-d precise-prefix-cache with the legacy "
+        "precise-prefix-cache-aware guide is not compatible with EPP image "
+        f"{plan.deployment.scheduler_image}. The legacy guide renders the old "
+        "UDS tokenizer plugin config, while EPP v0.9.0+ expects the newer "
+        "router-chart config. Use an llm-d ref with guides/recipes/router for "
+        "v0.9.0+, or remove the scheduler image override and use the EPP image "
+        "from the v0.7.0 guide."
+    )
+
+
 def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
     values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
     container = _ensure_container(values)
@@ -1817,6 +1850,7 @@ def deploy_llmd(
             )
         if plan.deployment.mode == "precise-prefix-cache":
             require_command("kustomize")
+        _validate_recipe_scheduler_image_compatibility(plan, router_chart=router_chart)
 
         step(f"Patching llm-d recipe values for release {plan.deployment.release_name}")
         detail(f"Guide directory: {guide_dir}")
