@@ -72,6 +72,7 @@ from .shared import (
     parse_mapping,
     parse_version_overrides,
     repo_root_from,
+    run_plan_source_options,
     runtime_plan_source_options,
 )
 
@@ -729,11 +730,11 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
 def cmd_benchmark_report(args: argparse.Namespace) -> int:
     plan = None
     if (
-        args.run_plan_file
-        or args.run_plan_json
-        or args.experiment
-        or args.model
-        or args.deployment_profile
+        getattr(args, "run_plan_file", None)
+        or getattr(args, "run_plan_json", None)
+        or getattr(args, "experiment", None)
+        or getattr(args, "model", None)
+        or getattr(args, "deployment_profile", None)
     ):
         plan = load_runtime_plan(args)
 
@@ -1671,7 +1672,7 @@ def benchmark_plot_run_command(**kwargs: object) -> int:
 
 
 def _register_comparison_report_options(command):
-    command = runtime_plan_source_options(command)
+    command = run_plan_source_options(command)
     command = click.option(
         "--json-path",
         type=click.Path(dir_okay=False, path_type=Path),
