@@ -1321,7 +1321,7 @@ def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:
     Returns:
         List of dictionaries containing run metadata and benchmark data.
         Each dict includes a 'composed_version' field that appends either the
-        'epp' tag or, if absent, the 'deployment_type' tag to the base version.
+        'epp' tag or, if absent, the deployment profile to the base version.
     """
     configure_mlflow_tracking(mlflow_tracking_uri)
     client = create_mlflow_client(mlflow_tracking_uri)
@@ -1336,10 +1336,13 @@ def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:
             params = run.data.params
             tags = run.data.tags
 
-            # Compose version with epp tag first, then deployment_type.
+            # Compose version with epp tag first, then deployment profile.
             base_version = params.get("version", "unknown")
             version_suffix = (
-                tags.get("epp") or tags.get("deployment_type") or ""
+                tags.get("epp")
+                or tags.get("deployment_profile")
+                or tags.get("deployment_type")
+                or ""
             ).strip()
 
             if version_suffix:
@@ -1353,7 +1356,8 @@ def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:
             else:
                 composed_version = base_version
                 logger.info(
-                    "No epp or deployment_type tag found, using base version: %s",
+                    "No epp, deployment_profile, or deployment_type tag found, "
+                    "using base version: %s",
                     composed_version,
                 )
 
@@ -1667,7 +1671,7 @@ def generate_plot_only_report(
             s3_key=s3_key,
             accelerator=accelerator,
             model_name=model,
-            version=composed_version,  # Use composed version with epp tag
+            version=composed_version,
             tp_size=tp_size,
             runtime_args="",
             replicas=replicas_int,

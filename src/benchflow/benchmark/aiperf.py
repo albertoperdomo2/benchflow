@@ -482,7 +482,10 @@ def _composed_version_from_mlflow_run(run: mlflow.entities.Run) -> str:
         run.data.params.get("version") or run.data.tags.get("version") or "unknown"
     ).strip()
     suffix = str(
-        run.data.tags.get("epp") or run.data.tags.get("deployment_type") or ""
+        run.data.tags.get("epp")
+        or run.data.tags.get("deployment_profile")
+        or run.data.tags.get("deployment_type")
+        or ""
     ).strip()
     if suffix:
         return f"{base_version}-{suffix}"
