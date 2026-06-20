@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import re
 from copy import deepcopy
 
 from .loaders import ProfileCatalog
+from .llmd_layout import uses_recipe_layout as _llmd_uses_recipe_layout
 from .models import (
     Experiment,
     MlflowSpec,
@@ -157,17 +157,6 @@ def _target_for(
         base_url=f"http://{release_name}-predictor.{namespace}.svc.cluster.local:8080",
         path=path,
     )
-
-
-def _llmd_uses_recipe_layout(repo_ref: str) -> bool:
-    normalized = str(repo_ref or "").strip().lower()
-    if normalized == "main":
-        return True
-    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+][a-z0-9_.-]+)?", normalized)
-    if match is None:
-        return False
-    version = tuple(int(part) for part in match.groups())
-    return version >= (0, 6, 0)
 
 
 def _scalar_override(value, field_name: str):

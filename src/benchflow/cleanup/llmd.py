@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shlex
 import time
 
@@ -13,6 +12,7 @@ from ..cluster import (
     run_command,
     run_json_command,
 )
+from ..llmd_layout import uses_recipe_layout
 from ..models import ResolvedRunPlan
 from ..storage_offloading import (
     STORAGE_OFFLOADING_TYPE_HOST_PATH,
@@ -44,14 +44,7 @@ def _modelserver_service_account_name(release_name: str) -> str:
 
 
 def _llmd_recipe_layout_from_repo_ref(repo_ref: str) -> bool:
-    normalized = repo_ref.strip().lower()
-    if normalized == "main":
-        return True
-    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+][a-z0-9_.-]+)?", normalized)
-    if match is None:
-        return False
-    version = tuple(int(part) for part in match.groups())
-    return version >= (0, 6, 0)
+    return uses_recipe_layout(repo_ref)
 
 
 def _pvc_exists(kubectl_cmd: str, namespace: str, pvc_name: str) -> bool:
