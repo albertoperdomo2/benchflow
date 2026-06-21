@@ -151,6 +151,26 @@ def _llmd_recipe_modelserver_overlay_dir(
     return modelserver_root / _llmd_recipe_modelserver_backend_dirs(plan)[0]
 
 
+def _llmd_recipe_render_dir(
+    checkout_dir: Path, plan: ResolvedRunPlan, *, router_chart: bool
+) -> Path | None:
+    if not router_chart:
+        return None
+    if str(plan.deployment.mode or "").strip() != "precise-prefix-cache":
+        return None
+    render_dir = (
+        checkout_dir
+        / "guides"
+        / _llmd_recipe_guide_name(plan, router_chart=router_chart)
+        / "render"
+    )
+    return render_dir if render_dir.exists() else None
+
+
+def _llmd_recipe_render_service_name(release_name: str) -> str:
+    return f"{release_name}-render"
+
+
 def _llmd_recipe_gateway_dir(checkout_dir: Path) -> Path:
     return checkout_dir / "guides" / "recipes" / "gateway" / "istio"
 
@@ -766,6 +786,7 @@ def _patch_scheduler_values(
     *,
     recipe_layout: bool,
     router_chart: bool = False,
+    render_service_name: str | None = None,
 ) -> None:
     values = yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}
     if router_chart:
@@ -809,6 +830,12 @@ def _patch_scheduler_values(
                     parameters = plugin.setdefault("parameters", {})
                     if plugin_type == "token-producer":
                         parameters["modelName"] = plan.model.name
+                        if render_service_name:
+                            vllm = parameters.setdefault("vllm", {})
+                            if not isinstance(vllm, dict):
+                                vllm = {}
+                                parameters["vllm"] = vllm
+                            vllm["url"] = f"http://{render_service_name}:8000"
                 plugins_custom_config[plugins_config_name] = yaml.safe_dump(
                     plugins_payload, sort_keys=False
                 )
@@ -1337,6 +1364,116 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
         path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
+def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> None:
+    """Patch the temporary upstream render-tokenizer overlay for BenchFlow releases.
+
+    Some llm-d refs moved precise-prefix-cache tokenization from an EPP sidecar
+    to a standalone render Service. Keep this support scoped to refs that ship
+    guides/precise-prefix-cache-routing/render until the upstream layout settles.
+    """
+    deployment_path = render_dir / "deployment.yaml"
+    service_path = render_dir / "service.yaml"
+    kustomization_path = render_dir / "kustomization.yaml"
+    if not deployment_path.exists() or not service_path.exists():
+        raise CommandError(
+            f"expected llm-d render overlay files not found under: {render_dir}"
+        )
+    if not kustomization_path.exists():
+        raise CommandError(
+            f"expected llm-d render kustomization not found: {kustomization_path}"
+        )
+
+    release_name = plan.deployment.release_name
+    service_name = _llmd_recipe_render_service_name(release_name)
+    render_labels = {
+        "app.kubernetes.io/component": "vllm-render",
+        "app.kubernetes.io/part-of": service_name,
+        _BENCHFLOW_RELEASE_LABEL: release_name,
+    }
+
+    deployment = yaml.safe_load(deployment_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(deployment, dict):
+        raise CommandError(
+            f"expected llm-d render Deployment not found: {deployment_path}"
+        )
+    deployment.setdefault("metadata", {})["name"] = "render"
+    deployment_metadata_labels = deployment.setdefault("metadata", {}).setdefault(
+        "labels", {}
+    )
+    if isinstance(deployment_metadata_labels, dict):
+        deployment_metadata_labels.update(render_labels)
+    spec = deployment.setdefault("spec", {})
+    spec["replicas"] = 3
+    selector = spec.setdefault("selector", {}).setdefault("matchLabels", {})
+    if not isinstance(selector, dict):
+        selector = {}
+        spec["selector"]["matchLabels"] = selector
+    selector.clear()
+    selector.update(render_labels)
+    template = spec.setdefault("template", {})
+    template_labels = template.setdefault("metadata", {}).setdefault("labels", {})
+    if not isinstance(template_labels, dict):
+        template_labels = {}
+        template["metadata"]["labels"] = template_labels
+    template_labels.clear()
+    template_labels.update(render_labels)
+
+    pod_spec = template.setdefault("spec", {})
+    for container in pod_spec.get("containers", []) or []:
+        if str(container.get("name") or "") != "vllm-render":
+            continue
+        args = list(container.get("args") or [])
+        if args:
+            args[0] = plan.model.name
+        else:
+            args = [plan.model.name, "--port=8000"]
+        container["args"] = args
+        env = container.setdefault("env", [])
+        if isinstance(env, list):
+            for env_entry in env:
+                if str(env_entry.get("name") or "") != "HF_TOKEN":
+                    continue
+                value_from = env_entry.get("valueFrom")
+                if not isinstance(value_from, dict):
+                    continue
+                secret_ref = value_from.get("secretKeyRef")
+                if isinstance(secret_ref, dict):
+                    secret_ref["name"] = "huggingface-token"
+    _rewrite_huggingface_secret_refs(deployment)
+
+    service = yaml.safe_load(service_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(service, dict):
+        raise CommandError(f"expected llm-d render Service not found: {service_path}")
+    service.setdefault("metadata", {})["name"] = "render"
+    service_metadata_labels = service.setdefault("metadata", {}).setdefault(
+        "labels", {}
+    )
+    if isinstance(service_metadata_labels, dict):
+        service_metadata_labels.update(render_labels)
+    service_spec = service.setdefault("spec", {})
+    service_selector = service_spec.setdefault("selector", {})
+    if not isinstance(service_selector, dict):
+        service_selector = {}
+        service_spec["selector"] = service_selector
+    service_selector.clear()
+    service_selector.update(render_labels)
+
+    deployment_path.write_text(
+        yaml.safe_dump(deployment, sort_keys=False), encoding="utf-8"
+    )
+    service_path.write_text(yaml.safe_dump(service, sort_keys=False), encoding="utf-8")
+
+    kustomization = yaml.safe_load(kustomization_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(kustomization, dict):
+        raise CommandError(
+            f"expected llm-d render kustomization not found: {kustomization_path}"
+        )
+    kustomization["namePrefix"] = f"{release_name}-"
+    kustomization_path.write_text(
+        yaml.safe_dump(kustomization, sort_keys=False), encoding="utf-8"
+    )
+
+
 def _apply_pipeline_labels(
     values: dict[str, Any],
     release_name: str,
@@ -1389,6 +1526,7 @@ def _capture_recipe_inputs(
     scheduler_values_file: Path,
     gateway_dir: Path | None,
     overlay_dir: Path,
+    render_dir: Path | None,
     manifests_dir: Path,
     router_chart: bool,
 ) -> None:
@@ -1405,6 +1543,8 @@ def _capture_recipe_inputs(
             encoding="utf-8",
         )
     source_dirs = [(overlay_dir, "modelserver")]
+    if render_dir is not None:
+        source_dirs.append((render_dir, "render"))
     if gateway_dir is not None:
         source_dirs.insert(0, (gateway_dir, "gateway"))
     for source_dir, target_name in source_dirs:
@@ -1681,6 +1821,7 @@ def _verify_deployment(
     *,
     recipe_layout: bool,
     router_chart: bool = False,
+    render_required: bool = False,
 ) -> None:
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
@@ -1688,7 +1829,7 @@ def _verify_deployment(
     gateway_mode = str(plan.deployment.gateway or "").strip()
     standalone = recipe_layout and gateway_mode == "standalone"
     deadline = time.time() + timeout_seconds
-    last_snapshot: tuple[int, int, bool, bool] | None = None
+    last_snapshot: tuple[int, int, int, bool, bool] | None = None
 
     step(
         f"Waiting for llm-d deployment {release_name} in namespace {namespace} to become ready"
@@ -1719,6 +1860,19 @@ def _verify_deployment(
             model_selector,
             kubectl_cmd,
         )
+        render_ready = True
+        render_ready_count = 0
+        render_total = 0
+        if render_required:
+            render_selector = (
+                f"{_BENCHFLOW_RELEASE_LABEL}={release_name},"
+                "app.kubernetes.io/component=vllm-render"
+            )
+            render_ready, render_ready_count, render_total = _pods_ready(
+                namespace,
+                render_selector,
+                kubectl_cmd,
+            )
         gateway_ready = standalone or _gateway_exists(
             namespace, release_name, kubectl_cmd, recipe_layout=recipe_layout
         )
@@ -1732,15 +1886,22 @@ def _verify_deployment(
         snapshot = (
             epp_ready_count,
             ms_ready_count,
+            render_ready_count,
             gateway_ready,
             httproute_ready,
         )
 
         if snapshot != last_snapshot:
+            render_text = (
+                f", render pods ready: {render_ready_count}/{render_total}"
+                if render_required
+                else ""
+            )
             if standalone:
                 detail(
                     f"EPP pods ready: {epp_ready_count}/{epp_total}, "
                     f"model-service pods ready: {ms_ready_count}/{ms_total}"
+                    f"{render_text}"
                 )
             else:
                 httproute_text = (
@@ -1749,12 +1910,19 @@ def _verify_deployment(
                 detail(
                     f"EPP pods ready: {epp_ready_count}/{epp_total}, "
                     f"model-service pods ready: {ms_ready_count}/{ms_total}, "
+                    f"{render_text.lstrip(', ') + ', ' if render_required else ''}"
                     f"gateway present: {'yes' if gateway_ready else 'no'}, "
                     f"{httproute_text}"
                 )
             last_snapshot = snapshot
 
-        if epp_ready and ms_ready and gateway_ready and httproute_ready:
+        if (
+            epp_ready
+            and ms_ready
+            and render_ready
+            and gateway_ready
+            and httproute_ready
+        ):
             success(
                 f"llm-d deployment {release_name} is ready "
                 f"(EPP {epp_ready_count}/{epp_total}, model-service {ms_ready_count}/{ms_total})"
@@ -1816,6 +1984,7 @@ def deploy_llmd(
     recipe_layout = _llmd_recipe_layout_available(checkout_dir)
     router_chart = _llmd_recipe_router_layout_available(checkout_dir)
     storage_offloading = _storage_offloading_config(plan)
+    render_dir: Path | None = None
     if recipe_layout:
         gateway_mode = str(plan.deployment.gateway or "").strip()
         if gateway_mode not in {"istio", "standalone"}:
@@ -1835,6 +2004,14 @@ def deploy_llmd(
         )
         overlay_dir = _llmd_recipe_modelserver_overlay_dir(
             checkout_dir, plan, router_chart=router_chart
+        )
+        render_dir = _llmd_recipe_render_dir(
+            checkout_dir, plan, router_chart=router_chart
+        )
+        render_service_name = (
+            _llmd_recipe_render_service_name(plan.deployment.release_name)
+            if render_dir is not None
+            else None
         )
         if not scheduler_values_file.exists():
             raise CommandError(
@@ -1859,9 +2036,12 @@ def deploy_llmd(
             scheduler_values_file,
             recipe_layout=True,
             router_chart=router_chart,
+            render_service_name=render_service_name,
         )
         if gateway_dir is not None:
             _patch_recipe_gateway(plan, gateway_dir)
+        if render_dir is not None:
+            _patch_recipe_render_overlay(plan, render_dir)
         _patch_recipe_modelserver_overlay(plan, overlay_dir, router_chart=router_chart)
         if storage_offloading:
             _ensure_storage_offloading_pvc(plan, kubectl_cmd, storage_offloading)
@@ -1999,6 +2179,7 @@ def deploy_llmd(
                 scheduler_values_file=scheduler_values_file,
                 gateway_dir=gateway_dir,
                 overlay_dir=overlay_dir,
+                render_dir=render_dir,
                 manifests_dir=manifests_dir,
                 router_chart=router_chart,
             )
@@ -2027,6 +2208,18 @@ def deploy_llmd(
                     plan.deployment.namespace,
                     "-k",
                     str(gateway_dir),
+                ]
+            )
+        if render_dir is not None:
+            step(f"Applying llm-d render tokenizer overlay from {render_dir}")
+            run_command(
+                [
+                    kubectl_cmd,
+                    "apply",
+                    "-n",
+                    plan.deployment.namespace,
+                    "-k",
+                    str(render_dir),
                 ]
             )
         step(f"Applying llm-d modelserver overlay from {overlay_dir}")
@@ -2133,6 +2326,7 @@ def deploy_llmd(
             verify_timeout_seconds,
             recipe_layout=recipe_layout,
             router_chart=router_chart,
+            render_required=render_dir is not None,
         )
 
     if created_tempdir:
