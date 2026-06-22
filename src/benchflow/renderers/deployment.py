@@ -403,6 +403,12 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
         ],
         "env": _rhaiis_raw_vllm_runtime_env(plan),
         "ports": [{"containerPort": 8000, "name": "http", "protocol": "TCP"}],
+        "readinessProbe": {
+            "httpGet": {"path": "/health", "port": "http"},
+            "periodSeconds": 10,
+            "timeoutSeconds": 5,
+            "failureThreshold": 3,
+        },
         "resources": _runtime_resource_requirements(plan, include_gpu=True),
         "volumeMounts": [
             {
