@@ -1722,7 +1722,7 @@ def _register_comparison_report_options(command):
         "--baseline",
         "baseline_version",
         help=(
-            "Displayed version label to use as the baseline for inline deltas "
+            "Composed version name to use as the baseline for inline deltas "
             "in the comparison table."
         ),
     )(command)

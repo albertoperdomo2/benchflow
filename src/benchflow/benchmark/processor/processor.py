@@ -378,11 +378,15 @@ def _render_comparison_table(
     table_df["accelerator"] = table_df["accelerator"].fillna("unknown").astype(str)
     table_df["replicas"] = table_df["replicas"].fillna(1)
     table_df["TP"] = table_df["TP"].fillna(1)
+    baseline_column = (
+        "_composed_version" if "_composed_version" in table_df else "version"
+    )
+    table_df[baseline_column] = table_df[baseline_column].fillna("unknown").astype(str)
     if baseline_version is not None:
         baseline_version = str(baseline_version).strip()
         if not baseline_version:
             baseline_version = None
-        elif baseline_version not in set(table_df["version"]):
+        elif baseline_version not in set(table_df[baseline_column]):
             raise ValueError(
                 f"Baseline version '{baseline_version}' is not present in the comparison data"
             )
@@ -411,7 +415,7 @@ def _render_comparison_table(
         )
         baseline_lookup: dict[tuple[str, str, str], pd.Series] = {}
         if baseline_version is not None:
-            baseline_rows = group_data[group_data["version"] == baseline_version]
+            baseline_rows = group_data[group_data[baseline_column] == baseline_version]
             for _, baseline_row in baseline_rows.iterrows():
                 baseline_lookup[
                     (
@@ -430,7 +434,7 @@ def _render_comparison_table(
             )
             is_baseline_row = (
                 baseline_version is not None
-                and str(row.get("version") or "unknown") == baseline_version
+                and str(row.get(baseline_column) or "unknown") == baseline_version
             )
             value_cells = "".join(
                 "<td>"
@@ -533,7 +537,7 @@ class BenchmarkProcessor:
             notes: Optional subtitle note lines (optional)
             repeat_section_legends: Render repeated side legends per section (optional)
             include_total_throughput: Render dashed total-throughput overlay in throughput charts (optional)
-            baseline_version: Optional displayed version label to use as the comparison-table baseline
+            baseline_version: Optional composed version name to use as the comparison-table baseline
             include_plotlyjs: Inline Plotly JS in the generated HTML (optional)
         """
         self.json_path = json_path

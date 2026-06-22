@@ -1549,7 +1549,7 @@ def generate_plot_only_report(
         notes: Optional subtitle note lines
         repeat_section_legends: Repeat side legends per section for screenshots
         include_total_throughput: Render dashed total-throughput overlay in throughput charts
-        baseline_version: Optional displayed version label to use as the comparison-table baseline
+        baseline_version: Optional composed version name to use as the comparison-table baseline
 
     Returns:
         Path to generated HTML report
@@ -1561,6 +1561,15 @@ def generate_plot_only_report(
     # Handle default case for versions_override
     if versions_override is None:
         versions_override = {}
+    effective_versions = list(versions or [])
+    if baseline_version:
+        baseline_version = str(baseline_version).strip() or None
+    if baseline_version and baseline_version not in effective_versions:
+        effective_versions.append(baseline_version)
+        logger.info(
+            "Including baseline composed version in version filters: %s",
+            baseline_version,
+        )
 
     # Validate runs compatibility
     model, data_profile = validate_runs_compatibility(runs_data)
@@ -1570,13 +1579,15 @@ def generate_plot_only_report(
     data_profile_params = _extract_data_profile_params(first_run_params)
 
     # Filter runs by version if specified (using prefix match for MLflow runs)
-    if versions:
-        logger.info(f"Filtering runs by base versions: {versions}")
+    if effective_versions:
+        logger.info(f"Filtering runs by base versions: {effective_versions}")
         filtered_runs = []
         for run_data in runs_data:
             composed_version = run_data["composed_version"]
             # Check if any base version matches as a prefix
-            matches = any(composed_version.startswith(base_v) for base_v in versions)
+            matches = any(
+                composed_version.startswith(base_v) for base_v in effective_versions
+            )
             if matches:
                 filtered_runs.append(run_data)
                 logger.info(
@@ -1588,7 +1599,9 @@ def generate_plot_only_report(
                 )
 
         if not filtered_runs:
-            raise ValueError(f"No runs found matching base versions: {versions}")
+            raise ValueError(
+                f"No runs found matching base versions: {effective_versions}"
+            )
 
         runs_data = filtered_runs
         logger.info(f"Using {len(runs_data)} runs after version filtering")
@@ -1716,6 +1729,9 @@ def generate_plot_only_report(
     final_df["_data_source"] = final_df["version"].apply(
         lambda v: "mlflow" if v in mlflow_versions else "csv"
     )
+    # Keep the immutable run identity separate from display labels. Version
+    # overrides are presentation-only; --baseline must match composed versions.
+    final_df["_composed_version"] = final_df["version"].fillna("unknown").astype(str)
     logger.info(
         f"Restored _data_source column: "
         f"{(final_df['_data_source'] == 'mlflow').sum()} MLflow rows, "
@@ -1723,8 +1739,8 @@ def generate_plot_only_report(
     )
 
     # Filter by versions if specified (different logic for CSV vs MLflow data)
-    if versions:
-        logger.info(f"Filtering combined data by versions: {versions}")
+    if effective_versions:
+        logger.info(f"Filtering combined data by versions: {effective_versions}")
         initial_rows = len(final_df)
 
         # Apply different filtering logic based on data source
@@ -1734,10 +1750,10 @@ def generate_plot_only_report(
 
             if data_source == "csv":
                 # CSV data: exact match only
-                return version in versions
+                return version in effective_versions
             else:  # mlflow
                 # MLflow data: prefix match (base version matches)
-                return any(version.startswith(base_v) for base_v in versions)
+                return any(version.startswith(base_v) for base_v in effective_versions)
 
         mask = final_df.apply(should_keep_row, axis=1)
         final_df = final_df[mask]
@@ -1749,7 +1765,9 @@ def generate_plot_only_report(
         logger.info("  MLflow data filtered with prefix match")
         if not combined_ttft_distribution_df.empty:
             distribution_mask = combined_ttft_distribution_df["version"].apply(
-                lambda value: any(str(value).startswith(base_v) for base_v in versions)
+                lambda value: any(
+                    str(value).startswith(base_v) for base_v in effective_versions
+                )
             )
             combined_ttft_distribution_df = combined_ttft_distribution_df[
                 distribution_mask
@@ -1800,7 +1818,11 @@ def generate_plot_only_report(
         s3_key=s3_key,
         accelerator=_resolve_accelerator(params, first_run.get("tags")),
         model_name=model,
-        version=params.get("version", "unknown"),
+        version=(
+            compare_versions[0]
+            if compare_versions
+            else params.get("version", "unknown")
+        ),
         tp_size=int(params.get("tp", 1)),
         runtime_args="",
         compare_versions=compare_versions,
@@ -2169,7 +2191,7 @@ def _run_benchmark_mode(
 @click.option(
     "--baseline",
     "baseline_version",
-    help="Displayed version label to use as the baseline for inline table deltas.",
+    help="Composed version name to use as the baseline for inline table deltas.",
 )
 @click.option(
     "--versions-override",
