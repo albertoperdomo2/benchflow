@@ -14,13 +14,24 @@ spec:
   benchmark_profile:
     - guidellm-concurrent-1k-1k
     - guidellm-concurrent-heavy-heterogeneous
-    - guidellm-concurrent-heavy-heterogeneous-v2
     - guidellm-multi-turn
-    - aiperf-mooncake-trace
-    - aiperf-mooncake-toolagent-trace
+    # - guidellm-concurrent-heavy-heterogeneous-v2
+    # - aiperf-mooncake-trace
+    # - aiperf-mooncake-toolagent-trace
   overrides:
     benchmark:
       request_type: text_completions
+    runtime:
+      affinity:
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: benchflow
+                    benchflow.io/experiment: gpt-oss-120b-rhoai-release
   metrics_profile: detailed
   mlflow:
     tags:
