@@ -11,12 +11,17 @@ spec:
     cache_dir: /models
     mount_path: /mnt
   runtime:
-    image: registry.stage.redhat.io/rhaii/vllm-cuda-rhel9:3.4.0-1776326705
-    replicas: 4
+    image: vllm/vllm-openai:v0.23.0
+    replicas: 8
     tensor_parallelism: 2
+    env:
+      USER: benchflow
+      HOME: /tmp
+      TORCHINDUCTOR_CACHE_DIR: /tmp/torchinductor
     vllm_args:
-      - --max-model-len=8192
-      - --enable-prefix-caching
-      - --trust-remote-code
-      - --gpu-memory-utilization=0.92
-      - --no-enable-log-requests
+      - --gpu-memory-utilization=0.95
+      # - --max-model-len=8192
+      # - --enable-prefix-caching
+      # - --trust-remote-code
+      # - --gpu-memory-utilization=0.92
+      # - --no-enable-log-requests
