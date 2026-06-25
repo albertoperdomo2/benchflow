@@ -29,6 +29,7 @@ from ..orchestration import (
     run_matrix_supervisor,
     stream_execution_logs,
 )
+from ..orchestration.matrix_results import publish_matrix_result
 from ..remote_jobs import remote_run_plan_json, run_remote_job
 from ..install import (
     BootstrapOptions,
@@ -1002,6 +1003,20 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
         benchflow_image=os.environ.get("BENCHFLOW_IMAGE"),
     )
     print("completed")
+    return 0
+
+
+def cmd_task_publish_matrix_result(args: argparse.Namespace) -> int:
+    plan = load_run_plan_from_sources(run_plan_json=args.run_plan_json)
+    record = publish_matrix_result(
+        plan,
+        configmap_name=args.configmap_name,
+        child_execution_name=args.child_execution_name,
+        mlflow_run_id=args.mlflow_run_id,
+        benchmark_start_time=args.benchmark_start_time,
+        benchmark_end_time=args.benchmark_end_time,
+    )
+    print(record.get("mlflow_url") or record.get("mlflow_run_id") or "published")
     return 0
 
 
@@ -2169,6 +2184,44 @@ def task_assert_status_command(**kwargs: object) -> int:
 )
 def task_run_experiment_matrix_command(**kwargs: object) -> int:
     return invoke_handler(cmd_task_run_experiment_matrix, **kwargs)
+
+
+@task_group.command(
+    "publish-matrix-result",
+    help=(
+        "Internal command used by child PipelineRuns to publish their MLflow "
+        "run to a matrix summary."
+    ),
+    short_help="Publish a matrix child result",
+)
+@click.option("--run-plan-json", required=True, help="Resolved immutable RunPlan JSON.")
+@click.option(
+    "--configmap-name",
+    required=True,
+    help="Parent-scoped matrix results ConfigMap name.",
+)
+@click.option(
+    "--child-execution-name",
+    required=True,
+    help="Child PipelineRun name.",
+)
+@click.option(
+    "--mlflow-run-id",
+    required=True,
+    help="MLflow run ID produced by the benchmark task.",
+)
+@click.option(
+    "--benchmark-start-time",
+    default="",
+    help="Benchmark start timestamp produced by the benchmark task.",
+)
+@click.option(
+    "--benchmark-end-time",
+    default="",
+    help="Benchmark end timestamp produced by the benchmark task.",
+)
+def task_publish_matrix_result_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_task_publish_matrix_result, **kwargs)
 
 
 @task_group.command(

@@ -22,6 +22,9 @@ spec:
     - name: TEARDOWN
       type: string
       default: "false"
+    - name: MATRIX_RESULTS_CONFIGMAP
+      type: string
+      default: ""
   workspaces:
     - name: results
     - name: models-storage
@@ -245,6 +248,36 @@ spec:
           subPath: $(context.pipelineRun.name)
         - name: target-kubeconfig
           workspace: target-kubeconfig
+
+    - name: publish-matrix-result
+      runAfter: [upload-to-mlflow]
+      when:
+        - input: "$(params.MATRIX_RESULTS_CONFIGMAP)"
+          operator: notin
+          values: [""]
+        - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"
+          operator: in
+          values: ["true"]
+        - input: "$(tasks.resolve-run-plan.results.stage-collect)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: publish-matrix-result
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+        - name: MATRIX_RESULTS_CONFIGMAP
+          value: $(params.MATRIX_RESULTS_CONFIGMAP)
+        - name: CHILD_EXECUTION_NAME
+          value: "$(context.pipelineRun.name)"
+        - name: MLFLOW_RUN_ID
+          value: "$(tasks.benchmark.results.mlflow-run-id)"
+        - name: BENCHMARK_START_TIME
+          value: "$(tasks.benchmark.results.benchmark-start-time)"
+        - name: BENCHMARK_END_TIME
+          value: "$(tasks.benchmark.results.benchmark-end-time)"
 
   finally:
     - name: cleanup

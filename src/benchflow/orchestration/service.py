@@ -28,10 +28,13 @@ from ..models import sanitize_name
 from ..platform_state import setup_key_for_plan
 from .matrix_payloads import (
     adopt_matrix_run_plans_configmap,
+    create_matrix_results_configmap,
     delete_matrix_run_plans_configmap,
+    MATRIX_RESULTS_CONFIGMAP_PARAM,
     materialize_matrix_run_plans_configmap,
     matrix_run_plans_configmap_name_from_labels,
 )
+from .matrix_results import print_matrix_results_summary
 from ..toolbox import setup_platform
 from ..ui import detail, step, success, warning
 from .tekton import TektonOrchestrator
@@ -391,6 +394,7 @@ def run_matrix_supervisor(
     setup_state_path: Path | None = None
     submitted: dict[str, str] = {}
     submit_children_in_parallel = False
+    results_configmap_name = ""
 
     matrix_platform = (
         plans[0].deployment.platform
@@ -413,6 +417,17 @@ def run_matrix_supervisor(
             context=ExecutionContext(state_path=setup_state_path),
         )
     submit_children_in_parallel = matrix_platform in {"llm-d", "rhoai"}
+    if parent_execution_name:
+        parent_payload = _TEKTON.get(
+            plans[0].deployment.namespace,
+            parent_execution_name,
+        )
+        results_configmap_name = create_matrix_results_configmap(
+            namespace=plans[0].deployment.namespace,
+            execution_name=parent_execution_name,
+            owner_payload=parent_payload,
+        )
+        detail(f"Matrix results ConfigMap: {results_configmap_name}")
 
     def wait_for_children(child_names: list[str]) -> None:
         if not child_names:
@@ -474,6 +489,16 @@ def run_matrix_supervisor(
                 labels = metadata.setdefault("labels", {})
                 labels[MATRIX_PARENT_EXECUTION_LABEL] = parent_execution_name
                 labels[MATRIX_CHILD_INDEX_LABEL] = str(index)
+            if results_configmap_name:
+                spec = manifest.setdefault("spec", {})
+                params = list(spec.get("params", []) or [])
+                params.append(
+                    {
+                        "name": MATRIX_RESULTS_CONFIGMAP_PARAM,
+                        "value": results_configmap_name,
+                    }
+                )
+                spec["params"] = params
             name = submit_execution_manifest(manifest, plan.deployment.namespace)
             submitted[name] = descriptor
             detail(f"Queued execution {name} in namespace {plan.deployment.namespace}")
@@ -485,6 +510,13 @@ def run_matrix_supervisor(
     finally:
         if setup_state_dir is not None:
             setup_state_dir.cleanup()
+
+    if results_configmap_name:
+        print_matrix_results_summary(
+            namespace=plans[0].deployment.namespace,
+            configmap_name=results_configmap_name,
+            child_names=list(submitted),
+        )
 
     if failures:
         raise ValidationError(

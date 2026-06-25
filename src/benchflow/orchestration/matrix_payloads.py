@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from typing import Any
 
-from ..cluster import create_manifest, require_any_command, run_command
+from ..cluster import (
+    create_manifest,
+    require_any_command,
+    run_command,
+    run_json_command,
+)
 from ..contracts import ValidationError
 from ..models import sanitize_name
 
@@ -13,12 +19,20 @@ RUN_PLANS_CONFIGMAP_PARAM = "RUN_PLANS_CONFIGMAP"
 RUN_PLANS_CONFIGMAP_LABEL = "benchflow.io/run-plans-configmap"
 RUN_PLANS_CONFIGMAP_KEY = "run-plans.json"
 RUN_PLANS_ANNOTATION = "benchflow.io/run-plans-json"
+MATRIX_RESULTS_CONFIGMAP_PARAM = "MATRIX_RESULTS_CONFIGMAP"
+MATRIX_RESULTS_CONFIGMAP_LABEL = "benchflow.io/matrix-results-configmap"
 MATRIX_PIPELINE_NAME = "benchflow-matrix"
 EXECUTION_NAME_LABEL = "benchflow.io/execution-name"
 
 
 def matrix_run_plans_configmap_name(execution_name: str) -> str:
     return sanitize_name(f"{execution_name}-run-plans", max_length=63)
+
+
+def matrix_results_configmap_name(execution_name: str) -> str:
+    digest = hashlib.sha1(execution_name.encode("utf-8")).hexdigest()[:8]
+    prefix = sanitize_name(execution_name, max_length=45)
+    return sanitize_name(f"{prefix}-results-{digest}", max_length=63)
 
 
 def matrix_run_plans_configmap_name_from_labels(labels: dict[str, str] | None) -> str:
@@ -104,7 +118,7 @@ def delete_matrix_run_plans_configmap(namespace: str, configmap_name: str) -> No
     )
 
 
-def adopt_matrix_run_plans_configmap(
+def adopt_matrix_configmap(
     *,
     namespace: str,
     configmap_name: str,
@@ -149,6 +163,142 @@ def adopt_matrix_run_plans_configmap(
             ),
         ]
     )
+
+
+def adopt_matrix_run_plans_configmap(
+    *,
+    namespace: str,
+    configmap_name: str,
+    owner_payload: dict[str, Any],
+) -> None:
+    adopt_matrix_configmap(
+        namespace=namespace,
+        configmap_name=configmap_name,
+        owner_payload=owner_payload,
+    )
+
+
+def create_matrix_results_configmap(
+    *,
+    namespace: str,
+    execution_name: str,
+    owner_payload: dict[str, Any] | None = None,
+) -> str:
+    configmap_name = matrix_results_configmap_name(execution_name)
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    existing = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "configmap",
+            configmap_name,
+            "-n",
+            namespace,
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if existing.returncode == 0:
+        if owner_payload is not None:
+            adopt_matrix_configmap(
+                namespace=namespace,
+                configmap_name=configmap_name,
+                owner_payload=owner_payload,
+            )
+        return configmap_name
+    payload = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": configmap_name,
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                "benchflow.io/managed-by": "benchflow",
+                EXECUTION_NAME_LABEL: execution_name,
+                MATRIX_RESULTS_CONFIGMAP_LABEL: configmap_name,
+            },
+        },
+        "data": {},
+    }
+    create_manifest(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True),
+        namespace,
+    )
+    if owner_payload is not None:
+        adopt_matrix_configmap(
+            namespace=namespace,
+            configmap_name=configmap_name,
+            owner_payload=owner_payload,
+        )
+    return configmap_name
+
+
+def matrix_result_key(child_execution_name: str) -> str:
+    cleaned = sanitize_name(child_execution_name, max_length=240)
+    return f"{cleaned or 'child'}.json"
+
+
+def patch_matrix_result(
+    *,
+    namespace: str,
+    configmap_name: str,
+    child_execution_name: str,
+    record: dict[str, Any],
+) -> None:
+    if not configmap_name:
+        raise ValidationError("matrix results ConfigMap name must not be empty")
+    key = matrix_result_key(child_execution_name)
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    run_command(
+        [
+            kubectl_cmd,
+            "patch",
+            "configmap",
+            configmap_name,
+            "-n",
+            namespace,
+            "--type",
+            "merge",
+            "-p",
+            json.dumps(
+                {
+                    "data": {
+                        key: json.dumps(
+                            record,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        )
+                    }
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        ]
+    )
+
+
+def read_matrix_results_configmap(
+    *,
+    namespace: str,
+    configmap_name: str,
+) -> list[dict[str, Any]]:
+    if not configmap_name:
+        return []
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    payload = run_json_command(
+        [kubectl_cmd, "get", "configmap", configmap_name, "-n", namespace, "-o", "json"]
+    )
+    data = payload.get("data", {}) or {}
+    records: list[dict[str, Any]] = []
+    for key in sorted(data):
+        try:
+            record = json.loads(str(data[key]))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
 
 
 def materialize_matrix_run_plans_configmap(

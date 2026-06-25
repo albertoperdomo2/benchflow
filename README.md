@@ -70,7 +70,7 @@ Then follow the execution:
 bflow watch <execution-name> --namespace benchflow
 ```
 
-BenchFlow also supports matrix experiments by turning one or more profile fields into lists; the cluster then runs the cartesian product through child executions. `rhoai` and `llm-d` child executions can be admitted in parallel when target-cluster GPU capacity allows it. Once the parent has submitted child executions, canceling the parent is only best-effort; already queued or running children may need individual cancellation.
+BenchFlow also supports matrix experiments by turning one or more profile fields into lists; the cluster then runs the cartesian product through child executions. `rhoai` and `llm-d` child executions can be admitted in parallel when target-cluster GPU capacity allows it. After all child executions finish, the parent prints a compact MLflow run summary. Once the parent has submitted child executions, canceling the parent is only best-effort; already queued or running children may need individual cancellation.
 
 For the full command surface, RunPlan PipelineRun flow, matrix execution, and lower-level runtime commands, see [docs/ADVANCED.md](docs/ADVANCED.md).
 
