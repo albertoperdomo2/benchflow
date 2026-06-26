@@ -336,7 +336,11 @@ def resolve_run_plan(
     )
     if runtime.placement.mode and deployment_profile.spec.platform != "rhoai":
         raise ValidationError(
-            "runtime.placement is currently supported only for rhoai deployments"
+            "runtime.placement is currently supported only for rhoai LLMInferenceService deployments"
+        )
+    if runtime.placement.mode and deployment_profile.spec.mode == "isvc":
+        raise ValidationError(
+            "runtime.placement is not supported for rhoai isvc deployments"
         )
     _validate_profiling_support(
         platform=deployment_profile.spec.platform,

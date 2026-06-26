@@ -49,8 +49,14 @@ def _runtime_affinity(plan: ResolvedRunPlan) -> dict[str, Any]:
     if placement.mode != "same-node":
         return affinity
 
-    release_name = plan.deployment.release_name
-    placement_pool = placement.spread_pool
+    # LLMInferenceService exposes only a PodSpec template, not PodTemplate metadata,
+    # so custom BenchFlow placement labels cannot be propagated to model pods.
+    # Use stable RHOAI/KServe-generated workload labels instead.
+    workload_selector = {
+        "app.kubernetes.io/part-of": "llminferenceservice",
+        "kserve.io/component": "workload",
+    }
+    workload_identity_label = "app.kubernetes.io/name"
     _append_affinity_terms(
         affinity,
         "podAffinity",
@@ -59,10 +65,9 @@ def _runtime_affinity(plan: ResolvedRunPlan) -> dict[str, Any]:
             {
                 "topologyKey": "kubernetes.io/hostname",
                 "labelSelector": {
-                    "matchLabels": {
-                        "benchflow.io/placement-group": release_name,
-                    },
+                    "matchLabels": workload_selector,
                 },
+                "matchLabelKeys": [workload_identity_label],
             }
         ],
     )
@@ -74,17 +79,9 @@ def _runtime_affinity(plan: ResolvedRunPlan) -> dict[str, Any]:
             {
                 "topologyKey": "kubernetes.io/hostname",
                 "labelSelector": {
-                    "matchLabels": {
-                        "benchflow.io/placement-pool": placement_pool,
-                    },
-                    "matchExpressions": [
-                        {
-                            "key": "benchflow.io/placement-group",
-                            "operator": "NotIn",
-                            "values": [release_name],
-                        }
-                    ],
+                    "matchLabels": workload_selector,
                 },
+                "mismatchLabelKeys": [workload_identity_label],
             }
         ],
     )
