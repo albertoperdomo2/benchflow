@@ -269,6 +269,7 @@ class ExperimentTargetSpec:
     base_url: str = ""
     path: str = "/v1/models"
     metrics_release_name: str = ""
+    endpoint_scope: str = ""
 
     def enabled(self) -> bool:
         return bool(self.base_url.strip())
@@ -397,6 +398,7 @@ class DeploymentProfileSpec:
     platform_channel: str = ""
     gateway: str = "istio"
     endpoint_path: str = "/v1/models"
+    endpoint_scope: str = "external"
     scheduler_profile: str = ""
     scheduler_image: str = ""
     options: dict[str, Any] = field(default_factory=dict)
@@ -482,6 +484,7 @@ class TargetSpec:
     resource_name: str = ""
     path: str = "/v1/models"
     metrics_release_name: str = ""
+    endpoint_scope: str = "external"
 
     def scoped_release_name(self, default: str) -> str:
         return str(self.metrics_release_name or "").strip() or default

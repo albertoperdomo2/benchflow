@@ -142,7 +142,79 @@ def _with_default_port(url: str, default_port: int) -> str:
     )
 
 
+def _target_scope(target: Any) -> str:
+    scope = str(getattr(target, "endpoint_scope", "") or "external").strip()
+    if scope not in {"external", "internal"}:
+        raise CommandError(f"unsupported target endpoint scope: {scope}")
+    return scope
+
+
+def _service_payload(
+    kubectl_cmd: str, namespace: str, name: str
+) -> dict[str, Any] | None:
+    result = run_command(
+        [kubectl_cmd, "get", "service", name, "-n", namespace, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise CommandError(
+            f"{kubectl_cmd} get service {name} -n {namespace}: "
+            "command did not return valid JSON"
+        ) from exc
+    return payload if isinstance(payload, dict) else None
+
+
+def _service_port(payload: dict[str, Any]) -> int:
+    ports = payload.get("spec", {}).get("ports") or []
+    if not isinstance(ports, list) or not ports:
+        return 80
+    preferred_names = {"http", "http2", "http-80", "web"}
+    for port in ports:
+        if not isinstance(port, dict):
+            continue
+        if str(port.get("name") or "") in preferred_names:
+            return int(port.get("port") or 80)
+    first = ports[0] if isinstance(ports[0], dict) else {}
+    return int(first.get("port") or 80)
+
+
+def _gateway_internal_service_url(
+    kubectl_cmd: str, namespace: str, gateway_name: str
+) -> str:
+    candidates = [
+        gateway_name,
+        f"{gateway_name}-istio",
+    ]
+    for service_name in candidates:
+        payload = _service_payload(kubectl_cmd, namespace, service_name)
+        if payload:
+            port = _service_port(payload)
+            suffix = "" if port == 80 else f":{port}"
+            return f"http://{service_name}.{namespace}.svc.cluster.local{suffix}"
+    raise CommandError(
+        f"Gateway {gateway_name} in namespace {namespace} does not have a "
+        "known internal Service"
+    )
+
+
+def _llminferenceservice_internal_url(resource_name: str, namespace: str) -> str:
+    return (
+        f"https://{resource_name}-kserve-workload-svc."
+        f"{namespace}.svc.cluster.local:8000"
+    )
+
+
+def _inferenceservice_internal_url(resource_name: str, namespace: str) -> str:
+    return f"http://{resource_name}-predictor.{namespace}.svc.cluster.local:8080"
+
+
 def resolve_target_base_url(target: Any, namespace: str) -> str:
+    endpoint_scope = _target_scope(target)
     if target.discovery == "static":
         if not target.base_url:
             raise CommandError(
@@ -157,6 +229,8 @@ def resolve_target_base_url(target: Any, namespace: str) -> str:
             raise CommandError(
                 "target discovery is gateway-status-url but target.resource_name is empty"
             )
+        if endpoint_scope == "internal":
+            return _gateway_internal_service_url(kubectl_cmd, namespace, resource_name)
         payload = run_json_command(
             [
                 kubectl_cmd,
@@ -192,6 +266,8 @@ def resolve_target_base_url(target: Any, namespace: str) -> str:
                 "target discovery is llminferenceservice-status-url but "
                 "target.resource_name is empty"
             )
+        if endpoint_scope == "internal":
+            return _llminferenceservice_internal_url(resource_name, namespace)
         payload = run_json_command(
             [
                 kubectl_cmd,
@@ -220,6 +296,8 @@ def resolve_target_base_url(target: Any, namespace: str) -> str:
                 "target discovery is inferenceservice-status-url but "
                 "target.resource_name is empty"
             )
+        if endpoint_scope == "internal":
+            return _inferenceservice_internal_url(resource_name, namespace)
         payload = run_json_command(
             [
                 kubectl_cmd,

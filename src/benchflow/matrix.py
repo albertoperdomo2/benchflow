@@ -204,6 +204,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                         base_url=experiment.spec.target.base_url,
                         path=experiment.spec.target.path,
                         metrics_release_name=experiment.spec.target.metrics_release_name,
+                        endpoint_scope=experiment.spec.target.endpoint_scope,
                     ),
                     target_cluster=ClusterTargetSpec(
                         kubeconfig=experiment.spec.target_cluster.kubeconfig,

@@ -105,6 +105,7 @@ def _target_for(
     gateway: str,
     path: str,
     repo_ref: str,
+    endpoint_scope: str,
 ) -> TargetSpec:
     if platform == "llm-d":
         if gateway == "standalone":
@@ -127,8 +128,14 @@ def _target_for(
                 resource_kind="Gateway",
                 resource_name=gateway_name,
                 path=path,
+                endpoint_scope=endpoint_scope,
             )
-        return TargetSpec(discovery="static", base_url=base_url, path=path)
+        return TargetSpec(
+            discovery="static",
+            base_url=base_url,
+            path=path,
+            endpoint_scope=endpoint_scope,
+        )
 
     if platform == "rhoai":
         if mode == "isvc":
@@ -137,12 +144,14 @@ def _target_for(
                 resource_kind="InferenceService",
                 resource_name=release_name,
                 path=path,
+                endpoint_scope=endpoint_scope,
             )
         return TargetSpec(
             discovery="llminferenceservice-status-url",
             resource_kind="LLMInferenceService",
             resource_name=release_name,
             path=path,
+            endpoint_scope=endpoint_scope,
         )
 
     if platform == "rhaiis" and mode == "raw-vllm":
@@ -150,12 +159,14 @@ def _target_for(
             discovery="static",
             base_url=f"http://{release_name}.{namespace}.svc.cluster.local:8000",
             path=path,
+            endpoint_scope=endpoint_scope,
         )
 
     return TargetSpec(
         discovery="static",
         base_url=f"http://{release_name}-predictor.{namespace}.svc.cluster.local:8080",
         path=path,
+        endpoint_scope=endpoint_scope,
     )
 
 
@@ -412,6 +423,7 @@ def resolve_run_plan(
             base_url=experiment.spec.target.base_url.rstrip("/"),
             path=experiment.spec.target.path,
             metrics_release_name=experiment.spec.target.metrics_release_name,
+            endpoint_scope=experiment.spec.target.endpoint_scope or "external",
         )
         if experiment.spec.target.enabled()
         else _target_for(
@@ -422,6 +434,10 @@ def resolve_run_plan(
             gateway=deployment_profile.spec.gateway,
             path=deployment_profile.spec.endpoint_path,
             repo_ref=repo_ref,
+            endpoint_scope=(
+                experiment.spec.target.endpoint_scope
+                or deployment_profile.spec.endpoint_scope
+            ),
         )
     )
 

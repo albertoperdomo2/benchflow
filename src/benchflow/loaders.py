@@ -406,6 +406,15 @@ def _target_cluster_from_dict(raw: dict[str, Any] | None) -> ClusterTargetSpec:
     )
 
 
+def _endpoint_scope(raw: object, field_name: str, *, default: str = "external") -> str:
+    value = str(raw or default).strip() or default
+    if not value:
+        return ""
+    if value not in {"external", "internal"}:
+        raise ValidationError(f"{field_name} must be 'external' or 'internal'")
+    return value
+
+
 def _experiment_target_from_dict(raw: dict[str, Any] | None) -> ExperimentTargetSpec:
     raw = raw or {}
     if not isinstance(raw, dict):
@@ -413,14 +422,18 @@ def _experiment_target_from_dict(raw: dict[str, Any] | None) -> ExperimentTarget
     base_url = str(raw.get("base_url", "") or "").strip()
     path = str(raw.get("path", "/v1/models") or "/v1/models").strip()
     metrics_release_name = str(raw.get("metrics_release_name", "") or "").strip()
+    endpoint_scope = _endpoint_scope(
+        raw.get("endpoint_scope"), "target.endpoint_scope", default=""
+    )
     if not path:
         raise ValidationError("target.path must not be empty")
-    if raw and not base_url:
+    if raw and not base_url and set(raw) - {"endpoint_scope"}:
         raise ValidationError("target.base_url must not be empty")
     return ExperimentTargetSpec(
         base_url=base_url,
         path=path,
         metrics_release_name=metrics_release_name,
+        endpoint_scope=endpoint_scope,
     )
 
 
@@ -825,6 +838,9 @@ def load_deployment_profile(path: Path) -> DeploymentProfile:
         platform_channel=str(spec.get("platform_channel", "")),
         gateway=str(spec.get("gateway", "istio")),
         endpoint_path=str(spec.get("endpoint_path", "/v1/models")),
+        endpoint_scope=_endpoint_scope(
+            spec.get("endpoint_scope"), "spec.endpoint_scope"
+        ),
         scheduler_profile=str(spec.get("scheduler_profile", "")),
         scheduler_image=str(spec.get("scheduler_image", "")),
         options=dict(spec.get("options") or {}),
@@ -935,6 +951,9 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
             resource_name=str(target_raw.get("resource_name", "")),
             path=str(target_raw.get("path", "/v1/models")),
             metrics_release_name=str(target_raw.get("metrics_release_name", "")),
+            endpoint_scope=_endpoint_scope(
+                target_raw.get("endpoint_scope"), "deployment.target.endpoint_scope"
+            ),
         ),
     )
 

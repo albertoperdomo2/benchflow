@@ -30,6 +30,8 @@ spec:
       placement:
         mode: sequential
   metrics_profile: detailed
+  target:
+    endpoint_scope: internal
   mlflow:
     tags:
       accelerator: H100

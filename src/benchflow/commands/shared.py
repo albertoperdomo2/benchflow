@@ -271,6 +271,12 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
     )
     target_url = getattr(args, "target_url", None)
     target_path = getattr(args, "target_path", None)
+    target_endpoint_scope = getattr(args, "target_endpoint_scope", None)
+    if target_endpoint_scope is not None and target_endpoint_scope not in {
+        "external",
+        "internal",
+    }:
+        raise ValidationError("--target-endpoint-scope must be external or internal")
     resolved_target = ExperimentTargetSpec(
         base_url=(
             str(target_url).strip()
@@ -286,6 +292,11 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             str(getattr(args, "target_metrics_release_name", "") or "").strip()
             if getattr(args, "target_metrics_release_name", None) is not None
             else base_experiment.spec.target.metrics_release_name
+        ),
+        endpoint_scope=(
+            str(target_endpoint_scope).strip()
+            if target_endpoint_scope is not None
+            else base_experiment.spec.target.endpoint_scope
         ),
     )
     target_host_aliases = dict(base_experiment.spec.target_cluster.host_aliases)
@@ -553,6 +564,15 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
                 "when benchmarking an already deployed endpoint. If set, "
                 "BenchFlow automatically enables metrics collection for the "
                 "existing-endpoint path."
+            ),
+        ),
+        click.option(
+            "--target-endpoint-scope",
+            type=click.Choice(["external", "internal"]),
+            help=(
+                "Endpoint scope to use when resolving a deployed target. Defaults "
+                "to external; internal uses cluster-local service URLs where "
+                "supported."
             ),
         ),
         click.option(
