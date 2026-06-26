@@ -294,6 +294,30 @@ def _grouped_share_matrix(
     return labels, shares
 
 
+def _sum_grouped_series(
+    grouped: dict[str, dict[int, float]],
+    timestamps: list[int],
+) -> np.ndarray:
+    return _aggregate_grouped(grouped, timestamps, np.nansum)
+
+
+def _integrate_rate_grouped(
+    grouped: dict[str, dict[int, float]],
+) -> dict[str, dict[int, float]]:
+    integrated: dict[str, dict[int, float]] = {}
+    for label, series in grouped.items():
+        previous_ts: int | None = None
+        total = 0.0
+        output: dict[int, float] = {}
+        for ts, value in sorted(series.items()):
+            if previous_ts is not None:
+                total += max(float(ts - previous_ts), 0.0) * max(float(value), 0.0)
+            output[ts] = total
+            previous_ts = ts
+        integrated[label] = output
+    return integrated
+
+
 def _phase_reducer(
     timestamps: list[int],
     values: np.ndarray,
@@ -870,6 +894,69 @@ def _build_grouped_line_figure(
     return fig
 
 
+def _build_kv_offload_efficiency_figure(
+    timestamps: list[int],
+    output_tok_rate: np.ndarray,
+    offload_bytes_rate: np.ndarray,
+    segments: list[dict[str, float | int | str]],
+) -> go.Figure:
+    offload_mib_rate = offload_bytes_rate / 1024.0 / 1024.0
+    phase_offload = _phase_reducer(timestamps, offload_mib_rate, segments)
+    phase_output = _phase_reducer(timestamps, output_tok_rate, segments)
+    points = [
+        (offload_entry, output_entry)
+        for offload_entry, output_entry in zip(phase_offload, phase_output)
+        if np.isfinite(float(offload_entry["value"]))
+        and np.isfinite(float(output_entry["value"]))
+    ]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=[float(offload_entry["value"]) for offload_entry, _ in points],
+            y=[float(output_entry["value"]) for _, output_entry in points],
+            mode="markers+lines+text",
+            text=[
+                format_load_value(offload_entry["concurrency"])
+                for offload_entry, _ in points
+            ],
+            textposition="top center",
+            name="Load point",
+            marker={
+                "size": 13,
+                "color": COLORS["orange"],
+                "line": {"color": "white", "width": 0.7},
+            },
+            customdata=np.array(
+                [[entry["label"] for entry, _ in points]],
+                dtype=object,
+            ).T,
+            hovertemplate=(
+                "Load point %{text}<br>"
+                "Phase %{customdata[0]}<br>"
+                "KV offload throughput %{x:.1f} MiB/s<br>"
+                "Output throughput %{y:.1f} tok/s<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(
+        title={
+            "text": _title_text(
+                "(aj) CPU KV offload efficiency",
+                "Phase medians compare useful output throughput with KV offload traffic. Good runs move only the KV needed to sustain higher delivered token rate.",
+            ),
+            "x": 0.5,
+            "xanchor": "center",
+            "y": 0.97,
+        },
+        **_base_layout(),
+    )
+    fig.update_xaxes(title_text="KV offload throughput (MiB/s)")
+    fig.update_yaxes(title_text="Output token throughput (tok/s)")
+    _apply_common_axes(fig)
+    return fig
+
+
 def _build_gpu_heatmap_figure(
     minutes: list[float],
     timestamps: list[int],
@@ -897,7 +984,7 @@ def _build_gpu_heatmap_figure(
     fig.update_layout(
         title={
             "text": _title_text(
-                "(z) GPU heatmap by replica/rank",
+                "(am) GPU heatmap by replica/rank",
                 "Balanced utilization bands are better. Persistent cold ranks imply underfilled work, while isolated hot ranks suggest uneven TP placement or scheduler skew.",
             ),
             "x": 0.5,
@@ -987,7 +1074,7 @@ def _build_gpu_frontier_figure(
     fig.update_layout(
         title={
             "text": _title_text(
-                "(ae) Per-GPU productivity frontier by load point",
+                "(an) Per-GPU productivity frontier by load point",
                 "Each marker uses phase-median average GPU utilization and output tok/s divided by GPU count. Higher and further right is better only if TTFT stays controlled.",
             ),
             "x": 0.5,
@@ -1025,6 +1112,34 @@ def _build_system_figures(
     kv_offload_seconds_per_gib_by_pod = _rows_to_grouped_series(
         _metric_rows(paths, "kv_offload_seconds_per_gib_by_pod"),
         _kv_offload_pod_transfer_label,
+    )
+    model_memory_working_set_bytes_by_pod = _rows_to_grouped_series(
+        _metric_rows(paths, "model_memory_working_set_bytes_by_pod"),
+        _workload_pod_label,
+    )
+    model_memory_rss_bytes_by_pod = _rows_to_grouped_series(
+        _metric_rows(paths, "model_memory_rss_bytes_by_pod"),
+        _workload_pod_label,
+    )
+    model_memory_failures_rate_by_pod = _rows_to_grouped_series(
+        _metric_rows(paths, "model_memory_failures_rate_by_pod"),
+        _workload_pod_label,
+    )
+    model_cpu_throttling_ratio_by_pod = _rows_to_grouped_series(
+        _metric_rows(paths, "model_cpu_throttling_ratio_by_pod"),
+        _workload_pod_label,
+    )
+    gpu_pcie_tx_bytes_per_second_by_pod = _rows_to_grouped_series(
+        _metric_rows(paths, "gpu_pcie_tx_bytes_per_second_by_pod"),
+        _gpu_row_label,
+    )
+    gpu_pcie_rx_bytes_per_second_by_pod = _rows_to_grouped_series(
+        _metric_rows(paths, "gpu_pcie_rx_bytes_per_second_by_pod"),
+        _gpu_row_label,
+    )
+    offload_context = bool(kv_offload_bytes_rate_by_pod) or any(
+        marker in metadata.runtime_args
+        for marker in ("OffloadingConnector", "cpu_bytes_to_use")
     )
     storage_nfs_requests_rate_by_node_method = _rows_to_grouped_series(
         _metric_rows(paths, "storage_nfs_requests_rate_by_node_method"),
@@ -1110,6 +1225,28 @@ def _build_system_figures(
                 )
             )
 
+        cumulative_kv_offload_bytes_by_pod = _integrate_rate_grouped(
+            kv_offload_bytes_rate_by_pod
+        )
+        figures.append(
+            _build_grouped_line_figure(
+                minutes=_relative_minutes(timestamps),
+                timestamps=timestamps,
+                grouped=cumulative_kv_offload_bytes_by_pod,
+                segments=segments,
+                title="(ab) CPU KV offload cumulative volume",
+                subtitle=(
+                    "Integrates vLLM KV offload byte rate over the benchmark. "
+                    "This confirms how much KV data actually moved between GPU "
+                    "cache and the CPU offload tier."
+                ),
+                yaxis_title="Cumulative KV offload (GiB)",
+                scale=1.0 / 1024.0 / 1024.0 / 1024.0,
+                hover_value="%{y:.2f} GiB",
+                hover_label="Volume",
+            )
+        )
+
     if kv_offload_seconds_per_gib_by_pod:
         timestamps = _grouped_timestamps(kv_offload_seconds_per_gib_by_pod)
         if timestamps:
@@ -1119,7 +1256,7 @@ def _build_system_figures(
                     timestamps=timestamps,
                     grouped=kv_offload_seconds_per_gib_by_pod,
                     segments=segments,
-                    title="(ab) KV offload cost by replica",
+                    title="(ac) KV offload cost by replica",
                     subtitle=(
                         "Computed as vLLM KV offload time divided by bytes moved. "
                         "Higher seconds per GiB means the replica spends more wall "
@@ -1131,6 +1268,147 @@ def _build_system_figures(
                 )
             )
 
+    if offload_context and model_memory_working_set_bytes_by_pod:
+        timestamps = _grouped_timestamps(model_memory_working_set_bytes_by_pod)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=model_memory_working_set_bytes_by_pod,
+                    segments=segments,
+                    title="(ad) Model pod memory working set",
+                    subtitle=(
+                        "Container working set by model-server pod. CPU KV offload "
+                        "should increase pod memory as the CPU tier fills."
+                    ),
+                    yaxis_title="Memory working set (GiB)",
+                    scale=1.0 / 1024.0 / 1024.0 / 1024.0,
+                    hover_value="%{y:.2f} GiB",
+                    hover_label="Working set",
+                )
+            )
+
+    if offload_context and model_memory_rss_bytes_by_pod:
+        timestamps = _grouped_timestamps(model_memory_rss_bytes_by_pod)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=model_memory_rss_bytes_by_pod,
+                    segments=segments,
+                    title="(ae) Model pod RSS memory",
+                    subtitle=(
+                        "Resident memory by model-server pod. This is useful for "
+                        "checking whether CPU KV offload consumes real host RAM."
+                    ),
+                    yaxis_title="RSS memory (GiB)",
+                    scale=1.0 / 1024.0 / 1024.0 / 1024.0,
+                    hover_value="%{y:.2f} GiB",
+                    hover_label="RSS",
+                )
+            )
+
+    if offload_context and model_memory_failures_rate_by_pod:
+        timestamps = _grouped_timestamps(model_memory_failures_rate_by_pod)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=model_memory_failures_rate_by_pod,
+                    segments=segments,
+                    title="(af) Model pod memory pressure",
+                    subtitle=(
+                        "Rate of container memory allocation failures. Non-zero "
+                        "values indicate memory pressure while using CPU KV offload."
+                    ),
+                    yaxis_title="Memory failures (events/s)",
+                    hover_value="%{y:.4f} events/s",
+                    hover_label="Failure rate",
+                )
+            )
+
+    if offload_context and model_cpu_throttling_ratio_by_pod:
+        timestamps = _grouped_timestamps(model_cpu_throttling_ratio_by_pod)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=model_cpu_throttling_ratio_by_pod,
+                    segments=segments,
+                    title="(ag) Model pod CPU throttling",
+                    subtitle=(
+                        "Share of CFS scheduling periods throttled by pod. CPU-side "
+                        "offload work can distort results if pods are CPU-throttled."
+                    ),
+                    yaxis_title="CPU throttling ratio",
+                    hover_value="%{y:.2%}",
+                    hover_label="Throttling ratio",
+                )
+            )
+
+    if offload_context and gpu_pcie_tx_bytes_per_second_by_pod:
+        timestamps = _grouped_timestamps(gpu_pcie_tx_bytes_per_second_by_pod)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=gpu_pcie_tx_bytes_per_second_by_pod,
+                    segments=segments,
+                    title="(ah) GPU PCIe TX throughput",
+                    subtitle=(
+                        "DCGM PCIe transmit byte rate by GPU. CPU KV offload can "
+                        "increase host-device transfer traffic."
+                    ),
+                    yaxis_title="PCIe TX throughput (MiB/s)",
+                    scale=1.0 / 1024.0 / 1024.0,
+                    hover_value="%{y:.1f} MiB/s",
+                    hover_label="TX throughput",
+                )
+            )
+
+    if offload_context and gpu_pcie_rx_bytes_per_second_by_pod:
+        timestamps = _grouped_timestamps(gpu_pcie_rx_bytes_per_second_by_pod)
+        if timestamps:
+            figures.append(
+                _build_grouped_line_figure(
+                    minutes=_relative_minutes(timestamps),
+                    timestamps=timestamps,
+                    grouped=gpu_pcie_rx_bytes_per_second_by_pod,
+                    segments=segments,
+                    title="(ai) GPU PCIe RX throughput",
+                    subtitle=(
+                        "DCGM PCIe receive byte rate by GPU. Spikes can show KV "
+                        "blocks being reloaded from the CPU offload tier."
+                    ),
+                    yaxis_title="PCIe RX throughput (MiB/s)",
+                    scale=1.0 / 1024.0 / 1024.0,
+                    hover_value="%{y:.1f} MiB/s",
+                    hover_label="RX throughput",
+                )
+            )
+
+    offload_efficiency_timestamps = sorted(
+        set(_grouped_timestamps(kv_offload_bytes_rate_by_pod)).intersection(
+            total_output_tok_rate.keys()
+        )
+    )
+    if offload_efficiency_timestamps:
+        figures.append(
+            _build_kv_offload_efficiency_figure(
+                offload_efficiency_timestamps,
+                _align_series(offload_efficiency_timestamps, total_output_tok_rate),
+                _sum_grouped_series(
+                    kv_offload_bytes_rate_by_pod, offload_efficiency_timestamps
+                ),
+                segments,
+            )
+        )
+
     if storage_nfs_requests_rate_by_node_method:
         timestamps = _grouped_timestamps(storage_nfs_requests_rate_by_node_method)
         if timestamps:
@@ -1140,7 +1418,7 @@ def _build_system_figures(
                     timestamps=timestamps,
                     grouped=storage_nfs_requests_rate_by_node_method,
                     segments=segments,
-                    title="(ac) Node NFS request rate",
+                    title="(ak) Node NFS request rate",
                     subtitle=(
                         "Node-level NFS client request rate from node-exporter. "
                         "This is not pod-specific, but it helps identify whether "
@@ -1161,7 +1439,7 @@ def _build_system_figures(
                     timestamps=timestamps,
                     grouped=storage_nfs_retransmissions_rate_by_node,
                     segments=segments,
-                    title="(ad) Node NFS retransmissions",
+                    title="(al) Node NFS retransmissions",
                     subtitle=(
                         "Node-level NFS RPC retransmission rate from node-exporter. "
                         "Spikes indicate transport or storage pressure that can "

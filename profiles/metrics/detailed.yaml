@@ -46,6 +46,12 @@ spec:
     kv_offload_bytes_rate_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
     kv_offload_time_rate_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
     kv_offload_seconds_per_gib_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / 1024 / 1024 / 1024, 0.001)
+    model_memory_working_set_bytes_by_pod: container_memory_working_set_bytes{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="POD", container!=""}
+    model_memory_rss_bytes_by_pod: container_memory_rss{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="POD", container!=""}
+    model_memory_failures_rate_by_pod: sum by (pod) (rate(container_memory_failcnt{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="POD", container!=""}[5m]))
+    model_cpu_throttling_ratio_by_pod: sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="POD", container!=""}[5m])) / clamp_min(sum by (pod) (rate(container_cpu_cfs_periods_total{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="POD", container!=""}[5m])), 1)
+    gpu_pcie_tx_bytes_per_second_by_pod: rate({__name__=~"DCGM_FI_PROF_PCIE_TX_BYTES", exported_namespace="$namespace", exported_pod=~"$modelserver_pod_regex"}[5m])
+    gpu_pcie_rx_bytes_per_second_by_pod: rate({__name__=~"DCGM_FI_PROF_PCIE_RX_BYTES", exported_namespace="$namespace", exported_pod=~"$modelserver_pod_regex"}[5m])
     num_preemptions_rate: rate({__name__=~"(vllm|kserve_vllm):num_preemptions_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])
     scheduler_up: up{namespace="$namespace", pod=~"$scheduler_pod_regex", endpoint=~"$scheduler_endpoint_regex"}
     scheduler_ready_pods: kserve_inference_pool_ready_pods{namespace="$namespace", pod=~"$scheduler_pod_regex"}

@@ -1,0 +1,15 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: cpu-offloading-long-context
+spec:
+  guidellm:
+    backend_type: openai_http
+    rate_type: concurrent
+    rates: [1, 5, 10, 20, 50, 100, 200, 300]
+    data: prompt_tokens=4096,output_tokens=256,turns=5,prefix_tokens=10000,prefix_count=2*concurrency
+    max_seconds: 120
+  requirements:
+    min_max_model_len: 40960
+  env:
+    GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "INFO"

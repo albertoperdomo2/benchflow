@@ -1,0 +1,26 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: cpu-offloading-gpt-oss-120b
+spec:
+  model:
+    name:
+      - openai/gpt-oss-120b
+  deployment_profile:
+    - rhoai-distributed-default
+    - rhoai-cpu-kv-offload-24g
+  benchmark_profile:
+    - cpu-offloading-short-context
+    - cpu-offloading-long-output
+    - cpu-offloading-long-context
+  overrides:
+    benchmark:
+      request_type: text_completions
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H200
+      offload_type: cpu-kv
+  namespace: benchflow
+  execution:
+    timeout: 8h
