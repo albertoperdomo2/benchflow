@@ -16,10 +16,14 @@ spec:
   overrides:
     benchmark:
       request_type: text_completions
+    runtime:
+      placement:
+        mode: same-node
+        spread_pool: cpu-offloading
   metrics_profile: detailed
   mlflow:
     tags:
-      accelerator: H200
+      accelerator: H100
       offload_type: cpu-kv
   namespace: benchflow
   execution:

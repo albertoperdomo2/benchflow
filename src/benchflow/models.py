@@ -291,6 +291,7 @@ class OverrideRuntimeSpec:
     env: dict[str, str] = field(default_factory=dict)
     node_selector: dict[str, str] | None = None
     affinity: dict[str, Any] | None = None
+    placement: "RuntimePlacementSpec | None" = None
     tolerations: list[dict[str, Any]] | None = None
     resources: "RuntimeResourcesSpec | None" = None
 
@@ -356,6 +357,12 @@ class RuntimeResourcesSpec:
 
 
 @dataclass(slots=True)
+class RuntimePlacementSpec:
+    mode: str = ""
+    spread_pool: str = ""
+
+
+@dataclass(slots=True)
 class RuntimeSpec:
     image: str = ""
     replicas: int = 1
@@ -364,6 +371,7 @@ class RuntimeSpec:
     env: dict[str, str] = field(default_factory=dict)
     node_selector: dict[str, str] = field(default_factory=dict)
     affinity: dict[str, Any] = field(default_factory=dict)
+    placement: RuntimePlacementSpec = field(default_factory=RuntimePlacementSpec)
     tolerations: list[dict[str, Any]] = field(default_factory=list)
     image_pull_secrets: list[dict[str, str]] = field(default_factory=list)
     resources: RuntimeResourcesSpec = field(default_factory=RuntimeResourcesSpec)

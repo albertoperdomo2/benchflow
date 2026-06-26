@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,79 @@ RAHIIS_PROGRESS_DEADLINE_SECONDS = 1800
 
 
 def _base_labels(plan: ResolvedRunPlan) -> dict[str, str]:
-    return {
+    labels = {
         "app.kubernetes.io/name": "benchflow",
         "benchflow.io/experiment": plan.metadata.name,
         "benchflow.io/platform": plan.deployment.platform,
         "benchflow.io/mode": plan.deployment.mode,
     }
+    placement = plan.deployment.runtime.placement
+    if placement.mode == "same-node":
+        labels["benchflow.io/placement-pool"] = placement.spread_pool
+        labels["benchflow.io/placement-group"] = plan.deployment.release_name
+    return labels
+
+
+def _append_affinity_terms(
+    affinity: dict[str, Any], section: str, key: str, terms: list[dict[str, Any]]
+) -> None:
+    pod_affinity = affinity.setdefault(section, {})
+    existing = pod_affinity.get(key)
+    if existing is None:
+        pod_affinity[key] = terms
+        return
+    if isinstance(existing, list):
+        existing.extend(terms)
+        return
+    raise ValidationError(f"runtime.affinity.{section}.{key} must be a list")
+
+
+def _runtime_affinity(plan: ResolvedRunPlan) -> dict[str, Any]:
+    affinity = deepcopy(plan.deployment.runtime.affinity)
+    placement = plan.deployment.runtime.placement
+    if placement.mode != "same-node":
+        return affinity
+
+    release_name = plan.deployment.release_name
+    placement_pool = placement.spread_pool
+    _append_affinity_terms(
+        affinity,
+        "podAffinity",
+        "requiredDuringSchedulingIgnoredDuringExecution",
+        [
+            {
+                "topologyKey": "kubernetes.io/hostname",
+                "labelSelector": {
+                    "matchLabels": {
+                        "benchflow.io/placement-group": release_name,
+                    },
+                },
+            }
+        ],
+    )
+    _append_affinity_terms(
+        affinity,
+        "podAntiAffinity",
+        "requiredDuringSchedulingIgnoredDuringExecution",
+        [
+            {
+                "topologyKey": "kubernetes.io/hostname",
+                "labelSelector": {
+                    "matchLabels": {
+                        "benchflow.io/placement-pool": placement_pool,
+                    },
+                    "matchExpressions": [
+                        {
+                            "key": "benchflow.io/placement-group",
+                            "operator": "NotIn",
+                            "values": [release_name],
+                        }
+                    ],
+                },
+            }
+        ],
+    )
+    return affinity
 
 
 def _validate_rhoai_profiling(plan: ResolvedRunPlan) -> None:
@@ -240,7 +308,7 @@ def _rhoai_llminferenceservice_template_context(
         "runtime_args": _rhoai_vllm_args(plan),
         "runtime_env": _rhoai_runtime_env(plan),
         "runtime_node_selector": plan.deployment.runtime.node_selector,
-        "runtime_affinity": plan.deployment.runtime.affinity,
+        "runtime_affinity": _runtime_affinity(plan),
         "runtime_tolerations": plan.deployment.runtime.tolerations,
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
@@ -278,7 +346,7 @@ def _rhoai_inferenceservice_template_context(plan: ResolvedRunPlan) -> dict[str,
         "runtime_args": _rhoai_basic_vllm_args(plan),
         "runtime_env": _rhoai_basic_runtime_env(plan),
         "runtime_node_selector": plan.deployment.runtime.node_selector,
-        "runtime_affinity": plan.deployment.runtime.affinity,
+        "runtime_affinity": _runtime_affinity(plan),
         "runtime_tolerations": plan.deployment.runtime.tolerations,
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),

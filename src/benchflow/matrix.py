@@ -233,6 +233,12 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                                 is not None
                                 else None
                             ),
+                            placement=(
+                                deepcopy(experiment.spec.overrides.runtime.placement)
+                                if experiment.spec.overrides.runtime.placement
+                                is not None
+                                else None
+                            ),
                             tolerations=(
                                 list(experiment.spec.overrides.runtime.tolerations)
                                 if experiment.spec.overrides.runtime.tolerations

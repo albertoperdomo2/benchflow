@@ -35,6 +35,7 @@ from .models import (
     ProfileRefs,
     ResolvedDeployment,
     ResolvedRunPlan,
+    RuntimePlacementSpec,
     RuntimeResourcesSpec,
     RuntimeSpec,
     StageSpec,
@@ -237,6 +238,26 @@ def _runtime_resources_from_dict(
     )
 
 
+def _runtime_placement_from_dict(
+    raw: dict[str, Any] | None, field_name: str
+) -> RuntimePlacementSpec:
+    if raw is None:
+        return RuntimePlacementSpec()
+    if not isinstance(raw, dict):
+        raise ValidationError(f"{field_name} must be a mapping")
+    mode = str(raw.get("mode", "") or "").strip()
+    spread_pool = str(raw.get("spread_pool", "") or "").strip()
+    if mode and mode != "same-node":
+        raise ValidationError(f"{field_name}.mode must be 'same-node'")
+    if mode == "same-node" and not spread_pool:
+        raise ValidationError(
+            f"{field_name}.spread_pool is required when mode is 'same-node'"
+        )
+    if spread_pool and not mode:
+        raise ValidationError(f"{field_name}.mode is required when spread_pool is set")
+    return RuntimePlacementSpec(mode=mode, spread_pool=spread_pool)
+
+
 def _mapping_list(raw: Any, field_name: str) -> list[dict[str, Any]]:
     if raw is None:
         return []
@@ -304,6 +325,13 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
             affinity=(
                 _mapping(runtime.get("affinity"), "spec.overrides.runtime.affinity")
                 if "affinity" in runtime
+                else None
+            ),
+            placement=(
+                _runtime_placement_from_dict(
+                    runtime.get("placement"), "spec.overrides.runtime.placement"
+                )
+                if "placement" in runtime
                 else None
             ),
             tolerations=(
@@ -418,6 +446,9 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
             raw.get("node_selector"), "spec.runtime.node_selector"
         ),
         affinity=_mapping(raw.get("affinity"), "spec.runtime.affinity"),
+        placement=_runtime_placement_from_dict(
+            raw.get("placement"), "spec.runtime.placement"
+        ),
         tolerations=_mapping_list(raw.get("tolerations"), "spec.runtime.tolerations"),
         image_pull_secrets=_local_object_reference_list(
             image_pull_secrets, "spec.runtime.image_pull_secrets"

@@ -316,6 +316,11 @@ def resolve_run_plan(
             if experiment.spec.overrides.runtime.affinity is not None
             else deepcopy(deployment_profile.spec.runtime.affinity)
         ),
+        placement=(
+            deepcopy(experiment.spec.overrides.runtime.placement)
+            if experiment.spec.overrides.runtime.placement is not None
+            else deepcopy(deployment_profile.spec.runtime.placement)
+        ),
         tolerations=(
             deepcopy(experiment.spec.overrides.runtime.tolerations)
             if experiment.spec.overrides.runtime.tolerations is not None
@@ -329,6 +334,10 @@ def resolve_run_plan(
             )
         ),
     )
+    if runtime.placement.mode and deployment_profile.spec.platform != "rhoai":
+        raise ValidationError(
+            "runtime.placement is currently supported only for rhoai deployments"
+        )
     _validate_profiling_support(
         platform=deployment_profile.spec.platform,
         profiling_enabled=experiment.spec.execution.profiling.enabled,

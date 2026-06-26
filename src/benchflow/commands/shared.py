@@ -334,6 +334,11 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 if base_experiment.spec.overrides.runtime.affinity is not None
                 else None
             ),
+            placement=(
+                base_experiment.spec.overrides.runtime.placement
+                if base_experiment.spec.overrides.runtime.placement is not None
+                else None
+            ),
             tolerations=(
                 list(base_experiment.spec.overrides.runtime.tolerations)
                 if base_experiment.spec.overrides.runtime.tolerations is not None
