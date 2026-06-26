@@ -17,9 +17,18 @@ spec:
     benchmark:
       request_type: text_completions
     runtime:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  kserve.io/component: workload
+              matchLabelKeys:
+                - app.kubernetes.io/name
       placement:
-        mode: same-node
-        spread_pool: cpu-offloading
+        mode: sequential
   metrics_profile: detailed
   mlflow:
     tags:

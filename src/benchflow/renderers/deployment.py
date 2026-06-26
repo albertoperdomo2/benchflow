@@ -38,7 +38,9 @@ def _append_affinity_terms(
         pod_affinity[key] = terms
         return
     if isinstance(existing, list):
-        existing.extend(terms)
+        for term in terms:
+            if term not in existing:
+                existing.append(term)
         return
     raise ValidationError(f"runtime.affinity.{section}.{key} must be a list")
 
@@ -46,7 +48,7 @@ def _append_affinity_terms(
 def _runtime_affinity(plan: ResolvedRunPlan) -> dict[str, Any]:
     affinity = deepcopy(plan.deployment.runtime.affinity)
     placement = plan.deployment.runtime.placement
-    if placement.mode != "same-node":
+    if placement.mode not in {"same-node", "sequential"}:
         return affinity
 
     # LLMInferenceService exposes only a PodSpec template, not PodTemplate metadata,
@@ -77,7 +79,11 @@ def _runtime_affinity(plan: ResolvedRunPlan) -> dict[str, Any]:
         "requiredDuringSchedulingIgnoredDuringExecution",
         [
             {
-                "topologyKey": "kubernetes.io/hostname",
+                "topologyKey": (
+                    "kubernetes.io/os"
+                    if placement.mode == "sequential"
+                    else "kubernetes.io/hostname"
+                ),
                 "labelSelector": {
                     "matchLabels": workload_selector,
                 },

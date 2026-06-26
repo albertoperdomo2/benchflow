@@ -416,7 +416,16 @@ def run_matrix_supervisor(
             plans[0],
             context=ExecutionContext(state_path=setup_state_path),
         )
-    submit_children_in_parallel = matrix_platform in {"llm-d", "rhoai"}
+    sequential_placement = any(
+        plan.deployment.runtime.placement.mode == "sequential" for plan in plans
+    )
+    submit_children_in_parallel = (
+        matrix_platform in {"llm-d", "rhoai"} and not sequential_placement
+    )
+    if sequential_placement:
+        detail(
+            "Sequential placement requested; child executions will run one at a time"
+        )
     if parent_execution_name:
         parent_payload = _TEKTON.get(
             plans[0].deployment.namespace,
