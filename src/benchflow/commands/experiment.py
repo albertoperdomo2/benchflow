@@ -34,6 +34,9 @@ from .shared import (
 )
 
 
+TARGET_KUBECONFIG_SECRET_LABEL = "benchflow.io/target-kubeconfig-secret"
+
+
 def _namespace_from_args(args: argparse.Namespace) -> str:
     return args.namespace or get_current_namespace()
 
@@ -192,6 +195,33 @@ def _execution_run_plan(namespace: str, execution_name: str):
     return load_run_plan_data(run_plan_payload)
 
 
+def _rerun_target_kubeconfig_secret(
+    args: argparse.Namespace, parent_labels: dict[str, object]
+) -> str:
+    cluster_name = str(getattr(args, "cluster_name", "") or "").strip()
+    target_kubeconfig_secret = str(
+        getattr(args, "target_kubeconfig_secret", "") or ""
+    ).strip()
+    target_kubeconfig = getattr(args, "target_kubeconfig", None)
+    if cluster_name and (target_kubeconfig or target_kubeconfig_secret):
+        raise CommandError(
+            "--cluster-name cannot be combined with --target-kubeconfig or "
+            "--target-kubeconfig-secret"
+        )
+    if cluster_name:
+        return cluster_name
+    if target_kubeconfig_secret:
+        return target_kubeconfig_secret
+    return str(parent_labels.get(TARGET_KUBECONFIG_SECRET_LABEL) or "").strip()
+
+
+def _apply_rerun_target_cluster(plan, target_kubeconfig_secret: str) -> None:
+    if not target_kubeconfig_secret:
+        return
+    plan.target_cluster.kubeconfig = ""
+    plan.target_cluster.kubeconfig_secret = target_kubeconfig_secret
+
+
 def _rerun_execution(args: argparse.Namespace) -> int:
     namespace = _namespace_from_args(args)
     execution_ref = str(args.experiment or "").strip()
@@ -204,6 +234,7 @@ def _rerun_execution(args: argparse.Namespace) -> int:
 
     payload = get_execution(namespace, execution_ref)
     labels = (payload.get("metadata", {}) or {}).get("labels", {}) or {}
+    target_kubeconfig_secret = _rerun_target_kubeconfig_secret(args, labels)
     is_matrix = (
         str(labels.get("benchflow.io/platform") or "").strip() == "matrix"
         and str(labels.get("benchflow.io/mode") or "").strip() == "matrix"
@@ -215,6 +246,7 @@ def _rerun_execution(args: argparse.Namespace) -> int:
                 f"execution {execution_ref} does not match --status {args.status}"
             )
         plan = _execution_run_plan(namespace, execution_ref)
+        _apply_rerun_target_cluster(plan, target_kubeconfig_secret)
         manifest = render_execution_manifest(
             plan,
             execution_name=_pipeline_ref_name(payload) or args.pipeline_name,
@@ -262,6 +294,8 @@ def _rerun_execution(args: argparse.Namespace) -> int:
         _pipeline_param_value(payload, "CHILD_PIPELINE_NAME") or "benchflow-e2e"
     )
     plans = [plan for _, plan in matching_children]
+    for plan in plans:
+        _apply_rerun_target_cluster(plan, target_kubeconfig_secret)
     if len(plans) == 1:
         manifest = render_execution_manifest(
             plans[0],
