@@ -39,6 +39,7 @@ DATA_PROFILE_PREFERRED_ORDER = [
 ]
 
 THROUGHPUT_TOTAL_LEGEND = "legend20"
+PROMETHEUS_LEGEND_START_INDEX = 100
 
 
 def _get_nested(d: Dict[str, Any], *keys: str, default: Any = None) -> Any:
@@ -510,6 +511,7 @@ class BenchmarkProcessor:
         include_total_throughput: bool = False,
         baseline_version: Optional[str] = None,
         include_plotlyjs: bool = True,
+        comparison_metric_panels: Optional[List[Any]] = None,
     ):
         """
         Initialize the benchmark processor.
@@ -539,6 +541,7 @@ class BenchmarkProcessor:
             include_total_throughput: Render dashed total-throughput overlay in throughput charts (optional)
             baseline_version: Optional composed version name to use as the comparison-table baseline
             include_plotlyjs: Inline Plotly JS in the generated HTML (optional)
+            comparison_metric_panels: Extra full-width Prometheus metric panels
         """
         self.json_path = json_path
         self.config_path = config_path
@@ -557,6 +560,7 @@ class BenchmarkProcessor:
             str(baseline_version).strip() if baseline_version is not None else None
         ) or None
         self.include_plotlyjs = include_plotlyjs
+        self.comparison_metric_panels = list(comparison_metric_panels or [])
         self.notes = [str(note).strip() for note in (notes or []) if str(note).strip()]
 
         # Data profile parameters
@@ -1428,12 +1432,68 @@ class BenchmarkProcessor:
             total_rows = 8
             row_heights = [1.8, 1.5, 1.5, 1.0, 1.0, 1.0, 1.0, 1.0]
 
+        section_spacer_before = {4, 7, 8, 9} if has_ttft_distribution else {4, 6, 7, 8}
+        row_map: dict[int, int] = {}
+        mapped_specs: list[list[Any]] = []
+        mapped_row_heights: list[float] = []
+        for logical_row, (spec_row, row_height) in enumerate(
+            zip(specs, row_heights, strict=True),
+            start=1,
+        ):
+            if logical_row in section_spacer_before:
+                mapped_specs.append([None, None, None])
+                mapped_row_heights.append(0.24)
+            mapped_specs.append(spec_row)
+            mapped_row_heights.append(row_height)
+            row_map[logical_row] = len(mapped_specs)
+
+        specs = mapped_specs
+        row_heights = mapped_row_heights
+        total_rows = len(specs)
+
+        def _plot_row(logical_row: int) -> int:
+            return row_map.get(logical_row, logical_row)
+
+        base_total_rows = total_rows
+        metric_start_row = total_rows + 2 if self.comparison_metric_panels else None
+        if self.comparison_metric_panels:
+            specs.append([None, None, None])
+            row_heights.append(0.28)
+            total_rows += 1
+        for panel in self.comparison_metric_panels:
+            panel_title = html.escape(str(getattr(panel, "title", "") or "Metric"))
+            panel_description = html.escape(
+                str(getattr(panel, "description", "") or "")
+            )
+            specs.append([{"colspan": 3}, None, None])
+            subplot_titles.append(
+                f"<b>{panel_title}</b>"
+                + (f"<br><sub>{panel_description}</sub>" if panel_description else "")
+            )
+            row_heights.append(1.6)
+            total_rows += 1
+
+        plot_width = 1540 if self.repeat_section_legends else 1440
+        if self.comparison_metric_panels:
+            # Plotly spacing is normalized against the whole figure. Use a
+            # moderate pixel-equivalent gap so subtitles have room without
+            # turning the report into mostly whitespace.
+            plot_height = int(
+                (335 * sum(row_heights)) + (150 if has_ttft_distribution else 60)
+            )
+            vertical_spacing = min(0.038, 130 / max(plot_height, 1))
+        else:
+            plot_height = int(
+                (420 * sum(row_heights)) + (140 if has_ttft_distribution else 0)
+            )
+            vertical_spacing = 0.055
+
         fig = make_subplots(
             rows=total_rows,
             cols=3,
             specs=specs,
             subplot_titles=subplot_titles,
-            vertical_spacing=0.055,
+            vertical_spacing=vertical_spacing,
             horizontal_spacing=0.08,
             row_heights=row_heights,
         )
@@ -1523,10 +1583,11 @@ class BenchmarkProcessor:
             ]
 
         # Plot each metric
-        for row, col, metric_key, x_label, y_label in plot_positions:
+        for logical_row, col, metric_key, x_label, y_label in plot_positions:
             if filtered_data.empty:
                 continue
 
+            row = _plot_row(logical_row)
             plot_data = filtered_data.sort_values(by="intended concurrency")
 
             for group_key, group_data in plot_data.groupby(
@@ -1614,7 +1675,7 @@ class BenchmarkProcessor:
                         showlegend=False,
                         legendgroup=label,
                     ),
-                    row=2,
+                    row=_plot_row(2),
                     col=1,
                 )
 
@@ -1641,7 +1702,7 @@ class BenchmarkProcessor:
                         showlegend=False,
                         legendgroup=label,
                     ),
-                    row=3,
+                    row=_plot_row(3),
                     col=1,
                 )
 
@@ -1700,15 +1761,66 @@ class BenchmarkProcessor:
                         jitter=0.28,
                         whiskerwidth=0.6,
                     ),
-                    row=4,
+                    row=_plot_row(4),
                     col=1,
                 )
             fig.update_xaxes(
                 categoryorder="array",
                 categoryarray=distribution_categories,
-                row=4,
+                row=_plot_row(4),
                 col=1,
             )
+
+        if metric_start_row is not None:
+            prometheus_legend_rows: list[tuple[str, int, str]] = []
+            for panel_index, panel in enumerate(self.comparison_metric_panels):
+                row = metric_start_row + panel_index
+                legend_name = f"legend{PROMETHEUS_LEGEND_START_INDEX + panel_index}"
+                prometheus_legend_rows.append(
+                    (
+                        legend_name,
+                        row,
+                        str(getattr(panel, "title", "") or "Metric"),
+                    )
+                )
+                traces = list(getattr(panel, "traces", []) or [])
+                if not traces:
+                    fig.add_annotation(
+                        text="No archived series found for this metric",
+                        x=0.5,
+                        y=sum(fig.get_subplot(row, 1).yaxis.domain) / 2,
+                        xref="paper",
+                        yref="paper",
+                        showarrow=False,
+                        font={"size": 12, "color": "#667085"},
+                    )
+                    continue
+                for metric_trace_index, trace in enumerate(traces):
+                    color = REPORT_COLOR_PALETTE[
+                        metric_trace_index % len(REPORT_COLOR_PALETTE)
+                    ]
+                    trace_name = str(getattr(trace, "name", "series"))
+                    fig.add_trace(
+                        go.Scatter(
+                            x=list(getattr(trace, "x", []) or []),
+                            y=list(getattr(trace, "y", []) or []),
+                            mode="lines",
+                            name=trace_name,
+                            legend=legend_name,
+                            line=dict(color=color, width=2),
+                            showlegend=True,
+                            legendgroup=f"{legend_name}:{trace_name}",
+                            hovertemplate=(
+                                "<b>%{fullData.name}</b><br>"
+                                "Run progress: %{x:.2f} min<br>"
+                                "%{y:.4g}<extra></extra>"
+                            ),
+                        ),
+                        row=row,
+                        col=1,
+                    )
+        else:
+            prometheus_legend_rows = []
 
         if has_ttft_distribution:
             axis_labels = [
@@ -1772,7 +1884,19 @@ class BenchmarkProcessor:
                 (8, 3, axis_label, "P99 (s)"),
             ]
 
+        if metric_start_row is not None:
+            for panel_index, panel in enumerate(self.comparison_metric_panels):
+                axis_labels.append(
+                    (
+                        metric_start_row + panel_index,
+                        1,
+                        "Run progress (min)",
+                        str(getattr(panel, "yaxis_title", "") or "Value"),
+                    )
+                )
+
         for row, col, x_label, y_label in axis_labels:
+            row = _plot_row(row)
             fig.update_xaxes(title_text=x_label, row=row, col=col)
             fig.update_yaxes(title_text=y_label, row=row, col=col)
 
@@ -1829,7 +1953,7 @@ class BenchmarkProcessor:
                         title={"text": "<b>Optional</b>"},
                         orientation="v",
                         yanchor="top",
-                        y=_row_top(1) - 0.015,
+                        y=_row_top(_plot_row(1)) - 0.015,
                         xanchor="left",
                         x=0.012,
                         bordercolor="#cbd5e1",
@@ -1842,40 +1966,53 @@ class BenchmarkProcessor:
                 }
             )
 
+        for legend_name, row, title in prometheus_legend_rows:
+            fig.update_layout(
+                **{
+                    legend_name: dict(
+                        title={"text": f"<b>{html.escape(title)}</b>"},
+                        orientation="v",
+                        yanchor="top",
+                        y=_row_top(row),
+                        xanchor="left",
+                        x=1.01,
+                        borderwidth=0,
+                        bgcolor="rgba(255,255,255,0.94)",
+                        font={"size": 10},
+                        title_font=legend_title_font,
+                        groupclick="togglegroup",
+                    )
+                }
+            )
+
         legend_positions = [
-            ("legend", _row_top(1)),
-            ("legend2", _row_top(2)),
-            ("legend3", _row_top(3)),
+            ("legend", _row_top(_plot_row(1))),
+            ("legend2", _row_top(_plot_row(2))),
+            ("legend3", _row_top(_plot_row(3))),
         ]
         if has_ttft_distribution:
             legend_positions.extend(
                 [
-                    ("legend4", _row_top(4)),
-                    ("legend5", _row_top(5)),
-                    ("legend6", _row_top(7)),
-                    ("legend7", _row_top(8)),
-                    ("legend8", _row_top(9)),
+                    ("legend4", _row_top(_plot_row(4))),
+                    ("legend5", _row_top(_plot_row(5))),
+                    ("legend6", _row_top(_plot_row(7))),
+                    ("legend7", _row_top(_plot_row(8))),
+                    ("legend8", _row_top(_plot_row(9))),
                 ]
             )
         else:
             legend_positions.extend(
                 [
-                    ("legend4", _row_top(4)),
-                    ("legend5", _row_top(6)),
-                    ("legend6", _row_top(7)),
-                    ("legend7", _row_top(8)),
+                    ("legend4", _row_top(_plot_row(4))),
+                    ("legend5", _row_top(_plot_row(6))),
+                    ("legend6", _row_top(_plot_row(7))),
+                    ("legend7", _row_top(_plot_row(8))),
                 ]
             )
 
         if self.repeat_section_legends and legend_labels:
             for legend_name, y_top in legend_positions:
                 _build_repeated_legend(legend_name, y_top)
-
-        # Calculate dimensions
-        plot_width = 1540 if self.repeat_section_legends else 1440
-        plot_height = int(
-            (420 * sum(row_heights)) + (140 if has_ttft_distribution else 0)
-        )
 
         model_short_name = model_config["model"].split("/")[-1]
 
@@ -1935,7 +2072,11 @@ class BenchmarkProcessor:
             title_lines.append(
                 f"<span style='font-size:12px;'>{label}{html.escape(note)}</span>"
             )
-        top_margin = 90 + (len(title_lines) * 24)
+        top_margin = (
+            230 + (len(title_lines) * 28)
+            if self.comparison_metric_panels
+            else 90 + (len(title_lines) * 24)
+        )
 
         fig.update_layout(
             title={
@@ -1987,18 +2128,59 @@ class BenchmarkProcessor:
         # Add centered section titles as separators between metric groups.
         if has_ttft_distribution:
             annotations = [
-                _section_divider("<b>— Time To First Token (TTFT) —</b>", 3, 4),
-                _section_divider("<b>— Time Per Output Token (TPOT) —</b>", 6, 7),
-                _section_divider("<b>— Inter-Token Latency (ITL) —</b>", 7, 8),
-                _section_divider("<b>— End-to-End Request Latency —</b>", 8, 9),
+                _section_divider(
+                    "<b>— Time To First Token (TTFT) —</b>",
+                    _plot_row(3),
+                    _plot_row(4),
+                ),
+                _section_divider(
+                    "<b>— Time Per Output Token (TPOT) —</b>",
+                    _plot_row(6),
+                    _plot_row(7),
+                ),
+                _section_divider(
+                    "<b>— Inter-Token Latency (ITL) —</b>",
+                    _plot_row(7),
+                    _plot_row(8),
+                ),
+                _section_divider(
+                    "<b>— End-to-End Request Latency —</b>",
+                    _plot_row(8),
+                    _plot_row(9),
+                ),
             ]
         else:
             annotations = [
-                _section_divider("<b>— Time To First Token (TTFT) —</b>", 3, 4),
-                _section_divider("<b>— Time Per Output Token (TPOT) —</b>", 5, 6),
-                _section_divider("<b>— Inter-Token Latency (ITL) —</b>", 6, 7),
-                _section_divider("<b>— End-to-End Request Latency —</b>", 7, 8),
+                _section_divider(
+                    "<b>— Time To First Token (TTFT) —</b>",
+                    _plot_row(3),
+                    _plot_row(4),
+                ),
+                _section_divider(
+                    "<b>— Time Per Output Token (TPOT) —</b>",
+                    _plot_row(5),
+                    _plot_row(6),
+                ),
+                _section_divider(
+                    "<b>— Inter-Token Latency (ITL) —</b>",
+                    _plot_row(6),
+                    _plot_row(7),
+                ),
+                _section_divider(
+                    "<b>— End-to-End Request Latency —</b>",
+                    _plot_row(7),
+                    _plot_row(8),
+                ),
             ]
+
+        if metric_start_row is not None:
+            annotations.append(
+                _section_divider(
+                    "<b>— Prometheus Metrics —</b>",
+                    base_total_rows,
+                    metric_start_row,
+                )
+            )
 
         fig.update_layout(annotations=list(fig.layout.annotations) + annotations)
 

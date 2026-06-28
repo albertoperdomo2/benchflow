@@ -75,6 +75,17 @@ def _summarize_series(result: list[dict[str, object]]) -> dict[str, object]:
 
 
 def _series_name(metric_name: str, metric_labels: dict[str, object]) -> str:
+    exported_pod = metric_labels.get("exported_pod")
+    if exported_pod:
+        parts = [str(exported_pod)]
+        gpu = metric_labels.get("gpu")
+        device = metric_labels.get("device")
+        if gpu not in {None, ""}:
+            parts.append(f"gpu={gpu}")
+        elif device not in {None, ""}:
+            parts.append(str(device))
+        return " ".join(parts)
+
     preferred = (
         "pod",
         "exported_pod",

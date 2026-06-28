@@ -784,6 +784,9 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         notes=[item.strip() for item in args.note if item.strip()],
         repeat_section_legends=bool(args.repeat_section_legends),
         include_total_throughput=bool(args.total_throughput),
+        metrics_yaml_path=(
+            Path(args.metrics_yaml).resolve() if args.metrics_yaml else None
+        ),
     )
     print(report_path)
     return 0
@@ -1774,6 +1777,14 @@ def _register_comparison_report_options(command):
         help=(
             "Add the dashed total-throughput overlay to the throughput chart. "
             "By default only output throughput is plotted."
+        ),
+    )(command)
+    command = click.option(
+        "--metrics-yaml",
+        type=click.Path(dir_okay=False, exists=True, path_type=Path),
+        help=(
+            "Report-only YAML selecting archived Prometheus metrics to append "
+            "to the comparison report. Requires MLflow runs with metrics artifacts."
         ),
     )(command)
     return command

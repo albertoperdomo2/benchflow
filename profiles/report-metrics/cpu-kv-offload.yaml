@@ -1,0 +1,37 @@
+title: Prometheus Metrics
+metrics:
+  - title: KV cache usage
+    description: GPU KV cache pressure per model-server pod.
+    query: '{__name__=~"(vllm|kserve_vllm):kv_cache_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"}'
+
+  - title: Request preemptions
+    description: vLLM preemption rate; spikes usually mean KV pressure is disrupting scheduling.
+    query: 'rate({__name__=~"(vllm|kserve_vllm):num_preemptions_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])'
+
+  - title: KV offload transfer throughput
+    description: Read/write transfer rate attributed to the vLLM KV offload connector.
+    query: 'sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))'
+
+  - title: KV offload transfer cost
+    description: Seconds spent per GiB transferred; lower values indicate cheaper offload I/O.
+    query: 'sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / 1024 / 1024 / 1024, 0.001)'
+
+  - title: Model server RSS memory
+    description: Resident memory for model-server containers.
+    query: 'container_memory_rss{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="POD", container!=""}'
+
+  - title: GPU utilization
+    description: DCGM GPU utilization for pods participating in the benchmark release.
+    query: 'DCGM_FI_DEV_GPU_UTIL{exported_namespace="$namespace", exported_pod=~".*$release.*"}'
+
+  - title: GPU memory used
+    description: DCGM framebuffer memory used by GPUs participating in the benchmark release.
+    query: 'DCGM_FI_DEV_FB_USED{exported_namespace="$namespace", exported_pod=~".*$release.*"}'
+
+  - title: GPU PCIe transmit throughput
+    description: DCGM PCIe transmit traffic by model-server GPU.
+    query: 'rate({__name__=~"DCGM_FI_PROF_PCIE_TX_BYTES", exported_namespace="$namespace", exported_pod=~"$modelserver_pod_regex"}[5m])'
+
+  - title: GPU PCIe receive throughput
+    description: DCGM PCIe receive traffic by model-server GPU; spikes can indicate KV blocks returning from CPU offload.
+    query: 'rate({__name__=~"DCGM_FI_PROF_PCIE_RX_BYTES", exported_namespace="$namespace", exported_pod=~"$modelserver_pod_regex"}[5m])'

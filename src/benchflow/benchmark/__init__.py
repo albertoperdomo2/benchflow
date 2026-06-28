@@ -104,6 +104,7 @@ def generate_report(
     repeat_section_legends: bool = False,
     include_total_throughput: bool = False,
     baseline_version: str | None = None,
+    metrics_yaml_path: Path | None = None,
 ) -> Path:
     tool = (
         plan.benchmark.tool
@@ -118,6 +119,10 @@ def generate_report(
         if json_path is not None:
             raise ValidationError(
                 "AIPerf comparison reports do not support --json-path; use --mlflow-run-ids"
+            )
+        if metrics_yaml_path is not None:
+            raise ValidationError(
+                "AIPerf comparison reports do not support --metrics-yaml yet"
             )
         if additional_csv_files:
             raise ValidationError(
@@ -150,6 +155,7 @@ def generate_report(
         repeat_section_legends=repeat_section_legends,
         include_total_throughput=include_total_throughput,
         baseline_version=baseline_version,
+        metrics_yaml_path=metrics_yaml_path,
     )
 
 

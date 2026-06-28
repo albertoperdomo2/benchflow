@@ -1329,6 +1329,22 @@ bflow benchmark plot comparison \
 BenchFlow merges the MLflow runs with the additional CSV inputs and generates a
 single combined comparison report.
 
+Insert archived Prometheus metrics into the comparison figure:
+
+```bash
+bflow benchmark plot comparison \
+  --mlflow-run-ids 3f0c1f...,91ab22... \
+  --mlflow-tracking-uri https://mlflow.example.com \
+  --metrics-yaml profiles/report-metrics/cpu-kv-offload.yaml
+```
+
+`--metrics-yaml` is report-only. Each YAML metric provides a PromQL `query`
+that must match one query already collected by the run's metrics profile and
+stored in `metrics/resolved_queries.json`. BenchFlow then plots the archived
+series from `metrics/raw/*.json` as full-width rows in the main comparison
+figure. It does not query Prometheus live, so new queries cannot be invented
+after the run.
+
 Write the report under a specific directory:
 
 ```bash
@@ -1357,6 +1373,7 @@ Useful notes:
 - `--versions` narrows the compared version set
 - `--version-override` renames version labels in the final report
 - `--additional-csv` lets you mix MLflow runs with local CSV inputs
+- `--metrics-yaml` inserts archived Prometheus metric rows when the runs include metrics artifacts
 - `--output-file` overrides `--output-dir` when both are set
 - the command prints the resulting HTML report path when it succeeds
 

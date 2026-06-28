@@ -17,6 +17,7 @@ from mlflow.store.artifact.artifact_repository_registry import get_artifact_repo
 from ..mlflow_compat import configure_mlflow_tracking, create_mlflow_client
 from ..ui import configure_logging, emit
 from .cli_args import render_cli_args
+from .comparison_metrics import build_comparison_metric_panels
 
 # Disable SSL warnings if using self-signed certificates
 if os.environ.get("MLFLOW_TRACKING_INSECURE_TLS", "false").lower() == "true":
@@ -1435,6 +1436,7 @@ def fetch_mlflow_runs(run_ids: list, mlflow_tracking_uri: str = None) -> list:
                     "run_id": run_id,
                     "params": params,
                     "tags": tags,
+                    "artifact_uri": run.info.artifact_uri,
                     "composed_version": composed_version,
                     "benchmark_data": benchmark_data,
                     "artifact_path": combined_json_path,
@@ -1534,6 +1536,7 @@ def generate_plot_only_report(
     repeat_section_legends: bool = False,
     include_total_throughput: bool = False,
     baseline_version: str | None = None,
+    metrics_yaml_path: str | None = None,
 ) -> str:
     """
     Generate HTML report from existing MLflow runs without running benchmarks.
@@ -1550,6 +1553,7 @@ def generate_plot_only_report(
         repeat_section_legends: Repeat side legends per section for screenshots
         include_total_throughput: Render dashed total-throughput overlay in throughput charts
         baseline_version: Optional composed version name to use as the comparison-table baseline
+        metrics_yaml_path: Optional report-metrics YAML path for archived Prometheus plots
 
     Returns:
         Path to generated HTML report
@@ -1789,6 +1793,14 @@ def generate_plot_only_report(
                     combined_ttft_distribution_df["version"] == old_ver, "version"
                 ] = new_ver
 
+    comparison_metric_panels = []
+    if metrics_yaml_path:
+        comparison_metric_panels = build_comparison_metric_panels(
+            metrics_yaml_path=Path(metrics_yaml_path),
+            runs_data=runs_data,
+            version_overrides=versions_override,
+        )
+
     # Remove the temporary source column before generating report
     if "_data_source" in final_df.columns:
         final_df = final_df.drop(columns=["_data_source"])
@@ -1832,6 +1844,7 @@ def generate_plot_only_report(
         repeat_section_legends=repeat_section_legends,
         include_total_throughput=include_total_throughput,
         baseline_version=baseline_version,
+        comparison_metric_panels=comparison_metric_panels,
     )
 
     # Override with our merged and filtered data
@@ -1921,6 +1934,7 @@ def _run_plot_only_mode(
     additional_csv_files: tuple[str, ...],
     versions_override_values: tuple[str, ...],
     baseline_version: str | None,
+    metrics_yaml_path: str | None,
 ) -> int:
     logger.info("Plot-only mode enabled")
 
@@ -1959,6 +1973,7 @@ def _run_plot_only_mode(
             additional_csv_files=list(additional_csv_files) or None,
             versions_override=versions_override,
             baseline_version=baseline_version,
+            metrics_yaml_path=metrics_yaml_path,
         )
 
         if html_report:
@@ -2213,6 +2228,15 @@ def _run_benchmark_mode(
         "Repeat to set multiple files. Only for --plot-only mode."
     ),
 )
+@click.option(
+    "--metrics-yaml",
+    "metrics_yaml_path",
+    type=click.Path(dir_okay=False, path_type=str),
+    help=(
+        "Report-only YAML selecting archived Prometheus metrics to append to "
+        "comparison reports. Only for --plot-only mode."
+    ),
+)
 def cli(
     target: str | None,
     model: str | None,
@@ -2242,6 +2266,7 @@ def cli(
     baseline_version: str | None,
     versions_override_values: tuple[str, ...],
     additional_csv_files: tuple[str, ...],
+    metrics_yaml_path: str | None,
 ) -> int:
     if plot_only:
         if not mlflow_run_ids:
@@ -2255,6 +2280,7 @@ def cli(
             additional_csv_files=additional_csv_files,
             versions_override_values=versions_override_values,
             baseline_version=baseline_version,
+            metrics_yaml_path=metrics_yaml_path,
         )
 
     missing = []
