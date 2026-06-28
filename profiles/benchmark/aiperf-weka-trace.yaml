@@ -9,7 +9,8 @@ spec:
   requirements:
     min_max_model_len: 131072
   aiperf:
-    public_dataset: semianalysis_cc_traces_weka_with_subagents
+    public_dataset: weka_hf
+    hf_weka_repo: semianalysisai/cc-traces-weka-061526
     endpoint_type: chat
     endpoint_path: /v1/chat/completions
     streaming: true
