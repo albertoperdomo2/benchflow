@@ -1,0 +1,39 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: cpu-offloading-gpt-oss-120b
+spec:
+  model:
+    name:
+      - Qwen/Qwen3-32B
+  deployment_profile:
+    - rhoai-distributed-default
+    - rhoai-cpu-kv-offload-24g
+  benchmark_profile:
+    - cpu-offloading-short-context
+    - cpu-offloading-long-output
+    - cpu-offloading-long-context
+  overrides:
+    runtime:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  kserve.io/component: workload
+              matchLabelKeys:
+                - app.kubernetes.io/name
+      placement:
+        mode: sequential
+  metrics_profile: detailed
+  target:
+    endpoint_scope: internal
+  mlflow:
+    tags:
+      accelerator: H100
+      offload_type: cpu-kv
+  namespace: benchflow
+  execution:
+    timeout: 8h

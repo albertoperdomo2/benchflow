@@ -12,7 +12,7 @@ spec:
     pvc_name: models-storage
     cache_dir: /models
   runtime:
-    replicas: 4
+    replicas: 1
     tensor_parallelism: 2
     env:
       USER: benchflow
