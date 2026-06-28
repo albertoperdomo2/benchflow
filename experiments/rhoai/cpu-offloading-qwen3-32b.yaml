@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: Experiment
 metadata:
-  name: cpu-offloading-gpt-oss-120b
+  name: cpu-offloading-qwen3-32b
 spec:
   model:
     name:
