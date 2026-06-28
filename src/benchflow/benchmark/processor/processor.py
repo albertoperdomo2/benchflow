@@ -1432,24 +1432,27 @@ class BenchmarkProcessor:
             total_rows = 8
             row_heights = [1.8, 1.5, 1.5, 1.0, 1.0, 1.0, 1.0, 1.0]
 
-        section_spacer_before = {4, 7, 8, 9} if has_ttft_distribution else {4, 6, 7, 8}
         row_map: dict[int, int] = {}
-        mapped_specs: list[list[Any]] = []
-        mapped_row_heights: list[float] = []
-        for logical_row, (spec_row, row_height) in enumerate(
-            zip(specs, row_heights, strict=True),
-            start=1,
-        ):
-            if logical_row in section_spacer_before:
-                mapped_specs.append([None, None, None])
-                mapped_row_heights.append(0.24)
-            mapped_specs.append(spec_row)
-            mapped_row_heights.append(row_height)
-            row_map[logical_row] = len(mapped_specs)
+        if self.comparison_metric_panels:
+            section_spacer_before = (
+                {4, 7, 8, 9} if has_ttft_distribution else {4, 6, 7, 8}
+            )
+            mapped_specs: list[list[Any]] = []
+            mapped_row_heights: list[float] = []
+            for logical_row, (spec_row, row_height) in enumerate(
+                zip(specs, row_heights, strict=True),
+                start=1,
+            ):
+                if logical_row in section_spacer_before:
+                    mapped_specs.append([None, None, None])
+                    mapped_row_heights.append(0.24)
+                mapped_specs.append(spec_row)
+                mapped_row_heights.append(row_height)
+                row_map[logical_row] = len(mapped_specs)
 
-        specs = mapped_specs
-        row_heights = mapped_row_heights
-        total_rows = len(specs)
+            specs = mapped_specs
+            row_heights = mapped_row_heights
+            total_rows = len(specs)
 
         def _plot_row(logical_row: int) -> int:
             return row_map.get(logical_row, logical_row)
