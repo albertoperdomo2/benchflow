@@ -14,7 +14,8 @@ spec:
     endpoint_path: /v1/chat/completions
     streaming: true
     fixed_schedule: true
-    synthesis_max_isl: 131072
+    # Filter whole Weka traces by peak input + requested output context.
+    max_context_length: 131072
     max_seconds: 7200
     # Optional debug exports for broken/truncated streamed responses.
     # export_level: records
