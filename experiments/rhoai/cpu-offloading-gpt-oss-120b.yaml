@@ -7,7 +7,7 @@ spec:
     name:
       - openai/gpt-oss-120b
   deployment_profile:
-    - rhoai-distributed-default
+    - cpu-kv-offload-distributed-default
     - rhoai-cpu-kv-offload-24g
   benchmark_profile:
     - cpu-offloading-short-context

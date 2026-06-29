@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: rhoai-distributed-default
+  name: cpu-kv-offload-distributed-default
 spec:
   platform: rhoai
   mode: distributed-default
@@ -12,7 +12,7 @@ spec:
     pvc_name: models-storage
     cache_dir: /models
   runtime:
-    replicas: 4
+    replicas: 1
     tensor_parallelism: 2
     env:
       USER: benchflow
@@ -20,7 +20,7 @@ spec:
       TORCHINDUCTOR_CACHE_DIR: /tmp/torchinductor
     vllm_args:
       - --max-model-len=8192
-      - --gpu-memory-utilization=0.92
+      - --gpu-memory-utilization=0.7
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching
