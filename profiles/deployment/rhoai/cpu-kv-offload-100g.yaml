@@ -25,5 +25,7 @@ spec:
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
   options:
     enable_auth: false

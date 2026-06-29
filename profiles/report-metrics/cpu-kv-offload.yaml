@@ -16,6 +16,18 @@ metrics:
     description: Seconds spent per GiB transferred; lower values indicate cheaper offload I/O.
     query: 'sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / 1024 / 1024 / 1024, 0.001)'
 
+  - title: KV block lifetime P90
+    description: How long sampled KV blocks remain alive before release or eviction.
+    query: 'histogram_quantile(0.9, sum by (pod, le) (rate({__name__=~"(vllm|kserve_vllm):kv_block_lifetime_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))'
+
+  - title: KV block idle before eviction P90
+    description: Idle time before sampled KV blocks are evicted; longer values imply blocks had residency without reuse.
+    query: 'histogram_quantile(0.9, sum by (pod, le) (rate({__name__=~"(vllm|kserve_vllm):kv_block_idle_before_evict_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))'
+
+  - title: KV block reuse gap P90
+    description: Time between sampled KV block reuses; lower gaps indicate tighter reuse behavior.
+    query: 'histogram_quantile(0.9, sum by (pod, le) (rate({__name__=~"(vllm|kserve_vllm):kv_block_reuse_gap_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))'
+
   - title: Model server RSS memory
     description: Resident memory for model-server containers.
     query: 'container_memory_rss{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="POD", container!=""}'
