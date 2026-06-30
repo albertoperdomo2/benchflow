@@ -1345,6 +1345,26 @@ series from `metrics/raw/*.json` as full-width rows in the main comparison
 figure. It does not query Prometheus live, so new queries cannot be invented
 after the run.
 
+If a metric is useful but not emitted by every runtime image, a report entry may
+define `fallback_metric` and `fallback_series`. BenchFlow uses the fallback only
+when the primary archived metric is missing or empty.
+
+Report metric entries may define optional `reference_lines` to draw static
+horizontal guide lines in the metric's displayed units. This is intended for
+known external limits such as PCIe link bandwidth; no packaged profile enables
+reference lines by default.
+
+```yaml
+metrics:
+  - title: GPU PCIe receive throughput
+    metric: gpu_pcie_rx_bytes_per_second_by_pod
+    yaxis: GB/s
+    reference_lines:
+      - y: 63.0
+        label: PCIe Gen5 x16 theoretical
+        dash: dash
+```
+
 Write the report under a specific directory:
 
 ```bash

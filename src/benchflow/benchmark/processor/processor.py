@@ -39,6 +39,7 @@ DATA_PROFILE_PREFERRED_ORDER = [
 ]
 
 THROUGHPUT_TOTAL_LEGEND = "legend20"
+COMPLETION_LEGEND = "legend30"
 PROMETHEUS_LEGEND_START_INDEX = 100
 
 
@@ -782,7 +783,13 @@ class BenchmarkProcessor:
         successful_reqs = request_totals.get(
             "successful", requests_made.get("successful", 0)
         )
+        incomplete_reqs = request_totals.get(
+            "incomplete", requests_made.get("incomplete", 0)
+        )
         errored_reqs = request_totals.get("errored", requests_made.get("errored", 0))
+        total_reqs = request_totals.get(
+            "total", successful_reqs + incomplete_reqs + errored_reqs
+        )
 
         prompt_tok_metrics = sampled_successful_metrics("prompt_token_count")
         output_tok_metrics = sampled_successful_metrics("output_token_count")
@@ -830,7 +837,9 @@ class BenchmarkProcessor:
             "request_latency_min": request_latency_metrics.get("min"),
             "request_latency_max": request_latency_metrics.get("max"),
             "successful_requests": successful_reqs,
+            "incomplete_requests": incomplete_reqs,
             "errored_requests": errored_reqs,
+            "total_requests": total_reqs,
             "uuid": uuid,
             "ttft_mean": ttft_metrics.get("mean"),
             "ttft_p99": _get_nested(ttft_metrics, "percentiles", "p99"),
@@ -1011,7 +1020,9 @@ class BenchmarkProcessor:
             "request_latency_min",
             "request_latency_max",
             "successful_requests",
+            "incomplete_requests",
             "errored_requests",
+            "total_requests",
             "uuid",
             "ttft_mean",
             "ttft_p99",
@@ -1376,6 +1387,7 @@ class BenchmarkProcessor:
                 [{}, {}, {}],
                 [{}, {}, {}],
                 [{}, {}, {}],
+                [{"colspan": 3}, None, None],
             ]
             subplot_titles = [
                 f"<b>{throughput_title}</b><br><sub>{throughput_subtitle}</sub>",
@@ -1396,9 +1408,10 @@ class BenchmarkProcessor:
                 "<b>E2E Latency P50</b><br><sub>Lower is better</sub>",
                 "<b>E2E Latency P90</b><br><sub>Lower is better</sub>",
                 "<b>E2E Latency P99</b><br><sub>Lower is better</sub>",
+                "<b>Completion Breakdown</b><br><sub>Color=configuration; full color=successful, light tint=incomplete, red tint=errored</sub>",
             ]
-            total_rows = 9
-            row_heights = [1.8, 1.5, 1.5, 1.2, 1.0, 1.0, 1.0, 1.0, 1.0]
+            total_rows = 10
+            row_heights = [1.8, 1.5, 1.5, 1.2, 1.0, 1.0, 1.0, 1.0, 1.0, 1.15]
         else:
             specs = [
                 [{"colspan": 3}, None, None],
@@ -1409,6 +1422,7 @@ class BenchmarkProcessor:
                 [{}, {}, {}],
                 [{}, {}, {}],
                 [{}, {}, {}],
+                [{"colspan": 3}, None, None],
             ]
             subplot_titles = [
                 f"<b>{throughput_title}</b><br><sub>{throughput_subtitle}</sub>",
@@ -1428,14 +1442,15 @@ class BenchmarkProcessor:
                 "<b>E2E Latency P50</b><br><sub>Lower is better</sub>",
                 "<b>E2E Latency P90</b><br><sub>Lower is better</sub>",
                 "<b>E2E Latency P99</b><br><sub>Lower is better</sub>",
+                "<b>Completion Breakdown</b><br><sub>Color=configuration; full color=successful, light tint=incomplete, red tint=errored</sub>",
             ]
-            total_rows = 8
-            row_heights = [1.8, 1.5, 1.5, 1.0, 1.0, 1.0, 1.0, 1.0]
+            total_rows = 9
+            row_heights = [1.8, 1.5, 1.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.15]
 
         row_map: dict[int, int] = {}
         if self.comparison_metric_panels:
             section_spacer_before = (
-                {4, 7, 8, 9} if has_ttft_distribution else {4, 6, 7, 8}
+                {4, 7, 8, 9, 10} if has_ttft_distribution else {4, 6, 7, 8, 9}
             )
             mapped_specs: list[list[Any]] = []
             mapped_row_heights: list[float] = []
@@ -1510,10 +1525,27 @@ class BenchmarkProcessor:
                 "TP",
                 "replicas",
                 "request_latency_median",
+                "successful_requests",
+                "incomplete_requests",
+                "errored_requests",
+                "total_requests",
             ]:
                 filtered_data[column] = pd.to_numeric(
                     filtered_data[column], errors="coerce"
                 )
+            request_count_columns = [
+                "successful_requests",
+                "incomplete_requests",
+                "errored_requests",
+            ]
+            filtered_data[request_count_columns] = filtered_data[
+                request_count_columns
+            ].fillna(0)
+            computed_total_requests = filtered_data[request_count_columns].sum(axis=1)
+            filtered_data["total_requests"] = filtered_data["total_requests"].where(
+                filtered_data["total_requests"].fillna(0) > 0,
+                computed_total_requests,
+            )
             gpu_count = filtered_data["TP"] * filtered_data["replicas"]
             filtered_data["throughput_per_gpu"] = filtered_data["output_tok/sec"] / (
                 gpu_count.replace(0, pd.NA)
@@ -1774,6 +1806,117 @@ class BenchmarkProcessor:
                 col=1,
             )
 
+        completion_row = 10 if has_ttft_distribution else 9
+        completion_statuses = [
+            ("Successful", "successful_requests", "solid"),
+            ("Incomplete", "incomplete_requests", "tint"),
+            ("Errored", "errored_requests", "error"),
+        ]
+        completion_legend_entries: set[str] = set()
+        if not filtered_data.empty:
+            completion_data = filtered_data.dropna(
+                subset=["intended concurrency", "total_requests"]
+            ).copy()
+            completion_data = completion_data[
+                completion_data["total_requests"].fillna(0) > 0
+            ]
+            if not completion_data.empty:
+                completion_data["completion_load"] = completion_data[
+                    "intended concurrency"
+                ].apply(
+                    lambda value: (
+                        str(int(value))
+                        if pd.notna(value) and float(value).is_integer()
+                        else str(value)
+                    )
+                )
+                completion_load_order = [
+                    str(int(value)) if float(value).is_integer() else str(value)
+                    for value in sorted(
+                        pd.to_numeric(
+                            completion_data["intended concurrency"], errors="coerce"
+                        )
+                        .dropna()
+                        .unique()
+                        .tolist()
+                    )
+                ]
+                for group_key, group_data in completion_data.groupby(
+                    ["accelerator", "version", "TP", "replicas"]
+                ):
+                    accelerator, version, tp, replicas = group_key
+                    label = (
+                        f"{accelerator} | {version} | TP={int(tp)} | R={int(replicas)}"
+                    )
+                    offset_group = label
+                    color = config_to_color[label]
+                    for status_label, column, fill_style in completion_statuses:
+                        values = (
+                            group_data[column].fillna(0)
+                            / group_data["total_requests"].replace(0, pd.NA)
+                            * 100.0
+                        )
+                        show_config_legend = label not in completion_legend_entries
+                        if show_config_legend:
+                            completion_legend_entries.add(label)
+                        fig.add_trace(
+                            go.Bar(
+                                x=group_data["completion_load"],
+                                y=values,
+                                name=label,
+                                legend=COMPLETION_LEGEND,
+                                legendgroup=f"completion:{label}",
+                                offsetgroup=offset_group,
+                                marker=dict(
+                                    color=(
+                                        color
+                                        if fill_style == "solid"
+                                        else (
+                                            _hex_to_rgba(color, 0.32)
+                                            if fill_style == "tint"
+                                            else "rgba(217,95,95,0.42)"
+                                        )
+                                    ),
+                                    line=dict(
+                                        color=(
+                                            "white"
+                                            if fill_style == "solid"
+                                            else (
+                                                _hex_to_rgba(color, 0.82)
+                                                if fill_style == "tint"
+                                                else "rgba(217,95,95,0.95)"
+                                            )
+                                        ),
+                                        width=0.8,
+                                    ),
+                                ),
+                                customdata=[
+                                    [label, int(count), int(total)]
+                                    for count, total in zip(
+                                        group_data[column].fillna(0),
+                                        group_data["total_requests"].fillna(0),
+                                        strict=False,
+                                    )
+                                ],
+                                hovertemplate=(
+                                    "<b>%{customdata[0]}</b><br>"
+                                    f"{axis_label}=%{{x}}<br>"
+                                    f"{status_label}=%{{y:.2f}}%<br>"
+                                    "Count=%{customdata[1]}/%{customdata[2]}"
+                                    "<extra></extra>"
+                                ),
+                                showlegend=show_config_legend,
+                            ),
+                            row=_plot_row(completion_row),
+                            col=1,
+                        )
+                fig.update_xaxes(
+                    categoryorder="array",
+                    categoryarray=completion_load_order,
+                    row=_plot_row(completion_row),
+                    col=1,
+                )
+
         if metric_start_row is not None:
             prometheus_legend_rows: list[tuple[str, int, str]] = []
             for panel_index, panel in enumerate(self.comparison_metric_panels):
@@ -1822,6 +1965,31 @@ class BenchmarkProcessor:
                         row=row,
                         col=1,
                     )
+                for reference_line in list(getattr(panel, "reference_lines", []) or []):
+                    line_label = str(getattr(reference_line, "label", "") or "")
+                    hline_kwargs = {}
+                    if line_label:
+                        hline_kwargs = {
+                            "annotation_text": line_label,
+                            "annotation_position": "top left",
+                            "annotation_font_size": 10,
+                            "annotation_font_color": str(
+                                getattr(reference_line, "color", "#64748b") or "#64748b"
+                            ),
+                        }
+                    fig.add_hline(
+                        y=float(getattr(reference_line, "y")),
+                        line_dash=str(
+                            getattr(reference_line, "dash", "dash") or "dash"
+                        ),
+                        line_color=str(
+                            getattr(reference_line, "color", "#64748b") or "#64748b"
+                        ),
+                        line_width=1.5,
+                        row=row,
+                        col=1,
+                        **hline_kwargs,
+                    )
         else:
             prometheus_legend_rows = []
 
@@ -1855,6 +2023,7 @@ class BenchmarkProcessor:
                 (9, 1, axis_label, "P50 (s)"),
                 (9, 2, axis_label, "P90 (s)"),
                 (9, 3, axis_label, "P99 (s)"),
+                (10, 1, axis_label, "Request share (%)"),
             ]
         else:
             axis_labels = [
@@ -1885,6 +2054,7 @@ class BenchmarkProcessor:
                 (8, 1, axis_label, "P50 (s)"),
                 (8, 2, axis_label, "P90 (s)"),
                 (8, 3, axis_label, "P99 (s)"),
+                (9, 1, axis_label, "Request share (%)"),
             ]
 
         if metric_start_row is not None:
@@ -1962,6 +2132,25 @@ class BenchmarkProcessor:
                         bordercolor="#cbd5e1",
                         borderwidth=1,
                         bgcolor="rgba(255,255,255,0.88)",
+                        font=legend_font,
+                        title_font=legend_title_font,
+                        groupclick="togglegroup",
+                    )
+                }
+            )
+
+        if completion_legend_entries:
+            fig.update_layout(
+                **{
+                    COMPLETION_LEGEND: dict(
+                        title={"text": "<b>Configuration</b>"},
+                        orientation="v",
+                        yanchor="top",
+                        y=_row_top(_plot_row(completion_row)),
+                        xanchor="left",
+                        x=1.01,
+                        borderwidth=0,
+                        bgcolor="rgba(255,255,255,0.94)",
                         font=legend_font,
                         title_font=legend_title_font,
                         groupclick="togglegroup",
@@ -2107,6 +2296,7 @@ class BenchmarkProcessor:
             ),
             showlegend=bool(legend_labels),
             boxmode="group",
+            barmode="stack",
         )
 
         def _section_divider_y(upper_row: int, lower_row: int) -> float:
@@ -2151,6 +2341,11 @@ class BenchmarkProcessor:
                     _plot_row(8),
                     _plot_row(9),
                 ),
+                _section_divider(
+                    "<b>— Completion Breakdown —</b>",
+                    _plot_row(9),
+                    _plot_row(10),
+                ),
             ]
         else:
             annotations = [
@@ -2173,6 +2368,11 @@ class BenchmarkProcessor:
                     "<b>— End-to-End Request Latency —</b>",
                     _plot_row(7),
                     _plot_row(8),
+                ),
+                _section_divider(
+                    "<b>— Completion Breakdown —</b>",
+                    _plot_row(8),
+                    _plot_row(9),
                 ),
             ]
 

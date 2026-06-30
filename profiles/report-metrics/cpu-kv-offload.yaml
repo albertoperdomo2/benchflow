@@ -16,63 +16,36 @@ metrics:
 
   - title: Running / waiting requests
     description: Scheduler request state by model-server pod.
-    query: 'label_replace({__name__=~"(vllm|kserve_vllm):num_requests_running", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "state", "running", "__name__", ".*") or label_replace({__name__=~"(vllm|kserve_vllm):num_requests_waiting", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "state", "waiting", "__name__", ".*")'
+    metric: requests_running_waiting
     series: '{{pod}} {{state}}'
     yaxis: requests
 
   - title: Requests by waiting reason
-    description: Scheduler queue depth by reason; capacity usually points at KV memory pressure, while deferred usually points at scheduler policy.
-    query: '{__name__=~"(vllm|kserve_vllm):num_requests_waiting_by_reason", namespace="$namespace", pod=~"$modelserver_pod_regex"}'
+    description: Scheduler queue depth by reason; falls back to reason=unspecified when the vLLM image exposes only the aggregate waiting gauge.
+    metric: requests_waiting_by_reason
+    fallback_metric: num_requests_waiting
     series: '{{pod}} {{reason}}'
+    fallback_series: '{{pod}} unspecified'
     yaxis: requests
 
   - title: KV offload transfer throughput
-    description: Read/write transfer rate attributed to the vLLM KV offload connector.
-    query: 'sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))'
-
-  - title: GPU <-> CPU cumulative transfer volume
-    description: Cumulative KV bytes moved between GPU and CPU offload storage.
-    query: 'label_replace({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "direction", "GPU_to_CPU", "__name__", ".*") or label_replace({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "direction", "CPU_to_GPU", "__name__", ".*")'
-    series: '{{pod}} {{direction}}'
-    scale: 0.000000001
-    yaxis: GB
-
-  - title: GPU <-> CPU transfer throughput
-    description: Wall-clock bytes moved between GPU and CPU KV-cache storage; GPU_to_CPU stores evicted blocks, CPU_to_GPU loads them back.
-    query: 'label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "direction", "GPU_to_CPU", "__name__", ".*") or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "direction", "CPU_to_GPU", "__name__", ".*")'
-    series: '{{pod}} {{direction}}'
+    description: GPU_to_CPU and CPU_to_GPU KV transfer rate attributed to the vLLM KV offload connector.
+    metric: kv_offload_bytes_rate_by_pod
+    series: '{{pod}} {{transfer_type}}'
     scale: 0.000000001
     yaxis: GB/s
 
-  - title: GPU <-> CPU transfer operations
-    description: Individual KV transfer operations per second.
-    query: 'label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "direction", "GPU_to_CPU", "__name__", ".*") or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "direction", "CPU_to_GPU", "__name__", ".*")'
-    series: '{{pod}} {{direction}}'
-    yaxis: ops/s
-
-  - title: GPU <-> CPU transfer latency
-    description: Average transfer latency per operation.
-    query: 'label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]) / clamp_min(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), 0.001) * 1000, "direction", "GPU_to_CPU", "__name__", ".*") or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]) / clamp_min(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), 0.001) * 1000, "direction", "CPU_to_GPU", "__name__", ".*")'
-    series: '{{pod}} {{direction}}'
-    yaxis: ms/transfer
-
-  - title: GPU <-> CPU active throughput
-    description: Bytes transferred divided by active transfer time; this estimates backend bandwidth during offload I/O bursts.
-    query: 'label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]) / clamp_min(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), 0.001), "direction", "GPU_to_CPU", "__name__", ".*") or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]) / clamp_min(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), 0.001), "direction", "CPU_to_GPU", "__name__", ".*")'
-    series: '{{pod}} {{direction}}'
-    scale: 0.000000001
-    yaxis: GB/s active
-
-  - title: GPU <-> CPU average transfer size
-    description: Average bytes per KV transfer operation.
-    query: 'label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_size_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]) / clamp_min(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), 0.001), "direction", "GPU_to_CPU", "__name__", ".*") or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_size_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]) / clamp_min(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), 0.001), "direction", "CPU_to_GPU", "__name__", ".*")'
-    series: '{{pod}} {{direction}}'
-    scale: 0.000001
-    yaxis: MB/transfer
+  - title: KV offload transfer active time
+    description: Fractional seconds per second spent moving KV data between GPU and CPU.
+    metric: kv_offload_time_rate_by_pod
+    series: '{{pod}} {{transfer_type}}'
+    yaxis: seconds/s
 
   - title: KV offload transfer cost
     description: Seconds spent per GiB transferred; lower values indicate cheaper offload I/O.
-    query: 'sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / 1024 / 1024 / 1024, 0.001)'
+    metric: kv_offload_seconds_per_gib_by_pod
+    series: '{{pod}} {{transfer_type}}'
+    yaxis: seconds/GiB
 
   - title: KV block lifetime P90
     description: How long sampled KV blocks remain alive before release or eviction.
@@ -97,6 +70,8 @@ metrics:
   - title: GPU memory used
     description: DCGM framebuffer memory used by GPUs participating in the benchmark release.
     query: 'DCGM_FI_DEV_FB_USED{exported_namespace="$namespace", exported_pod=~".*$release.*"}'
+    scale: 0.001
+    yaxis: GB
 
   - title: GPU PCIe transmit throughput
     description: DCGM PCIe transmit traffic by model-server GPU.

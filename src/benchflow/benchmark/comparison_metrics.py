@@ -24,6 +24,7 @@ _POD_HASH_RE = re.compile(r"-[a-z0-9]{8,10}-[a-z0-9]{4,6}$")
 class ReportMetricSpec:
     name: str
     metric: str
+    fallback_metric: str
     title: str
     description: str
     unit: str
@@ -31,6 +32,16 @@ class ReportMetricSpec:
     scale: float | None
     query: str
     series_template: str
+    fallback_series_template: str
+    reference_lines: list["ReportMetricReferenceLine"]
+
+
+@dataclass(slots=True)
+class ReportMetricReferenceLine:
+    y: float
+    label: str
+    color: str
+    dash: str
 
 
 @dataclass(slots=True)
@@ -55,6 +66,7 @@ class ComparisonMetricPanel:
     yaxis_title: str
     traces: list[ComparisonMetricTrace]
     missing_runs: list[str]
+    reference_lines: list[ReportMetricReferenceLine]
 
 
 def _load_json(path: Path) -> Any:
@@ -251,6 +263,19 @@ def _render_template(template: str, *, labels: dict[str, Any], series: str) -> s
     return _clean_label(_LEGEND_TEMPLATE_RE.sub(_replace, raw))
 
 
+def _shorten_templated_series_label(value: str, labels: dict[str, Any]) -> str:
+    """Preserve templated dimensions while shortening verbose pod identifiers."""
+    label = _clean_label(value)
+    pod_name = _series_pod_name(labels)
+    if pod_name:
+        suffix = _pod_suffix(pod_name)
+        role = _pod_role(labels)
+        role_prefix = f"{role}-" if role else ""
+        replacement = f"{role_prefix}pod-{suffix}" if suffix else pod_name
+        label = label.replace(pod_name, replacement)
+    return _clean_label(label).replace(" ", "-")
+
+
 def _metric_spec_from_dict(raw: dict[str, Any], index: int) -> ReportMetricSpec:
     if not isinstance(raw, dict):
         raise ValidationError(f"metrics[{index}] must be a mapping")
@@ -260,9 +285,13 @@ def _metric_spec_from_dict(raw: dict[str, Any], index: int) -> ReportMetricSpec:
         raise ValidationError(f"metrics[{index}] must define either metric or query")
     title = str(raw.get("title") or "").strip()
     scale = raw.get("scale")
+    reference_lines = _reference_lines_from_raw(
+        raw.get("reference_lines"), f"metrics[{index}].reference_lines"
+    )
     return ReportMetricSpec(
         name=str(raw.get("name") or metric or f"metric_{index + 1}").strip(),
         metric=metric,
+        fallback_metric=str(raw.get("fallback_metric") or "").strip(),
         title=title,
         description=str(raw.get("description") or "").strip(),
         unit=str(raw.get("unit") or "").strip(),
@@ -272,7 +301,47 @@ def _metric_spec_from_dict(raw: dict[str, Any], index: int) -> ReportMetricSpec:
         series_template=str(
             raw.get("series") or raw.get("series_template") or ""
         ).strip(),
+        fallback_series_template=str(
+            raw.get("fallback_series") or raw.get("fallback_series_template") or ""
+        ).strip(),
+        reference_lines=reference_lines,
     )
+
+
+def _reference_lines_from_raw(
+    raw: Any, field_name: str
+) -> list[ReportMetricReferenceLine]:
+    """Parse optional report-only y-axis guide lines from report-metrics YAML.
+
+    These lines are intentionally not used by any packaged profile yet. They are
+    available for future PCIe/link-capacity annotations where the reference
+    value is known outside Prometheus.
+    """
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, list):
+        raise ValidationError(f"{field_name} must be a list")
+
+    reference_lines: list[ReportMetricReferenceLine] = []
+    for line_index, item in enumerate(raw):
+        item_name = f"{field_name}[{line_index}]"
+        if not isinstance(item, dict):
+            raise ValidationError(f"{item_name} must be a mapping")
+        if "y" not in item:
+            raise ValidationError(f"{item_name}.y is required")
+        try:
+            y_value = float(item["y"])
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(f"{item_name}.y must be numeric") from exc
+        reference_lines.append(
+            ReportMetricReferenceLine(
+                y=y_value,
+                label=str(item.get("label") or "").strip(),
+                color=str(item.get("color") or "#64748b").strip(),
+                dash=str(item.get("dash") or item.get("style") or "dash").strip(),
+            )
+        )
+    return reference_lines
 
 
 def load_report_metrics_spec(path: Path) -> ReportMetricsSpec:
@@ -373,6 +442,26 @@ def _load_points(metrics_dir: Path, metric_name: str) -> list[dict[str, Any]]:
     return payload if isinstance(payload, list) else []
 
 
+def _metric_name_and_points_for_spec(
+    metrics_dir: Path,
+    spec: ReportMetricSpec,
+) -> tuple[str | None, list[dict[str, Any]], bool]:
+    metric_name = _metric_name_for_spec(metrics_dir, spec)
+    if metric_name is not None:
+        points = _load_points(metrics_dir, metric_name)
+        if points:
+            return metric_name, points, False
+
+    if spec.fallback_metric:
+        fallback_path = metrics_dir / "raw" / f"{spec.fallback_metric}.json"
+        if fallback_path.exists():
+            points = _load_points(metrics_dir, spec.fallback_metric)
+            if points:
+                return spec.fallback_metric, points, True
+
+    return metric_name, [], False
+
+
 def _run_start_timestamp(metrics_dir: Path, points: list[dict[str, Any]]) -> float:
     summary_path = metrics_dir / "metrics_summary.json"
     if summary_path.exists():
@@ -430,13 +519,16 @@ def _trace_name(
     labels: dict[str, Any],
     series: str,
     version_label: str,
+    series_template: str | None = None,
 ) -> str:
-    series_suffix = (
-        _render_template(spec.series_template, labels=labels, series=series)
-        if spec.series_template
-        else _default_series_suffix(labels, series)
-    )
-    short_series = _short_resource_name(series_suffix)
+    template = spec.series_template if series_template is None else series_template
+    if template:
+        short_series = _shorten_templated_series_label(
+            _render_template(template, labels=labels, series=series),
+            labels,
+        )
+    else:
+        short_series = _short_resource_name(_default_series_suffix(labels, series))
     if short_series and short_series != "series":
         return f"{version_label}-{short_series}"
     return version_label
@@ -469,13 +561,14 @@ def _build_metric_panel(
         if metrics_dir is None:
             missing_runs.append(run_label)
             continue
-        metric_name = _metric_name_for_spec(metrics_dir, spec)
+        metric_name, points, used_fallback = _metric_name_and_points_for_spec(
+            metrics_dir, spec
+        )
         if metric_name is None:
             missing_runs.append(run_label)
             continue
         if first_metric_name is None:
             first_metric_name = metric_name
-        points = _load_points(metrics_dir, metric_name)
         if not points:
             missing_runs.append(run_label)
             continue
@@ -492,6 +585,11 @@ def _build_metric_panel(
                 labels=labels,
                 series=series,
                 version_label=version_label,
+                series_template=(
+                    spec.fallback_series_template
+                    if used_fallback and spec.fallback_series_template
+                    else None
+                ),
             )
             trace_yaxis[trace_name] = yaxis_title
             for point in bucket["points"]:
@@ -547,6 +645,7 @@ def _build_metric_panel(
         ),
         traces=traces,
         missing_runs=missing_runs,
+        reference_lines=list(spec.reference_lines),
     )
 
 
