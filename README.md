@@ -21,6 +21,13 @@ Install the CLI from the repository root:
 pip install -e .
 ```
 
+For local development, install the dev extra and enable the pre-commit hooks:
+
+```bash
+pip install -e '.[dev]'
+pre-commit install
+```
+
 Before bootstrapping, create the real secret manifests next to the examples under `config/cluster/secrets/`. BenchFlow applies every `*.yaml` file there except `*.example.yaml`, so `cp` the examples secrets and remove the `.example` suffix, and populate them with your credentials.
 
 BenchFlow supports two cluster topologies.

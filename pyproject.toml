@@ -22,6 +22,12 @@ dependencies = [
   "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pre-commit>=3.7.0",
+  "ruff>=0.8.0",
+]
+
 [project.scripts]
 bflow = "benchflow.cli:main"
 

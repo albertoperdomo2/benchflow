@@ -388,7 +388,6 @@ def run_matrix_supervisor(
     )
     failures: list[str] = []
     total = len(plans)
-    setup_state: dict[str, Any] = {}
     setup_hoisted = False
     setup_state_dir: tempfile.TemporaryDirectory[str] | None = None
     setup_state_path: Path | None = None
@@ -412,7 +411,7 @@ def run_matrix_supervisor(
         setup_state_dir = tempfile.TemporaryDirectory(prefix="benchflow-matrix-setup-")
         setup_state_path = Path(setup_state_dir.name) / "setup-state.json"
         setup_hoisted = True
-        setup_state = setup_platform(
+        setup_platform(
             plans[0],
             context=ExecutionContext(state_path=setup_state_path),
         )
