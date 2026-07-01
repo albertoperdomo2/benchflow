@@ -15,8 +15,10 @@ spec:
       kind: synthetic_text
       prompt_tokens: 1200
       output_tokens: 1000
-      prefix_tokens: 6000
-      prefix_count: 150
+      prefix_buckets:
+        - bucket_weight: 100
+          prefix_tokens: 6000
+          prefix_count: 150
     data_loader:
       kind: pytorch
       samples: 750

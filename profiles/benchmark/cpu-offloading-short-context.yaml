@@ -15,8 +15,10 @@ spec:
       prompt_tokens: 512
       output_tokens: 128
       turns: 5
-      prefix_tokens: 10000
-      prefix_count: 2*concurrency
+      prefix_buckets:
+        - bucket_weight: 100
+          prefix_tokens: 10000
+          prefix_count: 2*concurrency
     constraint:
       - kind: max_duration
         seconds: 120
