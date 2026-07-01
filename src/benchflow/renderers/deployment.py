@@ -15,6 +15,16 @@ RHOAI_PROFILER_OUTPUT_DIR = "/tmp/benchflow-profiler"
 RAHIIS_PROGRESS_DEADLINE_SECONDS = 1800
 
 
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def _base_labels(plan: ResolvedRunPlan) -> dict[str, str]:
     labels = {
         "app.kubernetes.io/name": "benchflow",
@@ -256,6 +266,37 @@ def _rhoai_epp_verbosity(plan: ResolvedRunPlan) -> int | None:
     return verbosity
 
 
+def _rhoai_startup_probe(plan: ResolvedRunPlan) -> dict[str, Any] | None:
+    default_probe = {
+        "httpGet": {
+            "path": "/health",
+            "port": 8000,
+            "scheme": "HTTPS",
+        },
+        "failureThreshold": 120,
+        "periodSeconds": 10,
+        "timeoutSeconds": 1,
+    }
+    raw_probe = plan.deployment.options.get("startup_probe")
+    if raw_probe is None:
+        return default_probe
+    if raw_probe is False:
+        return None
+    if isinstance(raw_probe, str):
+        raw_probe = yaml.safe_load(raw_probe)
+    if not isinstance(raw_probe, dict):
+        raise ValidationError(
+            "deployment profile options.startup_probe must be a mapping"
+        )
+    return _deep_merge(default_probe, raw_probe)
+
+
+def _yaml_lines(value: dict[str, Any] | None) -> list[str]:
+    if value is None:
+        return []
+    return yaml.safe_dump(value, sort_keys=False).rstrip().splitlines()
+
+
 def _rhoai_validate_isvc(plan: ResolvedRunPlan) -> None:
     if not _rhoai_uses_isvc(plan):
         return
@@ -315,6 +356,7 @@ def _rhoai_llminferenceservice_template_context(
         "runtime_tolerations": plan.deployment.runtime.tolerations,
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
+        "startup_probe_lines": _yaml_lines(_rhoai_startup_probe(plan)),
         "gpu_count": str(plan.deployment.runtime.tensor_parallelism),
         "custom_scheduler_enabled": custom_scheduler_enabled,
         "scheduler_config_enabled": scheduler_config_enabled,

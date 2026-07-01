@@ -168,6 +168,12 @@ spec:
             {{ resource_name | tojson }}: {{ resource_value | tojson }}
 {% endfor %}
 {% endfor %}
+{% if startup_probe_lines %}
+        startupProbe:
+{% for line in startup_probe_lines %}
+          {{ line }}
+{% endfor %}
+{% endif %}
         livenessProbe:
           httpGet:
             path: /health

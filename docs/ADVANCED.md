@@ -536,6 +536,7 @@ spec:
     enable_auth: false # rhoai only, overridden by spec.overrides.rhoai.enable_auth or --rhoai-auth
     epp_config: "" # rhoai/llm-d only, optional EndpointPickerConfig rendered with Jinja
     epp_verbosity: 4 # rhoai/llm-d only, optional EPP scheduler verbosity
+    startup_probe: {} # rhoai LLMInferenceService only, optional Kubernetes startupProbe override
 ```
 
 RHOAI deployment profiles can provide a custom EPP configuration with
@@ -558,6 +559,13 @@ RHOAI, BenchFlow adds `--v=<value>` to the rendered scheduler container args.
 When RHOAI verbosity is set without a custom EPP config, BenchFlow renders the
 scheduler template with the default scheduler configuration and only adds the
 verbosity flag.
+
+RHOAI `LLMInferenceService` profiles render an explicit model-server
+`startupProbe` so KServe does not inject platform defaults. The default matches
+the model-server HTTPS health endpoint on port `8000` with
+`failureThreshold: 120`, `periodSeconds: 10`, and `timeoutSeconds: 1`. Profiles
+can override those fields with `spec.options.startup_probe`; setting it to
+`false` disables BenchFlow's explicit startup probe.
 
 Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
 storage offloading with `spec.options.storage_offloading`. When present,
