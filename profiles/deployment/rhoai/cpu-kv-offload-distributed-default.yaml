@@ -28,4 +28,6 @@ spec:
       - --kv-cache-metrics-sample=0.01
   options:
     enable_auth: false
+    startup_probe:
+      failureThreshold: 180
     # epp_verbosity: 10
