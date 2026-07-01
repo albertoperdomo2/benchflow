@@ -20,7 +20,7 @@ spec:
       TORCHINDUCTOR_CACHE_DIR: /tmp/torchinductor
     vllm_args:
       - --max-model-len=8192
-      - --gpu-memory-utilization=0.7
+      - --gpu-memory-utilization=0.8
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching
