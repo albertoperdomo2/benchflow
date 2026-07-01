@@ -5,6 +5,7 @@ import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .benchmark import runtime as runtime_module
 from .benchmark import benchmark_version_from_plan
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .models import ResolvedRunPlan
@@ -572,6 +573,17 @@ def collect_artifacts(
                     )
                     manifest_count += 1
 
+    guidellm_data = (
+        runtime_module.guidellm_data_mapping(plan.benchmark.guidellm.args)
+        if plan.benchmark.tool == "guidellm"
+        else {}
+    )
+    guidellm_backend = (
+        runtime_module.guidellm_backend_mapping(plan.benchmark.guidellm.args)
+        if plan.benchmark.tool == "guidellm"
+        else {}
+    )
+
     metadata = {
         "namespace": namespace,
         "release": plan.deployment.release_name,
@@ -589,7 +601,7 @@ def collect_artifacts(
         "replicas": plan.deployment.runtime.replicas,
         "tp": plan.deployment.runtime.tensor_parallelism,
         "data_spec": (
-            plan.benchmark.guidellm.args.get("data", "")
+            json.dumps(guidellm_data, separators=(",", ":"))
             if plan.benchmark.tool == "guidellm"
             else (
                 plan.benchmark.aiperf.args.get("public_dataset")
@@ -599,7 +611,7 @@ def collect_artifacts(
         ),
         "profile": plan.profiles.benchmark,
         "backend": (
-            plan.benchmark.guidellm.args.get("backend_type", "openai_http")
+            guidellm_backend.get("kind", "openai_http")
             if plan.benchmark.tool == "guidellm"
             else "openai_http"
         ),

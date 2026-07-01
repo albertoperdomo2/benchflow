@@ -31,6 +31,65 @@ _UNSUPPORTED_BENCHMARK_ENV = {
 }
 
 
+def _guidellm_mapping(args: dict[str, object], key: str) -> dict[str, object]:
+    value = args.get(key)
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        return {"kind": value.strip()}
+    return {}
+
+
+def _guidellm_load_field(profile: dict[str, object]) -> str:
+    for field in ("streams", "rate", "max_concurrency", "sweep_size"):
+        if field in profile:
+            return field
+    kind = str(profile.get("kind", "") or "").strip()
+    if kind == "poisson":
+        return "rate"
+    if kind == "throughput":
+        return "max_concurrency"
+    return "streams"
+
+
+def _set_guidellm_load_values(args: dict[str, object], values: list[int]) -> None:
+    profile = _guidellm_mapping(args, "profile")
+    profile.setdefault("kind", "concurrent")
+    args["profile"] = profile
+    args.pop("override", None)
+    args.pop("overrides", None)
+    args["override"] = {f"profile.{_guidellm_load_field(profile)}": list(values)}
+
+
+def _set_guidellm_backend_field(
+    args: dict[str, object],
+    key: str,
+    value: object,
+) -> None:
+    backend = _guidellm_mapping(args, "backend")
+    backend.setdefault("kind", "openai_http")
+    backend[key] = value
+    args["backend"] = backend
+
+
+def _set_guidellm_constraint(
+    args: dict[str, object],
+    *,
+    kind: str,
+    field: str,
+    value: object,
+) -> None:
+    existing = args.pop("constraint", args.pop("constraints", []))
+    constraints = existing if isinstance(existing, list) else [existing]
+    updated = [
+        item
+        for item in constraints
+        if not (isinstance(item, dict) and item.get("kind") == kind)
+    ]
+    updated.append({"kind": kind, field: value})
+    args["constraint"] = updated
+
+
 def _image_tag(image: str) -> str:
     cleaned = str(image).strip()
     if not cleaned:
@@ -398,18 +457,35 @@ def resolve_run_plan(
     benchmark = deepcopy(benchmark_profile.spec)
     if overrides.benchmark.rates is not None:
         if benchmark.tool == "guidellm":
-            benchmark.guidellm.args["rates"] = list(overrides.benchmark.rates)
+            _set_guidellm_load_values(
+                benchmark.guidellm.args,
+                list(overrides.benchmark.rates),
+            )
     if overrides.benchmark.max_seconds is not None:
         if benchmark.tool == "aiperf":
             benchmark.aiperf.max_seconds = overrides.benchmark.max_seconds
         else:
-            benchmark.guidellm.args["max_seconds"] = overrides.benchmark.max_seconds
+            _set_guidellm_constraint(
+                benchmark.guidellm.args,
+                kind="max_duration",
+                field="seconds",
+                value=overrides.benchmark.max_seconds,
+            )
     if overrides.benchmark.max_requests is not None:
         if benchmark.tool == "guidellm":
-            benchmark.guidellm.args["max_requests"] = overrides.benchmark.max_requests
+            _set_guidellm_constraint(
+                benchmark.guidellm.args,
+                kind="max_requests",
+                field="count",
+                value=overrides.benchmark.max_requests,
+            )
     if overrides.benchmark.request_type is not None:
         if benchmark.tool == "guidellm":
-            benchmark.guidellm.args["request_type"] = overrides.benchmark.request_type
+            _set_guidellm_backend_field(
+                benchmark.guidellm.args,
+                "request_format",
+                overrides.benchmark.request_type,
+            )
     if overrides.benchmark.env is not None:
         benchmark.env = {
             **benchmark_profile.spec.env,

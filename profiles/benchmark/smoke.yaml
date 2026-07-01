@@ -4,11 +4,22 @@ metadata:
   name: guidellm-smoke
 spec:
   guidellm:
-    backend_type: openai_http
-    rate_type: concurrent
-    rates: [1]
-    data: prompt_tokens=100,output_tokens=100
-    max_seconds: 60
-    processor_args: '{"trust_remote_code": true}'
+    backend:
+      kind: openai_http
+    profile:
+      kind: concurrent
+    override:
+      profile.streams: [1]
+    data:
+      kind: synthetic_text
+      prompt_tokens: 100
+      output_tokens: 100
+    constraint:
+      - kind: max_duration
+        seconds: 60
+    tokenizer:
+      kind: huggingface_auto
+      load_kwargs:
+        trust_remote_code: true
   env:
     GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "INFO"

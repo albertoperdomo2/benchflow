@@ -547,29 +547,9 @@ def _guidellm_benchmark_from_dict(raw: dict[str, Any]) -> GuidellmBenchmarkSpec:
         if key in _GUIDELLM_RESERVED_FIELDS:
             continue
         field_name = f"spec.guidellm.{key}"
-        if key == "rates":
-            normalized = _int_list(value, field_name)
-        elif key == "data_samples":
-            normalized = _optional_nonnegative_int(value, field_name)
-        elif key == "max_seconds":
-            normalized = _optional_positive_int(value, field_name)
-        elif key == "max_requests":
-            normalized = str(value).strip() if value is not None else None
-        elif key in {
-            "backend_type",
-            "request_type",
-            "profile",
-            "processor_args",
-            "rate_type",
-            "data",
-        }:
-            normalized = _nonempty_string(value, field_name)
-        else:
-            normalized = _passthrough_value(value, field_name)
+        normalized = _passthrough_value(value, field_name)
         if normalized is not None:
             args[key] = normalized
-    args.setdefault("backend_type", "openai_http")
-    args.setdefault("data", "prompt_tokens=1000,output_tokens=1000")
     return GuidellmBenchmarkSpec(
         args=args,
         pre_warmup=_guidellm_pre_warmup_from_dict(raw.get("pre_warmup")),
@@ -607,14 +587,6 @@ def _guidellm_pre_warmup_from_dict(raw: Any) -> GuidellmPreWarmupSpec:
         field_name = f"spec.guidellm.pre_warmup.{key}"
         if key == "rate":
             normalized = _positive_int(value, field_name)
-        elif key == "data_samples":
-            normalized = _optional_nonnegative_int(value, field_name)
-        elif key == "max_seconds":
-            normalized = _optional_positive_int(value, field_name)
-        elif key == "max_requests":
-            normalized = str(value).strip() if value is not None else None
-        elif key in {"profile", "rate_type", "data"}:
-            normalized = _nonempty_string(value, field_name)
         else:
             normalized = _passthrough_value(value, field_name)
         if normalized is not None:
@@ -1040,7 +1012,11 @@ def list_profile_entries(profiles_dir: Path) -> list[ProfileIndexEntry]:
                 details["endpoint_type"] = str(aiperf.get("endpoint_type", ""))
                 details["dataset_type"] = str(aiperf.get("dataset_type", ""))
             else:
-                details["rate_type"] = str(guidellm.get("rate_type", "") or "")
+                profile = guidellm.get("profile") or {}
+                if isinstance(profile, dict):
+                    details["profile"] = str(profile.get("kind", "") or "")
+                else:
+                    details["profile"] = str(profile or "")
             entries.append(
                 ProfileIndexEntry(
                     name=name, kind="benchmark", path=relative_path, details=details

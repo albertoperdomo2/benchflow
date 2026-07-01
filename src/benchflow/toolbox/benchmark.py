@@ -5,6 +5,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from ..benchmark import runtime as runtime_module
 from ..benchmark import (
     BenchmarkRunFailed,
     benchmark_version_from_plan,
@@ -29,10 +30,26 @@ def _read_optional_text(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def _format_optional_rates(rates: list[int] | None) -> str:
-    if not rates:
+def _format_optional_values(values: list[object] | None) -> str:
+    if not values:
         return "not set"
-    return ",".join(str(rate) for rate in rates)
+    return ",".join(str(value) for value in values)
+
+
+def _constraint_summary(benchmark_args: dict[str, object]) -> str:
+    parts: list[str] = []
+    for constraint in runtime_module.guidellm_constraints(benchmark_args):
+        if not isinstance(constraint, dict):
+            parts.append(str(constraint))
+            continue
+        kind = str(constraint.get("kind", "") or "")
+        if kind == "max_duration":
+            parts.append(f"max_duration={constraint.get('seconds')}s")
+        elif kind == "max_requests":
+            parts.append(f"max_requests={constraint.get('count')}")
+        elif kind:
+            parts.append(kind)
+    return ", ".join(parts) if parts else "not set"
 
 
 def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
@@ -59,23 +76,26 @@ def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
         return
 
     guidellm = plan.benchmark.guidellm
-    rates = guidellm.args.get("rates")
+    profile = runtime_module.guidellm_profile_mapping(guidellm.args)
+    backend = runtime_module.guidellm_backend_mapping(guidellm.args)
+    data = runtime_module.guidellm_data_mapping(guidellm.args)
+    load_values = runtime_module.guidellm_load_values(guidellm.args)
+    load_field = runtime_module.guidellm_load_field(guidellm.args) or "load"
     detail(
-        "Rates: "
-        + _format_optional_rates(rates if isinstance(rates, list) else None)
-        + (
-            f", rate type: {guidellm.args.get('rate_type')}"
-            if guidellm.args.get("rate_type")
-            else ", rate type: not set"
-        )
-        + f", backend: {guidellm.args.get('backend_type', 'openai_http')}"
+        f"GuideLLM profile: {profile.get('kind', 'not set')}, "
+        f"{load_field}: {_format_optional_values(load_values)}, "
+        f"constraints: {_constraint_summary(guidellm.args)}, "
+        f"backend: {backend.get('kind', 'openai_http')}"
     )
-    detail(f"Benchmark data: {guidellm.args.get('data', '')}")
+    detail(f"Benchmark data: {data}")
     if guidellm.pre_warmup.enabled:
+        warmup_constraints = runtime_module.guidellm_constraints(
+            guidellm.pre_warmup.args
+        )
         detail(
             "Pre-warmup: "
             f"rate={guidellm.pre_warmup.args.get('rate')}, "
-            f"duration={guidellm.pre_warmup.args.get('max_seconds') or 'not set'}s"
+            f"constraints={warmup_constraints or 'not set'}"
         )
 
 

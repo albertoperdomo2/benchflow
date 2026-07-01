@@ -660,21 +660,32 @@ metadata:
 spec:
   tool: guidellm # supported values: guidellm, aiperf
   guidellm:
-    backend_type: openai_http
-    rate_type: concurrent
-    rates:
-      - 1 # overridden by spec.overrides.benchmark.rates; rendered as --rate 1
-    request_type: ""
-    profile: poisson
-    processor_args: '{"trust_remote_code": true}'
-    data_samples: 750
-    warmup: 10
-    data: prompt_tokens=1000,output_tokens=1000
-    max_seconds: 600 # overridden by spec.overrides.benchmark.max_seconds
-    max_requests: null # overridden by spec.overrides.benchmark.max_requests
+    backend:
+      kind: openai_http
+      request_format: /v1/chat/completions
+    profile:
+      kind: concurrent
+    override:
+      profile.streams: [1] # GuideLLM 0.7 sweep values
+    data:
+      kind: synthetic_text
+      prompt_tokens: 1000
+      output_tokens: 1000
+    data_loader:
+      kind: pytorch
+      samples: 750
+    tokenizer:
+      kind: huggingface_auto
+      load_kwargs:
+        trust_remote_code: true
+    constraint:
+      - kind: max_duration
+        seconds: 600
     pre_warmup: # BenchFlow-owned execution phase, not a direct GuideLLM flag
       rate: 15 # required when pre_warmup is present; rates: [15] also normalizes
-      max_seconds: 30
+      constraint:
+        - kind: max_duration
+          seconds: 30
   aiperf:
     public_dataset: ""
     dataset_url: "" # BenchFlow-owned downloaded JSONL source
@@ -698,13 +709,25 @@ spec:
     LOG_LEVEL: INFO # no CLI override today
 ```
 
-For benchmark profiles, the tool sections are now a thin CLI mapping by
-default. BenchFlow converts `snake_case` keys into `--kebab-case` flags,
-omits `false` / `null` / empty-string values, and emits bare flags for `true`.
-The current special cases are:
+For GuideLLM benchmark profiles, the `guidellm` section is intentionally close
+to the GuideLLM 0.7 `run` CLI. BenchFlow renders keys directly as
+`--kebab-case` flags, JSON-encodes mapping/list values, and repeats list-valued
+`constraint`, `output`, and `override` entries as needed. For load sweeps, use
+GuideLLM `override` entries such as `profile.streams` for `concurrent` profiles
+or `profile.rate` for `poisson` profiles.
 
-- `guidellm.rates` renders as `--rate` with comma-joined values
+BenchFlow injects only the runtime-specific values it owns: backend `target`,
+backend `model`, default JSON output path, and safe defaults when the profile
+omits `backend`, `data`, `profile`, or `tokenizer`. The remaining special
+GuideLLM behavior is:
+
 - `guidellm.pre_warmup` is BenchFlow-owned and runs before the measured sweep
+- `*concurrency` expressions in structured values are expanded by BenchFlow for
+  per-concurrency runs
+
+For AIPerf benchmark profiles, most keys are still rendered as direct CLI flags.
+The current AIPerf special cases are:
+
 - `aiperf.dataset_url`, `aiperf.dataset_name`, and `aiperf.dataset_cap` are
   BenchFlow-owned downloaded-dataset settings
 - `aiperf.dataset_type` renders as `--custom-dataset-type`
@@ -719,10 +742,10 @@ spec:
   benchmark_profile: guidellm-multi-turn
   overrides:
     benchmark:
-      rates: [128]
-      max_seconds: 180
-      max_requests: 500
-      request_type: text_completions
+      rates: [128] # updates the active GuideLLM profile override
+      max_seconds: 180 # updates the max_duration constraint
+      max_requests: 500 # updates the max_requests constraint
+      request_type: /v1/completions # updates backend.request_format
 ```
 
 `data` is intentionally not overrideable. It is treated as part of what defines

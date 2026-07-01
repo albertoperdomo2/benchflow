@@ -16,7 +16,6 @@ from mlflow.store.artifact.artifact_repository_registry import get_artifact_repo
 
 from ..mlflow_compat import configure_mlflow_tracking, create_mlflow_client
 from ..ui import configure_logging, emit
-from .cli_args import render_cli_args
 from .comparison_metrics import build_comparison_metric_panels
 
 # Disable SSL warnings if using self-signed certificates
@@ -143,26 +142,66 @@ def _rates_to_string(value: Any) -> str | None:
     return cleaned or None
 
 
-def _merged_guidellm_backend_args(target: str, user_value: Any) -> str:
-    payload: dict[str, Any] = {}
-    if user_value is not None:
-        if isinstance(user_value, str):
-            parsed = json.loads(user_value)
-        elif isinstance(user_value, dict):
-            parsed = dict(user_value)
-        else:
-            raise BenchmarkExecutionError(
-                "guidellm backend_args must be a JSON object or mapping"
-            )
-        if not isinstance(parsed, dict):
-            raise BenchmarkExecutionError(
-                "guidellm backend_args must be a JSON object or mapping"
-            )
-        payload.update(parsed)
-    payload.setdefault("timeout", 600)
-    if target.startswith("https://"):
-        payload.setdefault("verify", False)
-    return json.dumps(payload, separators=(",", ":"))
+def _decode_guidellm_scalar(value: Any) -> Any:
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return raw
+        lowered = raw.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        if lowered == "null":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+        if raw[0] in "[{":
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return raw
+    return value
+
+
+def _decode_guidellm_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _decode_guidellm_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_guidellm_value(item) for item in value]
+    return _decode_guidellm_scalar(value)
+
+
+def _parse_guidellm_mapping(value: Any, field_name: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return _decode_guidellm_value(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed_json = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed_json = None
+        if isinstance(parsed_json, dict):
+            return _decode_guidellm_value(parsed_json)
+        if "=" in raw:
+            return {
+                key: _decode_guidellm_scalar(item)
+                for key, item in _parse_data_profile_config(raw).items()
+            }
+        return {"kind": raw}
+    raise BenchmarkExecutionError(
+        f"guidellm {field_name} must be a mapping, JSON object, or key=value string"
+    )
 
 
 def _parse_data_profile_config(data: str | None) -> dict[str, Any]:
@@ -197,6 +236,164 @@ def _parse_data_profile_config(data: str | None) -> dict[str, Any]:
             continue
         parsed[clean_key] = value.strip()
     return parsed
+
+
+_GUIDELLM_PLURAL_FLAGS = {
+    "constraints": "constraint",
+    "data_preprocessors": "data_preprocessor",
+    "labels": "label",
+    "outputs": "output",
+    "overrides": "override",
+}
+
+
+def _guidellm_flag_name(key: str) -> str:
+    return f"--{_GUIDELLM_PLURAL_FLAGS.get(key, key).replace('_', '-')}"
+
+
+def _merge_guidellm_mapping(
+    args: dict[str, Any],
+    key: str,
+    updates: dict[str, Any],
+) -> None:
+    current = _parse_guidellm_mapping(args.pop(key, None), key)
+    current.update(_decode_guidellm_value(updates))
+    args[key] = current
+
+
+def _ensure_guidellm_mapping(
+    args: dict[str, Any],
+    key: str,
+    defaults: dict[str, Any],
+    updates: dict[str, Any] | None = None,
+) -> None:
+    current = _parse_guidellm_mapping(args.pop(key, None), key)
+    for default_key, default_value in _decode_guidellm_value(defaults).items():
+        current.setdefault(default_key, default_value)
+    if updates:
+        current.update(_decode_guidellm_value(updates))
+    args[key] = current
+
+
+def _normalize_guidellm_benchmark_args(
+    *,
+    target: str,
+    model: str,
+    benchmark_args: dict[str, Any],
+    output_path: str,
+) -> dict[str, Any]:
+    args = _decode_guidellm_value(benchmark_args)
+
+    backend_defaults = {"kind": "openai_http", "timeout": 600}
+    if target.startswith("https://"):
+        backend_defaults["verify"] = False
+    _ensure_guidellm_mapping(
+        args,
+        "backend",
+        backend_defaults,
+        {"target": target, "model": model},
+    )
+
+    if "profile" not in args:
+        args["profile"] = {"kind": "synchronous"}
+    if "data" not in args:
+        args["data"] = {
+            "kind": "synthetic_text",
+            "prompt_tokens": 1000,
+            "output_tokens": 1000,
+        }
+    _ensure_guidellm_mapping(
+        args,
+        "tokenizer",
+        {"kind": "huggingface_auto", "model": model},
+    )
+
+    outputs = [{"kind": "json", "path": str(output_path)}]
+    for output_key in ("output", "outputs"):
+        if output_key not in args:
+            continue
+        value = args.pop(output_key)
+        outputs.extend(value if isinstance(value, list) else [value])
+    args["output"] = _decode_guidellm_value(outputs)
+
+    args.pop("pre_warmup", None)
+    args.setdefault("disable_console_interactive", True)
+    return args
+
+
+def _guidellm_cli_value(value: Any) -> str:
+    decoded = _decode_guidellm_value(value)
+    if isinstance(decoded, (dict, list)):
+        return json.dumps(decoded, separators=(",", ":"))
+    return str(decoded)
+
+
+def _guidellm_override_value(value: Any) -> str:
+    decoded = _decode_guidellm_value(value)
+    if isinstance(decoded, list):
+        return ",".join(str(item) for item in decoded)
+    return _guidellm_cli_value(decoded)
+
+
+def _append_guidellm_cli_arg(cmd: list[str], key: str, value: Any) -> None:
+    if value is None or value == "":
+        return
+
+    flag = _guidellm_flag_name(key)
+    if isinstance(value, bool):
+        if value:
+            cmd.append(flag)
+        return
+
+    if key in {"label", "labels"} and isinstance(value, dict):
+        for label_key, label_value in value.items():
+            cmd.extend([flag, f"{label_key}={label_value}"])
+        return
+
+    if key in {"override", "overrides"}:
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, dict):
+                for override_key, override_value in item.items():
+                    cmd.extend(
+                        [
+                            flag,
+                            str(override_key),
+                            _guidellm_override_value(override_value),
+                        ]
+                    )
+            elif isinstance(item, list | tuple) and len(item) == 2:
+                cmd.extend([flag, str(item[0]), _guidellm_override_value(item[1])])
+            else:
+                cmd.extend([flag, _guidellm_cli_value(item)])
+        return
+
+    if isinstance(value, list):
+        for item in value:
+            if item is None or item == "":
+                continue
+            cmd.extend([flag, _guidellm_cli_value(item)])
+        return
+
+    cmd.extend([flag, _guidellm_cli_value(value)])
+
+
+def build_guidellm_v07_command(
+    target: str,
+    model: str,
+    benchmark_args: dict[str, Any],
+    output_path: str,
+) -> list[str]:
+    args = _normalize_guidellm_benchmark_args(
+        target=target,
+        model=model,
+        benchmark_args=benchmark_args,
+        output_path=output_path,
+    )
+    cmd = ["guidellm", "run"]
+    for key, value in args.items():
+        _append_guidellm_cli_arg(cmd, key, value)
+    return cmd
 
 
 def _list_run_artifacts_recursively(artifact_uri: str, root_path: str) -> list[str]:
@@ -394,6 +591,129 @@ def parse_multiturn_data_param(data: str, concurrency: int) -> str:
     return ",".join(parts)
 
 
+def substitute_multiturn_expressions(value: Any, concurrency: int) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: substitute_multiturn_expressions(item, concurrency)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [substitute_multiturn_expressions(item, concurrency) for item in value]
+    if not isinstance(value, str) or not _has_multiturn_expression(value):
+        return value
+    if "=" in value:
+        return parse_multiturn_data_param(value, concurrency)
+    return parse_multiturn_expression(value, concurrency)
+
+
+def _guidellm_profile_mapping(benchmark_args: dict[str, Any]) -> dict[str, Any]:
+    return _parse_guidellm_mapping(benchmark_args.get("profile"), "profile")
+
+
+def _guidellm_override_items(benchmark_args: dict[str, Any]) -> list[tuple[str, Any]]:
+    items: list[tuple[str, Any]] = []
+    for key in ("override", "overrides"):
+        value = benchmark_args.get(key)
+        if value is None:
+            continue
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, dict):
+                items.extend(
+                    (str(item_key), item_value) for item_key, item_value in item.items()
+                )
+            elif isinstance(item, list | tuple) and len(item) == 2:
+                items.append((str(item[0]), item[1]))
+    return items
+
+
+def guidellm_profile_mapping(benchmark_args: dict[str, Any]) -> dict[str, Any]:
+    return _guidellm_profile_mapping(benchmark_args)
+
+
+def guidellm_backend_mapping(benchmark_args: dict[str, Any]) -> dict[str, Any]:
+    return _parse_guidellm_mapping(benchmark_args.get("backend"), "backend")
+
+
+def guidellm_data_mapping(benchmark_args: dict[str, Any]) -> dict[str, Any]:
+    return _parse_guidellm_mapping(benchmark_args.get("data"), "data")
+
+
+def _guidellm_load_field(benchmark_args: dict[str, Any]) -> str | None:
+    for key, _value in _guidellm_override_items(benchmark_args):
+        if key.startswith("profile."):
+            field = key.split(".", 1)[1]
+            if field in {"streams", "rate", "max_concurrency", "sweep_size"}:
+                return field
+    profile = _guidellm_profile_mapping(benchmark_args)
+    for field in ("streams", "rate", "max_concurrency", "sweep_size"):
+        if field in profile:
+            return field
+    return None
+
+
+def guidellm_load_field(benchmark_args: dict[str, Any]) -> str | None:
+    return _guidellm_load_field(benchmark_args)
+
+
+def _guidellm_load_values(benchmark_args: dict[str, Any]) -> list[Any]:
+    field = _guidellm_load_field(benchmark_args)
+    if field is None:
+        return []
+    override_key = f"profile.{field}"
+    for key, value in _guidellm_override_items(benchmark_args):
+        if key == override_key:
+            if isinstance(value, list):
+                return value
+            if isinstance(value, str) and "," in value:
+                return [part.strip() for part in value.split(",") if part.strip()]
+            return [] if value is None else [value]
+    value = _guidellm_profile_mapping(benchmark_args).get(field)
+    if isinstance(value, list):
+        return value
+    return [] if value is None else [value]
+
+
+def guidellm_load_values(benchmark_args: dict[str, Any]) -> list[Any]:
+    return _guidellm_load_values(benchmark_args)
+
+
+def guidellm_constraints(benchmark_args: dict[str, Any]) -> list[Any]:
+    values: list[Any] = []
+    for key in ("constraint", "constraints"):
+        value = benchmark_args.get(key)
+        if value is None:
+            continue
+        values.extend(value if isinstance(value, list) else [value])
+    return _decode_guidellm_value(values)
+
+
+def _guidellm_args_for_load(
+    benchmark_args: dict[str, Any],
+    load_value: Any,
+) -> dict[str, Any]:
+    iteration_args = substitute_multiturn_expressions(benchmark_args, int(load_value))
+    field = _guidellm_load_field(iteration_args)
+    if field is None:
+        return iteration_args
+    override_key = f"profile.{field}"
+    override_items = _guidellm_override_items(iteration_args)
+    if any(key == override_key for key, _value in override_items):
+        iteration_args.pop("override", None)
+        iteration_args.pop("overrides", None)
+        iteration_args["override"] = [
+            {
+                key: load_value if key == override_key else value
+                for key, value in override_items
+            }
+        ]
+    else:
+        profile = _guidellm_profile_mapping(iteration_args)
+        profile[field] = load_value
+        iteration_args["profile"] = profile
+    return iteration_args
+
+
 def _coerce_profile_value(raw: Any) -> Any:
     if isinstance(raw, str):
         cleaned = raw.strip()
@@ -440,15 +760,15 @@ def _extract_data_profile_params(params: dict[str, Any]) -> dict[str, Any]:
 def _has_multiturn_expression(value: Any) -> bool:
     if value is None:
         return False
+    if isinstance(value, dict):
+        return any(_has_multiturn_expression(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_multiturn_expression(item) for item in value)
     return "*concurrency" in str(value).lower()
 
 
-def _multiturn_mode_enabled(
-    *, data: str | None, max_seconds: Any = None, max_requests: Any = None
-) -> bool:
-    return any(
-        _has_multiturn_expression(value) for value in (data, max_seconds, max_requests)
-    )
+def _multiturn_mode_enabled(benchmark_args: dict[str, Any]) -> bool:
+    return _has_multiturn_expression(benchmark_args)
 
 
 def extract_metrics_from_benchmark(benchmark: Dict[str, Any]) -> Dict[str, Any]:
@@ -598,26 +918,12 @@ def run_guidellm_cli(
     output_path: str = "benchmark_output.json",
 ) -> tuple[str, str]:
     output_path_obj = Path(output_path)
-    args = dict(benchmark_args)
-    backend_type = str(args.pop("backend_type", "openai_http") or "openai_http")
-    backend_args = _merged_guidellm_backend_args(target, args.pop("backend_args", None))
-    cmd = [
-        "guidellm",
-        "benchmark",
-        "run",
-        "--target",
-        target,
-        "--model",
-        model,
-        "--backend-type",
-        backend_type,
-        "--output-dir",
-        str(output_path_obj.parent),
-        "--outputs",
-        output_path_obj.name,
-    ]
-    cmd.extend(render_cli_args(args, aliases={"rates": "rate"}, join_lists={"rates"}))
-    cmd.extend(["--backend-args", backend_args])
+    cmd = build_guidellm_v07_command(
+        target=target,
+        model=model,
+        benchmark_args=benchmark_args,
+        output_path=str(output_path_obj),
+    )
 
     logger.info(f"Running guidellm command: {' '.join(cmd)}")
 
@@ -686,14 +992,13 @@ def _run_guidellm_pre_warmup(
     if not _pre_warmup_enabled(pre_warmup):
         return None
 
-    rate = _pre_warmup_value(pre_warmup, "rate")
-    if rate is None:
+    load_value = _pre_warmup_value(pre_warmup, "rate")
+    if load_value is None:
         raise BenchmarkExecutionError("GuideLLM pre-warmup requires a rate")
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     output_json = f"{output_dir}/pre_warmup_output.json"
-    warmup_args = dict(benchmark_args)
-    warmup_args["rates"] = [int(rate)]
+    warmup_args = _guidellm_args_for_load(benchmark_args, int(load_value))
     warmup_args.pop("warmup", None)
     for key, value in (
         pre_warmup.items()
@@ -702,14 +1007,12 @@ def _run_guidellm_pre_warmup(
     ):
         if key not in {"enabled", "rate"} and value is not None:
             warmup_args[key] = value
-    warmup_max_seconds = warmup_args.get("max_seconds")
-    warmup_max_requests = warmup_args.get("max_requests")
+    warmup_constraints = warmup_args.get("constraint") or warmup_args.get("constraints")
 
     logger.info(
-        "Running GuideLLM pre-warmup: rate=%s, duration=%s, max_requests=%s",
-        rate,
-        warmup_max_seconds if warmup_max_seconds is not None else "not set",
-        warmup_max_requests if warmup_max_requests is not None else "not set",
+        "Running GuideLLM pre-warmup: load=%s, constraints=%s",
+        load_value,
+        warmup_constraints if warmup_constraints is not None else "not set",
     )
     return run_guidellm_cli(
         target=target,
@@ -858,23 +1161,20 @@ def run_benchmark_without_mlflow(
     replicas: int = 1,
 ) -> str:
     """Run benchmark without MLflow tracking, saving results to specified directory."""
-    rate = _rates_to_string(benchmark_args.get("rates"))
-    data = benchmark_args.get("data")
-    max_seconds = benchmark_args.get("max_seconds")
-    max_requests = benchmark_args.get("max_requests")
+    load_values = _guidellm_load_values(benchmark_args)
+    load_values_text = _rates_to_string(load_values)
     logger.info("Running benchmark without MLflow tracking")
     logger.info(
-        f"Starting benchmark for rates: {rate if rate is not None else 'not set'}"
+        "Starting benchmark for load values: "
+        f"{load_values_text if load_values_text is not None else 'not set'}"
     )
     logger.info(f"Results will be saved to: {output_dir}")
 
-    multiturn_mode = _multiturn_mode_enabled(
-        data=data,
-        max_seconds=max_seconds,
-        max_requests=max_requests,
-    )
-    if multiturn_mode and not rate:
-        raise BenchmarkExecutionError("multiturn benchmark requires rates to be set")
+    multiturn_mode = _multiturn_mode_enabled(benchmark_args)
+    if multiturn_mode and not load_values:
+        raise BenchmarkExecutionError(
+            "multiturn benchmark requires profile load values to be set"
+        )
     if multiturn_mode:
         logger.info(
             "Multiturn mode enabled - running separate commands per concurrency"
@@ -887,39 +1187,16 @@ def run_benchmark_without_mlflow(
             output_dir=output_dir,
             pre_warmup=pre_warmup,
         )
-        concurrencies = [r.strip() for r in rate.split(",") if r.strip()]
-        logger.info(f"Running {len(concurrencies)} separate benchmark commands")
+        logger.info(f"Running {len(load_values)} separate benchmark commands")
 
-        for concurrency_str in concurrencies:
-            concurrency = int(concurrency_str)
-            parsed_data = (
-                parse_multiturn_data_param(data, concurrency) if data else None
-            )
-            parsed_max_requests = (
-                int(parse_multiturn_expression(str(max_requests), concurrency))
-                if max_requests is not None
-                else None
-            )
-            parsed_max_seconds = (
-                int(parse_multiturn_expression(str(max_seconds), concurrency))
-                if max_seconds is not None
-                else None
-            )
+        for load_value in load_values:
+            concurrency = int(load_value)
+            iteration_args = _guidellm_args_for_load(benchmark_args, concurrency)
 
             logger.info(f"Starting benchmark for concurrency={concurrency}")
-            logger.info(f"  Original data: {data}")
-            logger.info(f"  Parsed data: {parsed_data}")
-            logger.info(f"  Original max_requests: {max_requests}")
-            logger.info(f"  Parsed max_requests: {parsed_max_requests}")
-            logger.info(f"  Original max_seconds: {max_seconds}")
-            logger.info(f"  Parsed max_seconds: {parsed_max_seconds}")
+            logger.info(f"  Parsed benchmark args: {iteration_args}")
 
             output_json = f"{output_dir}/benchmark_output_rate_{concurrency}.json"
-            iteration_args = dict(benchmark_args)
-            iteration_args["rates"] = [concurrency]
-            iteration_args["data"] = parsed_data
-            iteration_args["max_seconds"] = parsed_max_seconds
-            iteration_args["max_requests"] = parsed_max_requests
             json_path, console_log_path = run_guidellm_cli(
                 target=target,
                 model=model,
@@ -1000,17 +1277,10 @@ def run_benchmark_with_mlflow(
     configure_mlflow_tracking(mlflow_tracking_uri)
 
     mlflow.set_experiment(experiment_name)
-    rate = _rates_to_string(benchmark_args.get("rates"))
-    data = benchmark_args.get("data")
-    max_seconds = benchmark_args.get("max_seconds")
-    max_requests = benchmark_args.get("max_requests")
-    rate_type = benchmark_args.get("rate_type")
+    load_values = _guidellm_load_values(benchmark_args)
+    load_values_text = _rates_to_string(load_values)
 
-    multiturn_mode = _multiturn_mode_enabled(
-        data=data,
-        max_seconds=max_seconds,
-        max_requests=max_requests,
-    )
+    multiturn_mode = _multiturn_mode_enabled(benchmark_args)
 
     # Run name for the whole sweep
     # Use the execution name if provided by the backend, otherwise generate one
@@ -1022,7 +1292,8 @@ def run_benchmark_with_mlflow(
         run_name = f"{model.split('/')[-1]}_{mode_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     logger.info(
-        f"Starting benchmark sweep: rates={rate if rate is not None else 'not set'}"
+        "Starting benchmark sweep: load_values=%s",
+        load_values_text if load_values_text is not None else "not set",
     )
     if multiturn_mode:
         logger.info(
@@ -1046,16 +1317,41 @@ def run_benchmark_with_mlflow(
                 "decode_replicas": decode_replicas,
                 "multiturn_mode": multiturn_mode,
             }
+            profile_args = _guidellm_profile_mapping(benchmark_args)
+            backend_args = guidellm_backend_mapping(benchmark_args)
+            load_field = _guidellm_load_field(benchmark_args)
+            if profile_args:
+                params["profile"] = _stringify_data_profile_value(profile_args)
+                if profile_args.get("kind") is not None:
+                    params["profile_kind"] = str(profile_args["kind"])
+            if backend_args:
+                params["backend"] = _stringify_data_profile_value(backend_args)
+                if backend_args.get("kind") is not None:
+                    params["backend_type"] = str(backend_args["kind"])
+            if load_field:
+                params["load_field"] = load_field
+            if load_values_text:
+                params["load_values"] = load_values_text
+                # Existing comparison reports and historical MLflow runs use
+                # "rates"; keep the logged param compatible without requiring
+                # profiles to carry a legacy rates key.
+                params["rates"] = load_values_text
             for key, value in benchmark_args.items():
                 if value is None:
                     continue
                 if key == "data" and value:
-                    params.update(_parse_data_profile_config(str(value)))
+                    if isinstance(value, dict):
+                        params.update(
+                            {
+                                str(data_key): _stringify_data_profile_value(data_value)
+                                for data_key, data_value in value.items()
+                                if data_value is not None
+                            }
+                        )
+                    else:
+                        params.update(_parse_data_profile_config(str(value)))
                     continue
-                if key == "rates":
-                    rendered_rates = _rates_to_string(value)
-                    if rendered_rates:
-                        params["rates"] = rendered_rates
+                if key in {"backend", "profile"}:
                     continue
                 params[key] = _stringify_data_profile_value(value)
             if _pre_warmup_enabled(pre_warmup):
@@ -1112,46 +1408,25 @@ def run_benchmark_with_mlflow(
 
             # Multi-turn mode: loop over concurrencies and run separate commands
             if multiturn_mode:
-                concurrencies = [r.strip() for r in rate.split(",")]
-                logger.info(f"Running {len(concurrencies)} separate benchmark commands")
+                if not load_values:
+                    raise BenchmarkExecutionError(
+                        "multiturn benchmark requires profile load values to be set",
+                        run_id=run.info.run_id,
+                    )
+                logger.info(f"Running {len(load_values)} separate benchmark commands")
                 target_output_dir = Path(output_dir or "/tmp")
                 target_output_dir.mkdir(parents=True, exist_ok=True)
                 successful_concurrencies: list[int] = []
                 failed_concurrencies: list[tuple[str, str]] = []
 
-                for concurrency_str in concurrencies:
+                for load_value in load_values:
                     try:
-                        concurrency = int(concurrency_str)
+                        concurrency = int(load_value)
                         logger.info(f"Starting benchmark for concurrency={concurrency}")
-
-                        # Parse data and max_requests with concurrency substitution
-                        parsed_data = (
-                            parse_multiturn_data_param(data, concurrency)
-                            if data
-                            else None
+                        iteration_args = _guidellm_args_for_load(
+                            benchmark_args, concurrency
                         )
-                        parsed_max_requests = None
-                        if max_requests:
-                            parsed_max_requests = int(
-                                parse_multiturn_expression(
-                                    str(max_requests), concurrency
-                                )
-                            )
-
-                        parsed_max_seconds = None
-                        if max_seconds is not None:
-                            parsed_max_seconds = int(
-                                parse_multiturn_expression(
-                                    str(max_seconds), concurrency
-                                )
-                            )
-
-                        logger.info(f"  Original data: {data}")
-                        logger.info(f"  Parsed data: {parsed_data}")
-                        logger.info(f"  Original max_requests: {max_requests}")
-                        logger.info(f"  Parsed max_requests: {parsed_max_requests}")
-                        logger.info(f"  Original max_seconds: {max_seconds}")
-                        logger.info(f"  Parsed max_seconds: {parsed_max_seconds}")
+                        logger.info(f"  Parsed benchmark args: {iteration_args}")
 
                         # Generate unique output paths for this concurrency
                         output_json = str(
@@ -1159,11 +1434,6 @@ def run_benchmark_with_mlflow(
                             / f"benchmark_output_rate_{concurrency}.json"
                         )
                         console_log_path = output_json.replace(".json", "_console.log")
-                        iteration_args = dict(benchmark_args)
-                        iteration_args["rates"] = [concurrency]
-                        iteration_args["data"] = parsed_data
-                        iteration_args["max_requests"] = parsed_max_requests
-                        iteration_args["max_seconds"] = parsed_max_seconds
 
                         # Run guidellm for this concurrency only
                         json_path, console_log = run_guidellm_cli(
@@ -1217,11 +1487,11 @@ def run_benchmark_with_mlflow(
 
                     except Exception as e:
                         logger.error(
-                            f"Benchmark failed for concurrency={concurrency_str}: {e}",
+                            f"Benchmark failed for concurrency={concurrency}: {e}",
                             exc_info=True,
                         )
                         failed_concurrencies.append(
-                            (concurrency_str, str(e).strip() or type(e).__name__)
+                            (str(concurrency), str(e).strip() or type(e).__name__)
                         )
                         logger.info("Continuing with remaining concurrencies...")
                         continue
@@ -1276,14 +1546,13 @@ def run_benchmark_with_mlflow(
                     load_step = _extract_guidellm_load_step(
                         benchmark,
                         benchmark_index,
-                        rate_type=rate_type,
+                        rate_type="",
                     )
                     if load_step is None:
                         step_value, load_label, load_value = 0, "load_step", 0
                         logger.warning(
-                            "Could not find GuideLLM load value for rate_type=%s. "
-                            "Metrics will be logged at step 0.",
-                            rate_type,
+                            "Could not find GuideLLM load value. Metrics will be "
+                            "logged at step 0."
                         )
                     else:
                         step_value, load_label, load_value = load_step
@@ -2019,22 +2288,38 @@ def _run_benchmark_mode(
     decode_replicas: str,
 ) -> int:
     parsed_tags = _parse_tag_mappings(tags)
+    profile_kind = profile or rate_type or "concurrent"
+    profile_args: dict[str, Any] = {"kind": profile_kind}
+    override_args: dict[str, Any] = {}
+    if rate:
+        load_values = [item.strip() for item in rate.split(",") if item.strip()]
+        load_field = "rate" if profile_kind == "poisson" else "streams"
+        if profile_kind == "throughput":
+            load_field = "max_concurrency"
+        override_args[f"profile.{load_field}"] = load_values
+
     benchmark_args: dict[str, Any] = {
-        "backend_type": backend_type,
-        "rates": [item.strip() for item in rate.split(",")] if rate else None,
-        "data": data,
-        "max_seconds": max_seconds,
-        "max_requests": max_requests,
-        "processor": processor,
+        "backend": {"kind": backend_type},
+        "profile": profile_args,
+        "override": override_args or None,
+        "data": {"kind": "synthetic_text", **_parse_guidellm_mapping(data, "data")},
     }
-    if rate_type:
-        benchmark_args["rate_type"] = rate_type
     if data_samples is not None:
-        benchmark_args["data_samples"] = data_samples
+        benchmark_args["data_loader"] = {"kind": "pytorch", "samples": data_samples}
+    constraints: list[dict[str, Any]] = []
+    if max_seconds is not None:
+        constraints.append({"kind": "max_duration", "seconds": max_seconds})
+    if max_requests is not None:
+        constraints.append({"kind": "max_requests", "count": max_requests})
+    if constraints:
+        benchmark_args["constraint"] = constraints
     if warmup is not None:
         benchmark_args["warmup"] = warmup
-    if profile:
-        benchmark_args["profile"] = profile
+    if processor:
+        benchmark_args["tokenizer"] = {
+            "kind": "huggingface_auto",
+            "model": processor,
+        }
     benchmark_args = {
         key: value for key, value in benchmark_args.items() if value is not None
     }

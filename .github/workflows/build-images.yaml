@@ -231,9 +231,9 @@ jobs:
 
           LOCAL_IMAGE="local/benchflow:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           RESOLVED_BASE_IMAGE_REPOSITORY="${BASE_IMAGE_REPOSITORY:-ghcr.io/albertoperdomo2/guidellm}"
-          RESOLVED_BASE_IMAGE_TAG="${BASE_IMAGE_TAG:-nightly}"
+          RESOLVED_BASE_IMAGE_TAG="${BASE_IMAGE_TAG:-v0.7.0-aperdomo}"
           RESOLVED_BASE_IMAGE="${RESOLVED_BASE_IMAGE_REPOSITORY}:${RESOLVED_BASE_IMAGE_TAG}"
-          RESOLVED_GUIDELLM_VERSION_LABEL="albertoperdomo2-nightly"
+          RESOLVED_GUIDELLM_VERSION_LABEL="v0.7.0-aperdomo"
           if [[ -n "${BASE_IMAGE_REPOSITORY}" || -n "${BASE_IMAGE_TAG}" ]]; then
             RESOLVED_GUIDELLM_VERSION_LABEL="${RESOLVED_BASE_IMAGE}"
           fi

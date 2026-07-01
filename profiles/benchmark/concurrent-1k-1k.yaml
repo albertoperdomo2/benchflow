@@ -4,10 +4,18 @@ metadata:
   name: guidellm-concurrent-1k-1k
 spec:
   guidellm:
-    backend_type: openai_http
-    rate_type: concurrent
-    rates: [300, 200, 100, 50, 1]
-    data: prompt_tokens=1000,output_tokens=1000
-    max_seconds: 600
+    backend:
+      kind: openai_http
+    profile:
+      kind: concurrent
+    override:
+      profile.streams: [300, 200, 100, 50, 1]
+    data:
+      kind: synthetic_text
+      prompt_tokens: 1000
+      output_tokens: 1000
+    constraint:
+      - kind: max_duration
+        seconds: 600
   env:
     GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "DEBUG"

@@ -46,10 +46,26 @@ def _runtime_args(plan: ResolvedRunPlan) -> str:
     return " ".join(plan.deployment.runtime.vllm_args)
 
 
-def _join_optional_rates(rates: list[int] | None) -> str | None:
-    if not rates:
+def _join_optional_values(values: list[object] | None) -> str | None:
+    if not values:
         return None
-    return ",".join(str(rate) for rate in rates)
+    return ",".join(str(value) for value in values)
+
+
+def _constraint_summary(benchmark_args: dict[str, object]) -> str:
+    parts: list[str] = []
+    for constraint in runtime_module.guidellm_constraints(benchmark_args):
+        if not isinstance(constraint, dict):
+            parts.append(str(constraint))
+            continue
+        kind = str(constraint.get("kind", "") or "")
+        if kind == "max_duration":
+            parts.append(f"max_duration={constraint.get('seconds')}s")
+        elif kind == "max_requests":
+            parts.append(f"max_requests={constraint.get('count')}")
+        elif kind:
+            parts.append(kind)
+    return ", ".join(parts) if parts else "not set"
 
 
 def _configure_benchmark_runtime() -> dict[str, str]:
@@ -109,29 +125,30 @@ def run_benchmark(
     benchmark_env = _configure_benchmark_runtime()
     benchmark_env.update(plan.benchmark.env)
     accelerator = resolved_accelerator(plan)
-    rate_values = _join_optional_rates(guidellm.args.get("rates"))
     benchmark_args = dict(guidellm.args)
+    profile = runtime_module.guidellm_profile_mapping(benchmark_args)
+    backend = runtime_module.guidellm_backend_mapping(benchmark_args)
+    data = runtime_module.guidellm_data_mapping(benchmark_args)
+    load_values = _join_optional_values(
+        runtime_module.guidellm_load_values(benchmark_args)
+    )
+    load_field = runtime_module.guidellm_load_field(benchmark_args) or "load"
     if output_dir is not None:
         benchmark_env["GUIDELLM_OUTPUT_DIR"] = str(output_dir)
     step(f"Preparing benchmark run for {plan.model.name}")
     detail(f"Target: {benchmark_target}")
-    if rate_values:
-        detail(
-            f"Rates: {rate_values}, duration: {benchmark_args.get('max_seconds')}s, "
-            f"max requests: {benchmark_args.get('max_requests') if benchmark_args.get('max_requests') is not None else 'unbounded'}"
-        )
-    else:
-        detail(
-            f"Rates: not set, duration: {benchmark_args.get('max_seconds')}s, "
-            f"max requests: {benchmark_args.get('max_requests') if benchmark_args.get('max_requests') is not None else 'unbounded'}"
-        )
+    detail(
+        f"GuideLLM profile: {profile.get('kind', 'not set')}, "
+        f"{load_field}: {load_values or 'not set'}, "
+        f"constraints: {_constraint_summary(benchmark_args)}, "
+        f"backend: {backend.get('kind', 'openai_http')}"
+    )
+    detail(f"Benchmark data: {data}")
     detail(f"Benchmark output mode: {'MLflow' if enable_mlflow else 'local artifacts'}")
     detail(f"Runtime HOME: {benchmark_env['HOME']}")
     detail(f"Hugging Face cache: {benchmark_env['HF_HUB_CACHE']}")
     if output_dir is not None:
         detail(f"Output directory: {output_dir}")
-    if benchmark_args.get("processor_args"):
-        detail(f"GuideLLM processor args: {benchmark_args.get('processor_args')}")
 
     with _patched_environment(benchmark_env):
         try:

@@ -5,14 +5,28 @@ metadata:
   name: guidellm-x-70r-6kSys
 spec:
   guidellm:
-    backend_type: openai_http
-    profile: poisson
-    rates: [3, 10, 15, 20, 22, 25, 30, 35, 40, 43, 46, 49, 52, 55, 57, 60]
-    data: prompt_tokens=1200,output_tokens=1000,prefix_tokens=6000,prefix_count=150                                                                                                                                                                               
-    data_samples: 750  # 750 samples pool for the whole benchmark
-    max_seconds: 30
+    backend:
+      kind: openai_http
+    profile:
+      kind: poisson
+    override:
+      profile.rate: [3, 10, 15, 20, 22, 25, 30, 35, 40, 43, 46, 49, 52, 55, 57, 60]
+    data:
+      kind: synthetic_text
+      prompt_tokens: 1200
+      output_tokens: 1000
+      prefix_tokens: 6000
+      prefix_count: 150
+    data_loader:
+      kind: pytorch
+      samples: 750
+    constraint:
+      - kind: max_duration
+        seconds: 30
     pre_warmup:
       rate: 15
-      max_seconds: 50  # populate common-prefix KV cache before the measured sweep
+      constraint:
+        - kind: max_duration
+          seconds: 50  # populate common-prefix KV cache before the measured sweep
   env:
     GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "INFO"
