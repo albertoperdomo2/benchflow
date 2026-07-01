@@ -284,7 +284,11 @@ def _normalize_guidellm_benchmark_args(
 ) -> dict[str, Any]:
     args = _decode_guidellm_value(benchmark_args)
 
-    backend_defaults = {"kind": "openai_http", "timeout": 600}
+    backend_defaults = {
+        "kind": "openai_http",
+        "timeout": 600,
+        "validate_backend": False,
+    }
     if target.startswith("https://"):
         backend_defaults["verify"] = False
     _ensure_guidellm_mapping(
