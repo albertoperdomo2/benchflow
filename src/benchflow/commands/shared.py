@@ -341,6 +341,9 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 if base_experiment.spec.overrides.runtime.vllm_args is not None
                 else None
             ),
+            vllm_extra_args=list(
+                base_experiment.spec.overrides.runtime.vllm_extra_args
+            ),
             node_selector=(
                 dict(base_experiment.spec.overrides.runtime.node_selector)
                 if base_experiment.spec.overrides.runtime.node_selector is not None

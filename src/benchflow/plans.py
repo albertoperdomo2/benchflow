@@ -350,6 +350,10 @@ def _merge_model_override(
                     else None
                 )
             ),
+            vllm_extra_args=[
+                *base.runtime.vllm_extra_args,
+                *model_override.runtime.vllm_extra_args,
+            ],
             node_selector=_scalar_model_override(
                 model_override.runtime.node_selector,
                 base.runtime.node_selector,
@@ -483,11 +487,14 @@ def resolve_run_plan(
             else deployment_profile.spec.runtime.tensor_parallelism
         ),
         vllm_args=_resolve_vllm_args(
-            deployment_args=(
-                overrides.runtime.vllm_args
-                if overrides.runtime.vllm_args is not None
-                else deployment_profile.spec.runtime.vllm_args
-            ),
+            deployment_args=[
+                *(
+                    overrides.runtime.vllm_args
+                    if overrides.runtime.vllm_args is not None
+                    else deployment_profile.spec.runtime.vllm_args
+                ),
+                *overrides.runtime.vllm_extra_args,
+            ],
             benchmark_min_max_model_len=benchmark_profile.spec.requirements.min_max_model_len,
         ),
         env={

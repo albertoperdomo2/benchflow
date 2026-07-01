@@ -228,6 +228,9 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                                 is not None
                                 else None
                             ),
+                            vllm_extra_args=list(
+                                experiment.spec.overrides.runtime.vllm_extra_args
+                            ),
                             node_selector=(
                                 dict(experiment.spec.overrides.runtime.node_selector)
                                 if experiment.spec.overrides.runtime.node_selector

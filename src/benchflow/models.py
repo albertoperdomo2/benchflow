@@ -291,6 +291,7 @@ class OverrideScaleSpec:
 class OverrideRuntimeSpec:
     env: dict[str, str] = field(default_factory=dict)
     vllm_args: list[str] | None = None
+    vllm_extra_args: list[str] = field(default_factory=list)
     node_selector: dict[str, str] | None = None
     affinity: dict[str, Any] | None = None
     placement: "RuntimePlacementSpec | None" = None

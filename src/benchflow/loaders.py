@@ -335,6 +335,13 @@ def _overrides_from_dict(
                 if "vllm_args" in runtime
                 else None
             ),
+            vllm_extra_args=(
+                _string_list(
+                    runtime.get("vllm_extra_args"),
+                    f"{field_name}.runtime.vllm_extra_args",
+                )
+                or []
+            ),
             node_selector=(
                 _string_mapping(
                     runtime.get("node_selector"),
