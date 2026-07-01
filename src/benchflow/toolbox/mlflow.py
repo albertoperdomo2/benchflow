@@ -3,7 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
-from ..mlflow_upload import upload_artifact_directory_to_mlflow, upload_to_mlflow
+from ..mlflow_upload import (
+    initialize_mlflow_run,
+    mark_mlflow_run,
+    upload_artifact_directory_to_mlflow,
+    upload_to_mlflow,
+)
+
+
+def init_plan_mlflow_run(
+    plan: ResolvedRunPlan,
+    *,
+    execution_name: str = "",
+) -> tuple[str, str]:
+    return initialize_mlflow_run(plan, execution_name=execution_name)
 
 
 def upload_plan_results(
@@ -43,4 +56,17 @@ def upload_artifact_directory(
         cleanup_after_upload=cleanup_after_upload,
         preserve_names=preserve_names,
         exclude_names=exclude_names,
+    )
+
+
+def finish_mlflow_run(
+    *,
+    mlflow_run_id: str,
+    status: str,
+    reason: str = "",
+) -> None:
+    mark_mlflow_run(
+        mlflow_run_id=mlflow_run_id,
+        status=status,
+        reason=reason,
     )

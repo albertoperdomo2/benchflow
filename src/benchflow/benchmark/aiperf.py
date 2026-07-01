@@ -290,6 +290,7 @@ def run_benchmark(
     output_dir: Path | None = None,
     mlflow_tracking_uri: str | None = None,
     enable_mlflow: bool = True,
+    mlflow_run_id: str = "",
     extra_tags: dict[str, str] | None = None,
 ) -> tuple[str, str, str]:
     require_command("aiperf")
@@ -345,9 +346,16 @@ def run_benchmark(
                     "MLFLOW_TRACKING_URI is required when MLflow is enabled"
                 )
             configure_mlflow_tracking(tracking_uri)
-            mlflow.set_experiment(plan.mlflow.experiment)
-            with mlflow.start_run(tags=tags) as run:
+            mlflow.set_experiment(plan.mlflow.experiment or "Default")
+            start_run_kwargs = (
+                {"run_id": mlflow_run_id.strip()}
+                if str(mlflow_run_id or "").strip()
+                else {"tags": tags}
+            )
+            with mlflow.start_run(**start_run_kwargs) as run:
                 run_id = run.info.run_id
+                if mlflow_run_id:
+                    mlflow.set_tags(tags)
                 mlflow.log_param("benchmark_tool", "aiperf")
                 mlflow.log_param("backend_type", "openai_http")
                 if public_dataset:

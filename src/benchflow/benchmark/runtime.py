@@ -987,6 +987,7 @@ def run_benchmark_with_mlflow(
     accelerator: str = None,
     experiment_name: str = "guidellm-benchmarks",
     mlflow_tracking_uri: str = None,
+    mlflow_run_id: str = "",
     tags: Dict[str, str] = None,
     version: str = None,
     tp_size: int = 1,
@@ -1028,7 +1029,12 @@ def run_benchmark_with_mlflow(
             "Multiturn mode enabled - running separate commands per concurrency"
         )
 
-    with mlflow.start_run(run_name=run_name) as run:
+    start_run_kwargs = (
+        {"run_id": mlflow_run_id.strip()}
+        if str(mlflow_run_id or "").strip()
+        else {"run_name": run_name}
+    )
+    with mlflow.start_run(**start_run_kwargs) as run:
         try:
             # Common params for the whole sweep
             params = {

@@ -19,6 +19,9 @@ spec:
     - name: PIPELINE_RUN_NAME
       type: string
       default: ""
+    - name: MLFLOW_RUN_ID
+      type: string
+      default: ""
   workspaces:
     - name: results
       description: Workspace for benchmark outputs
@@ -127,6 +130,8 @@ spec:
         - $(workspaces.results.path)
         - --execution-name
         - $(params.PIPELINE_RUN_NAME)
+        - --mlflow-run-id
+        - $(params.MLFLOW_RUN_ID)
         - --mlflow-run-id-output
         - $(results.mlflow-run-id.path)
         - --benchmark-start-time-output

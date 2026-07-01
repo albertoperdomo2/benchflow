@@ -60,6 +60,7 @@ def run_benchmark(
     output_dir: Path | None = None,
     mlflow_tracking_uri: str | None = None,
     enable_mlflow: bool = True,
+    mlflow_run_id: str = "",
     extra_tags: dict[str, str] | None = None,
 ) -> tuple[str, str, str]:
     if plan.benchmark.tool == "guidellm":
@@ -69,6 +70,7 @@ def run_benchmark(
             output_dir=output_dir,
             mlflow_tracking_uri=mlflow_tracking_uri,
             enable_mlflow=enable_mlflow,
+            mlflow_run_id=mlflow_run_id,
             extra_tags=extra_tags,
         )
     if plan.benchmark.tool == "aiperf":
@@ -78,6 +80,7 @@ def run_benchmark(
             output_dir=output_dir,
             mlflow_tracking_uri=mlflow_tracking_uri,
             enable_mlflow=enable_mlflow,
+            mlflow_run_id=mlflow_run_id,
             extra_tags=extra_tags,
         )
     raise ValidationError(f"unsupported benchmark tool: {plan.benchmark.tool}")

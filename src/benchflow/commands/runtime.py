@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -53,9 +54,11 @@ from ..toolbox import (
     collect_plan_metrics,
     deploy_platform,
     download_cached_model,
+    finish_mlflow_run,
     generate_artifacts_run_report,
     generate_metrics_dashboard_report,
     generate_plan_report,
+    init_plan_mlflow_run,
     resolve_run_plan_stages,
     resolve_target_url,
     run_plan_benchmark,
@@ -690,6 +693,7 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
             output_dir=output_dir,
             mlflow_tracking_uri=args.mlflow_tracking_uri,
             enable_mlflow=not args.no_mlflow,
+            mlflow_run_id=args.mlflow_run_id or "",
             extra_tags=parse_mapping(args.tag, "--tag"),
             execution_name=args.execution_name or "",
         )
@@ -871,6 +875,58 @@ def cmd_mlflow_upload(args: argparse.Namespace) -> int:
         benchmark_end_time=args.benchmark_end_time,
         context=_execution_context(artifacts_dir=args.artifacts_dir),
         grafana_url=args.grafana_url or "",
+    )
+    print(args.mlflow_run_id)
+    return 0
+
+
+def _utc_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def cmd_mlflow_init(args: argparse.Namespace) -> int:
+    plan = load_runtime_plan(args)
+    run_id, start_time = init_plan_mlflow_run(
+        plan,
+        execution_name=args.execution_name or "",
+    )
+    if args.mlflow_run_id_output and run_id:
+        _write_output_file(args.mlflow_run_id_output, run_id)
+    if args.run_start_time_output and start_time:
+        _write_output_file(args.run_start_time_output, start_time)
+    print(run_id or "not configured")
+    return 0
+
+
+def cmd_mlflow_finalize(args: argparse.Namespace) -> int:
+    plan = load_runtime_plan(args)
+    artifacts_dir = Path(args.artifacts_dir).resolve()
+    if args.collect_artifacts:
+        collect_plan_artifacts(
+            plan,
+            context=_execution_context(
+                execution_name=args.execution_name or "",
+                artifacts_dir=artifacts_dir,
+            ),
+            mlflow_run_id=args.mlflow_run_id or "",
+        )
+    upload_plan_results(
+        plan,
+        mlflow_run_id=args.mlflow_run_id,
+        benchmark_start_time=args.benchmark_start_time or args.run_start_time or "",
+        benchmark_end_time=args.benchmark_end_time or args.run_end_time or _utc_now(),
+        context=_execution_context(artifacts_dir=artifacts_dir),
+        grafana_url=args.grafana_url or "",
+    )
+    finish_mlflow_run(
+        mlflow_run_id=args.mlflow_run_id,
+        status=args.status,
+        reason=args.reason or "",
     )
     print(args.mlflow_run_id)
     return 0
@@ -1630,6 +1686,10 @@ def benchmark_group() -> None:
     help="Owning execution name for MLflow tagging.",
 )
 @click.option(
+    "--mlflow-run-id",
+    help="Attach benchmark logs and metrics to an existing MLflow run.",
+)
+@click.option(
     "--mlflow-run-id-output",
     type=click.Path(dir_okay=False, path_type=Path),
     help="Write the MLflow run ID to this file.",
@@ -1953,6 +2013,30 @@ def mlflow_group() -> None:
 
 
 @mlflow_group.command(
+    "init",
+    help="Initialize the MLflow run for an execution before operational tasks start.",
+    short_help="Initialize an MLflow run",
+)
+@runtime_plan_source_options
+@click.option(
+    "--execution-name",
+    help="Owning execution name for MLflow tagging.",
+)
+@click.option(
+    "--mlflow-run-id-output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the initialized MLflow run ID to this file.",
+)
+@click.option(
+    "--run-start-time-output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the run initialization timestamp to this file.",
+)
+def mlflow_init_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_mlflow_init, **kwargs)
+
+
+@mlflow_group.command(
     "upload",
     help="Upload benchmark artifacts, metrics, and metadata to MLflow.",
     short_help="Upload artifacts and metrics to MLflow",
@@ -1981,6 +2065,66 @@ def mlflow_group() -> None:
 )
 def mlflow_upload_command(**kwargs: object) -> int:
     return invoke_handler(cmd_mlflow_upload, **kwargs)
+
+
+@mlflow_group.command(
+    "finalize",
+    help="Collect final artifacts, upload them, and terminate an MLflow run.",
+    short_help="Finalize an MLflow run",
+)
+@runtime_plan_source_options
+@click.option("--mlflow-run-id", required=True, help="MLflow run ID to update.")
+@click.option(
+    "--artifacts-dir",
+    required=True,
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Directory that contains or will receive the final artifact bundle.",
+)
+@click.option(
+    "--execution-name",
+    help="Execution name to collect artifacts from.",
+)
+@click.option(
+    "--run-start-time",
+    default="",
+    help="Run start time in ISO-8601 format.",
+)
+@click.option(
+    "--run-end-time",
+    default="",
+    help="Run end time in ISO-8601 format.",
+)
+@click.option(
+    "--benchmark-start-time",
+    default="",
+    help="Benchmark start time in ISO-8601 format, when available.",
+)
+@click.option(
+    "--benchmark-end-time",
+    default="",
+    help="Benchmark end time in ISO-8601 format, when available.",
+)
+@click.option(
+    "--grafana-url",
+    help="Grafana URL tag to attach to the MLflow run.",
+)
+@click.option(
+    "--status",
+    default="FAILED",
+    show_default=True,
+    help="MLflow terminal status to set.",
+)
+@click.option(
+    "--reason",
+    help="Short reason stored on the MLflow run.",
+)
+@click.option(
+    "--collect-artifacts",
+    is_flag=True,
+    help="Collect the run artifact bundle before uploading it.",
+)
+def mlflow_finalize_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_mlflow_finalize, **kwargs)
 
 
 @click.group(

@@ -94,6 +94,7 @@ def run_benchmark(
     output_dir: Path | None = None,
     mlflow_tracking_uri: str | None = None,
     enable_mlflow: bool = True,
+    mlflow_run_id: str = "",
     extra_tags: dict[str, str] | None = None,
 ) -> tuple[str, str, str]:
     module = _load_guidellm_module()
@@ -145,6 +146,7 @@ def run_benchmark(
                     experiment_name=plan.mlflow.experiment,
                     mlflow_tracking_uri=mlflow_tracking_uri
                     or os.environ.get("MLFLOW_TRACKING_URI"),
+                    mlflow_run_id=mlflow_run_id,
                     tags=tags,
                     version=benchmark_version_from_plan(plan),
                     tp_size=plan.deployment.runtime.tensor_parallelism,

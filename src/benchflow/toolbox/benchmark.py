@@ -86,6 +86,7 @@ def run_plan_benchmark(
     output_dir: Path | None = None,
     mlflow_tracking_uri: str | None = None,
     enable_mlflow: bool = True,
+    mlflow_run_id: str = "",
     extra_tags: dict[str, str] | None = None,
     execution_name: str = "",
 ) -> BenchmarkOutcome:
@@ -123,6 +124,7 @@ def run_plan_benchmark(
                         f"{remote_job_benchmark_dir(job_name)}/.benchmark-start-time",
                         "--benchmark-end-time-output",
                         f"{remote_job_benchmark_dir(job_name)}/.benchmark-end-time",
+                        *(["--mlflow-run-id", mlflow_run_id] if mlflow_run_id else []),
                         *(["--target-url", target_url] if target_url else []),
                         *(
                             ["--mlflow-tracking-uri", mlflow_tracking_uri]
@@ -158,7 +160,8 @@ def run_plan_benchmark(
                     )
                 raise BenchmarkRunFailed(
                     str(exc),
-                    run_id=_read_optional_text(staging_dir / ".mlflow-run-id"),
+                    run_id=_read_optional_text(staging_dir / ".mlflow-run-id")
+                    or mlflow_run_id,
                     start_time=_read_optional_text(
                         staging_dir / ".benchmark-start-time"
                     ),
@@ -171,7 +174,8 @@ def run_plan_benchmark(
                 local_dir=staging_dir,
             )
             outcome = BenchmarkOutcome(
-                run_id=_read_optional_text(staging_dir / ".mlflow-run-id"),
+                run_id=_read_optional_text(staging_dir / ".mlflow-run-id")
+                or mlflow_run_id,
                 start_time=_read_optional_text(staging_dir / ".benchmark-start-time"),
                 end_time=_read_optional_text(staging_dir / ".benchmark-end-time"),
             )
@@ -202,6 +206,7 @@ def run_plan_benchmark(
             mlflow_tracking_uri=mlflow_tracking_uri,
             enable_mlflow=enable_mlflow,
             extra_tags=extra_tags or {},
+            mlflow_run_id=mlflow_run_id,
         )
     finally:
         if execution_name:

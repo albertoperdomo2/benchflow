@@ -41,8 +41,20 @@ spec:
         - name: RUN_PLAN
           value: $(params.RUN_PLAN)
 
-    - name: setup-run-plan
+    - name: init-mlflow-run
       runAfter: [resolve-run-plan]
+      taskRef:
+        name: init-mlflow-run
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+        - name: PIPELINE_RUN_NAME
+          value: "$(context.pipelineRun.name)"
+
+    - name: setup-run-plan
+      runAfter: [init-mlflow-run]
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-deploy)"
           operator: in
@@ -159,6 +171,8 @@ spec:
           value: $(params.RUN_PLAN)
         - name: PIPELINE_RUN_NAME
           value: "$(context.pipelineRun.name)"
+        - name: MLFLOW_RUN_ID
+          value: "$(tasks.init-mlflow-run.results.mlflow-run-id)"
       workspaces:
         - name: results
           workspace: results
@@ -183,7 +197,7 @@ spec:
         - name: PIPELINE_RUN_NAME
           value: "$(context.pipelineRun.name)"
         - name: MLFLOW_RUN_ID
-          value: "$(tasks.benchmark.results.mlflow-run-id)"
+          value: "$(tasks.init-mlflow-run.results.mlflow-run-id)"
       workspaces:
         - name: artifacts
           workspace: results
@@ -213,7 +227,7 @@ spec:
         - name: BENCHMARK_END_TIME
           value: "$(tasks.benchmark.results.benchmark-end-time)"
         - name: MLFLOW_RUN_ID
-          value: "$(tasks.benchmark.results.mlflow-run-id)"
+          value: "$(tasks.init-mlflow-run.results.mlflow-run-id)"
       workspaces:
         - name: artifacts
           workspace: results
@@ -235,7 +249,7 @@ spec:
         - name: RUN_PLAN
           value: $(params.RUN_PLAN)
         - name: MLFLOW_RUN_ID
-          value: "$(tasks.benchmark.results.mlflow-run-id)"
+          value: "$(tasks.init-mlflow-run.results.mlflow-run-id)"
         - name: BENCHMARK_START_TIME
           value: "$(tasks.benchmark.results.benchmark-start-time)"
         - name: BENCHMARK_END_TIME
@@ -273,13 +287,44 @@ spec:
         - name: CHILD_EXECUTION_NAME
           value: "$(context.pipelineRun.name)"
         - name: MLFLOW_RUN_ID
-          value: "$(tasks.benchmark.results.mlflow-run-id)"
+          value: "$(tasks.init-mlflow-run.results.mlflow-run-id)"
         - name: BENCHMARK_START_TIME
           value: "$(tasks.benchmark.results.benchmark-start-time)"
         - name: BENCHMARK_END_TIME
           value: "$(tasks.benchmark.results.benchmark-end-time)"
 
   finally:
+    - name: finalize-mlflow-run
+      when:
+        - input: "$(tasks.resolve-run-plan.results.stage-collect)"
+          operator: in
+          values: ["true"]
+        - input: "$(tasks.upload-to-mlflow.status)"
+          operator: notin
+          values: ["Succeeded"]
+      taskRef:
+        name: finalize-mlflow-run
+      params:
+        - name: IMAGE
+          value: $(params.BENCHFLOW_IMAGE)
+        - name: RUN_PLAN
+          value: $(params.RUN_PLAN)
+        - name: PIPELINE_RUN_NAME
+          value: "$(context.pipelineRun.name)"
+        - name: MLFLOW_RUN_ID
+          value: "$(tasks.init-mlflow-run.results.mlflow-run-id)"
+        - name: RUN_START_TIME
+          value: "$(tasks.init-mlflow-run.results.run-start-time)"
+        - name: STATUS
+          value: FAILED
+        - name: REASON
+          value: "normal MLflow upload did not complete"
+      workspaces:
+        - name: artifacts
+          workspace: results
+          subPath: $(context.pipelineRun.name)
+        - name: target-kubeconfig
+          workspace: target-kubeconfig
     - name: cleanup
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-cleanup)"

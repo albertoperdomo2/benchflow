@@ -118,9 +118,104 @@ def _ensure_artifact_layout(artifacts_dir: Path) -> None:
         "logs/infra",
         "logs/storage-offloading",
         "manifests",
+        "platform-state",
         "profiling",
     ):
         (artifacts_dir / relative).mkdir(parents=True, exist_ok=True)
+
+
+def _write_command_snapshot(
+    kubectl_cmd: str,
+    output_dir: Path,
+    name: str,
+    command: list[str],
+) -> bool:
+    result = run_command([kubectl_cmd, *command], capture_output=True, check=False)
+    output = result.stdout or result.stderr or ""
+    if not output.strip():
+        return False
+    suffix = "txt" if result.returncode == 0 else "error.txt"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{name}.{suffix}").write_text(output, encoding="utf-8")
+    return result.returncode == 0
+
+
+def _collect_platform_state(
+    kubectl_cmd: str,
+    namespace: str,
+    release_name: str,
+    artifacts_dir: Path,
+) -> int:
+    state_dir = artifacts_dir / "platform-state"
+    snapshot_count = 0
+    for name, command in (
+        ("pods-wide", ["get", "pods", "-n", namespace, "-o", "wide"]),
+        ("pods-json", ["get", "pods", "-n", namespace, "-o", "json"]),
+        (
+            "workloads",
+            [
+                "get",
+                "deployments,statefulsets,replicasets,jobs,pods,services",
+                "-n",
+                namespace,
+                "-o",
+                "wide",
+            ],
+        ),
+        ("httproutes", ["get", "httproutes", "-n", namespace, "-o", "wide"]),
+        ("gateways", ["get", "gateways", "-n", namespace, "-o", "wide"]),
+        (
+            "inferenceservices",
+            ["get", "inferenceservices", "-n", namespace, "-o", "wide"],
+        ),
+        (
+            "llminferenceservices",
+            ["get", "llminferenceservices", "-n", namespace, "-o", "wide"],
+        ),
+        (
+            "events",
+            [
+                "get",
+                "events",
+                "-n",
+                namespace,
+                "--sort-by=.lastTimestamp",
+            ],
+        ),
+    ):
+        if _write_command_snapshot(kubectl_cmd, state_dir, name, command):
+            snapshot_count += 1
+
+    pods_payload = run_command(
+        [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if pods_payload.returncode != 0 or not pods_payload.stdout.strip():
+        return snapshot_count
+    try:
+        payload = json.loads(pods_payload.stdout)
+    except json.JSONDecodeError:
+        return snapshot_count
+
+    describe_dir = state_dir / "describe"
+    for item in payload.get("items", []):
+        metadata = item.get("metadata", {})
+        if not isinstance(metadata, dict) or not _matches_release(
+            metadata, release_name
+        ):
+            continue
+        pod_name = str(metadata.get("name") or "")
+        if not pod_name:
+            continue
+        if _write_command_snapshot(
+            kubectl_cmd,
+            describe_dir,
+            f"pod-{pod_name}",
+            ["describe", "pod", pod_name, "-n", namespace],
+        ):
+            snapshot_count += 1
+    return snapshot_count
 
 
 def _collect_storage_offloading_dir_size(
@@ -302,6 +397,13 @@ def collect_artifacts(
 
     namespace = plan.deployment.namespace
     release_name = plan.deployment.release_name
+    platform_state_count = _collect_platform_state(
+        kubectl_cmd,
+        namespace,
+        release_name,
+        artifacts_dir,
+    )
+    detail(f"Collected {platform_state_count} platform state snapshot(s)")
 
     execution_pod_count = 0
     execution_pods: list[str] = []
@@ -509,6 +611,7 @@ def collect_artifacts(
         "profiling_files": profiling_file_count,
         "storage_offloading_logs": storage_offloading_log_count,
         "manifest_files": manifest_count,
+        "platform_state_files": platform_state_count,
         "timestamp": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()

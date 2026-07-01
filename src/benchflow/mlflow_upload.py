@@ -4,9 +4,10 @@ import json
 import os
 import shutil
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
+import mlflow
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 
 from .benchmark import generate_run_report
@@ -15,6 +16,94 @@ from .mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from .models import ResolvedRunPlan
 from .remote_jobs import copy_remote_results_directory
 from .ui import detail, step, success, warning
+
+
+def _iso8601_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _mlflow_tracking_uri() -> str:
+    return str(os.environ.get("MLFLOW_TRACKING_URI", "")).strip()
+
+
+def _run_name(plan: ResolvedRunPlan, execution_name: str = "") -> str:
+    return (
+        str(execution_name or "").strip()
+        or plan.deployment.release_name
+        or f"{plan.model.name.split('/')[-1]}-{_iso8601_now()}"
+    )
+
+
+def _initial_run_tags(
+    plan: ResolvedRunPlan, execution_name: str = ""
+) -> dict[str, str]:
+    tags = dict(plan.mlflow.tags)
+    tags.update(
+        {
+            "benchmark_tool": plan.benchmark.tool,
+            "benchflow.run_initialized": "true",
+            "deployment_profile": plan.deployment.profile,
+            "deployment_type": plan.deployment.type,
+            "model": plan.model.name,
+            "version": plan.mlflow.version,
+        }
+    )
+    if execution_name:
+        tags["execution_name"] = execution_name
+    tags["mlflow.runName"] = _run_name(plan, execution_name)
+    return {key: value for key, value in tags.items() if value}
+
+
+def initialize_mlflow_run(
+    plan: ResolvedRunPlan,
+    *,
+    execution_name: str = "",
+) -> tuple[str, str]:
+    run_start_time = _iso8601_now()
+    explicit_tracking_uri = _mlflow_tracking_uri()
+    if not explicit_tracking_uri:
+        warning(
+            "Skipping MLflow run initialization because MLFLOW_TRACKING_URI is not configured"
+        )
+        return "", run_start_time
+
+    configure_mlflow_tracking(explicit_tracking_uri)
+    experiment_name = plan.mlflow.experiment or "Default"
+    experiment = mlflow.set_experiment(experiment_name)
+    client = create_mlflow_client(explicit_tracking_uri)
+    run = client.create_run(
+        experiment.experiment_id,
+        tags=_initial_run_tags(plan, execution_name),
+    )
+    detail(f"Initialized MLflow run {run.info.run_id} in experiment {experiment_name}")
+    return run.info.run_id, run_start_time
+
+
+def mark_mlflow_run(
+    *,
+    mlflow_run_id: str,
+    status: str,
+    reason: str = "",
+) -> None:
+    explicit_tracking_uri = _mlflow_tracking_uri()
+    if not mlflow_run_id or not explicit_tracking_uri:
+        return
+    client = create_mlflow_client(explicit_tracking_uri)
+    normalized_status = status.strip().upper() or "FAILED"
+    if reason:
+        client.set_tag(mlflow_run_id, "benchflow.finalizer_reason", reason)
+    client.set_tag(mlflow_run_id, "benchflow.final_status", normalized_status)
+    try:
+        client.set_terminated(mlflow_run_id, status=normalized_status)
+    except Exception as exc:  # noqa: BLE001
+        warning(
+            f"Failed to mark MLflow run {mlflow_run_id} as {normalized_status}: {exc}"
+        )
 
 
 def _discover_grafana_base_url(namespace: str) -> str:

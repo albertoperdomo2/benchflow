@@ -9,7 +9,12 @@ from .metrics import (
     generate_metrics_dashboard_report,
     serve_metrics_dashboard,
 )
-from .mlflow import upload_artifact_directory, upload_plan_results
+from .mlflow import (
+    finish_mlflow_run,
+    init_plan_mlflow_run,
+    upload_artifact_directory,
+    upload_plan_results,
+)
 from .model import download_cached_model
 from .platform import (
     cleanup_deployment,
@@ -30,6 +35,8 @@ __all__ = [
     "generate_artifacts_run_report",
     "generate_metrics_dashboard_report",
     "generate_plan_report",
+    "finish_mlflow_run",
+    "init_plan_mlflow_run",
     "resolve_target_url",
     "resolve_run_plan_stages",
     "run_plan_benchmark",

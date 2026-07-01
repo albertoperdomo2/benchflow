@@ -1,0 +1,110 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: finalize-mlflow-run
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/displayName: "Finalize MLflow Run"
+spec:
+  description: >-
+    Collect final artifacts and terminate a pre-created MLflow run when the
+    normal upload path does not complete.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow:latest
+    - name: RUN_PLAN
+      type: string
+    - name: PIPELINE_RUN_NAME
+      type: string
+      default: ""
+    - name: MLFLOW_RUN_ID
+      type: string
+      default: ""
+    - name: RUN_START_TIME
+      type: string
+      default: ""
+    - name: STATUS
+      type: string
+      default: FAILED
+    - name: REASON
+      type: string
+      default: "normal MLflow upload did not complete"
+  workspaces:
+    - name: artifacts
+      description: Workspace containing or receiving the full per-run artifact bundle
+    - name: target-kubeconfig
+      description: Optional kubeconfig for remote target-cluster operations
+      optional: true
+  steps:
+    - name: finalize
+      image: $(params.IMAGE)
+      imagePullPolicy: Always
+      env:
+        - name: BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE
+          value: $(workspaces.target-kubeconfig.path)
+        - name: MLFLOW_TRACKING_URI
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: tracking-uri
+              optional: true
+        - name: MLFLOW_TRACKING_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: username
+              optional: true
+        - name: MLFLOW_TRACKING_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: password
+              optional: true
+        - name: MLFLOW_WORKSPACE
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: workspace
+              optional: true
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-s3-secret
+              key: access-key
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-s3-secret
+              key: secret-key
+              optional: true
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-s3-secret
+              key: region
+              optional: true
+        - name: MLFLOW_TRACKING_INSECURE_TLS
+          value: "true"
+      command:
+        - bflow
+      args:
+        - mlflow
+        - finalize
+        - --run-plan-json
+        - $(params.RUN_PLAN)
+        - --mlflow-run-id
+        - $(params.MLFLOW_RUN_ID)
+        - --artifacts-dir
+        - $(workspaces.artifacts.path)
+        - --execution-name
+        - $(params.PIPELINE_RUN_NAME)
+        - --run-start-time
+        - $(params.RUN_START_TIME)
+        - --status
+        - $(params.STATUS)
+        - --reason
+        - $(params.REASON)
+        - --collect-artifacts

@@ -1,0 +1,88 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: init-mlflow-run
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/displayName: "Initialize MLflow Run"
+spec:
+  description: >-
+    Create the MLflow run before operational tasks start so failed deployments
+    still have a durable run for logs and platform state.
+  params:
+    - name: IMAGE
+      type: string
+      default: ghcr.io/albertoperdomo2/benchflow:latest
+    - name: RUN_PLAN
+      type: string
+    - name: PIPELINE_RUN_NAME
+      type: string
+      default: ""
+  results:
+    - name: mlflow-run-id
+      description: Initialized MLflow run ID
+    - name: run-start-time
+      description: Run initialization timestamp (ISO8601)
+  steps:
+    - name: init
+      image: $(params.IMAGE)
+      imagePullPolicy: Always
+      env:
+        - name: MLFLOW_TRACKING_URI
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: tracking-uri
+              optional: true
+        - name: MLFLOW_TRACKING_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: username
+              optional: true
+        - name: MLFLOW_TRACKING_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: password
+              optional: true
+        - name: MLFLOW_WORKSPACE
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-ui-auth
+              key: workspace
+              optional: true
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-s3-secret
+              key: access-key
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-s3-secret
+              key: secret-key
+              optional: true
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            secretKeyRef:
+              name: mlflow-s3-secret
+              key: region
+              optional: true
+        - name: MLFLOW_TRACKING_INSECURE_TLS
+          value: "true"
+      command:
+        - bflow
+      args:
+        - mlflow
+        - init
+        - --run-plan-json
+        - $(params.RUN_PLAN)
+        - --execution-name
+        - $(params.PIPELINE_RUN_NAME)
+        - --mlflow-run-id-output
+        - $(results.mlflow-run-id.path)
+        - --run-start-time-output
+        - $(results.run-start-time.path)
