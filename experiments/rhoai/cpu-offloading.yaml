@@ -1,0 +1,56 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: cpu-offloading-24g
+spec:
+  model:
+    name:
+      # - QuantTrio/GLM-5.2-Int4-Int8Mix
+      # - nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4
+      # - RedHatAI/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8-dynamic
+      - deepseek-ai/DeepSeek-V4-Flash
+      - nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+      - google/gemma-4-31B
+      - Qwen/Qwen3.6-35B-A3B
+  deployment_profile: 
+    - cpu-kv-offload-distributed-default
+    - rhoai-cpu-kv-offload-24g
+  benchmark_profile:
+    - cpu-offloading-short-context
+    - cpu-offloading-long-output
+    - cpu-offloading-long-context
+  model_overrides:
+    deepseek-ai/DeepSeek-V4-Flash:
+      runtime:
+        vllm_extra_args:
+          - --kv-cache-dtype=fp8
+      scale:
+        tensor_parallelism: 8
+    nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8:
+      scale:
+        tensor_parallelism: 4
+  overrides:
+    images:
+      runtime: vllm/vllm-openai:v0.23.0
+    runtime:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  kserve.io/component: workload
+              matchLabelKeys:
+                - app.kubernetes.io/name
+      placement:
+        mode: sequential
+  metrics_profile: detailed
+  target:
+    endpoint_scope: internal
+  mlflow:
+    tags:
+      accelerator: H100
+  namespace: benchflow
+  execution:
+    timeout: 8h
