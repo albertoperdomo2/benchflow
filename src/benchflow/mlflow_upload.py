@@ -200,14 +200,15 @@ def _merge_artifact_tree(source_dir: Path, target_dir: Path) -> None:
     for child in source_dir.iterdir():
         target = target_dir / child.name
         if child.is_dir():
-            shutil.copytree(child, target, dirs_exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
+            _merge_artifact_tree(child, target)
             continue
         if child.name == "metadata.json" and target.exists():
             merged = {**_load_json_file(child), **_load_json_file(target)}
             target.write_text(json.dumps(merged, indent=2), encoding="utf-8")
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(child, target)
+        shutil.copyfile(child, target)
 
 
 def _materialize_remote_tree_if_needed(
