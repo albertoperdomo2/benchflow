@@ -222,6 +222,12 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                         ),
                         runtime=OverrideRuntimeSpec(
                             env=dict(experiment.spec.overrides.runtime.env),
+                            vllm_args=(
+                                list(experiment.spec.overrides.runtime.vllm_args)
+                                if experiment.spec.overrides.runtime.vllm_args
+                                is not None
+                                else None
+                            ),
                             node_selector=(
                                 dict(experiment.spec.overrides.runtime.node_selector)
                                 if experiment.spec.overrides.runtime.node_selector
@@ -273,6 +279,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                             enable_auth=experiment.spec.overrides.rhoai.enable_auth
                         ),
                     ),
+                    model_overrides=deepcopy(experiment.spec.model_overrides),
                 ),
             )
         )

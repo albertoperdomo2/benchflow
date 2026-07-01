@@ -7,6 +7,13 @@ from .llmd_layout import uses_recipe_layout as _llmd_uses_recipe_layout
 from .models import (
     Experiment,
     MlflowSpec,
+    OverrideBenchmarkSpec,
+    OverrideImagesSpec,
+    OverrideLlmdSpec,
+    OverrideRhoaiSpec,
+    OverrideRuntimeSpec,
+    OverrideScaleSpec,
+    OverrideSpec,
     ProfileRefs,
     ResolvedDeployment,
     ResolvedRunPlan,
@@ -297,6 +304,110 @@ def _resolve_vllm_args(
     return resolved_args
 
 
+def _scalar_model_override(value, fallback):
+    return deepcopy(value) if value is not None else deepcopy(fallback)
+
+
+def _optional_env_override(
+    base: dict[str, str] | None, model: dict[str, str] | None
+) -> dict[str, str] | None:
+    if model is None:
+        return deepcopy(base) if base is not None else None
+    return {**(base or {}), **model}
+
+
+def _merge_model_override(
+    base: OverrideSpec, model_override: OverrideSpec | None
+) -> OverrideSpec:
+    if model_override is None:
+        return deepcopy(base)
+    return OverrideSpec(
+        images=OverrideImagesSpec(
+            runtime=_scalar_model_override(
+                model_override.images.runtime, base.images.runtime
+            ),
+            scheduler=_scalar_model_override(
+                model_override.images.scheduler, base.images.scheduler
+            ),
+        ),
+        scale=OverrideScaleSpec(
+            replicas=_scalar_model_override(
+                model_override.scale.replicas, base.scale.replicas
+            ),
+            tensor_parallelism=_scalar_model_override(
+                model_override.scale.tensor_parallelism,
+                base.scale.tensor_parallelism,
+            ),
+        ),
+        runtime=OverrideRuntimeSpec(
+            env={**base.runtime.env, **model_override.runtime.env},
+            vllm_args=(
+                list(model_override.runtime.vllm_args)
+                if model_override.runtime.vllm_args is not None
+                else (
+                    list(base.runtime.vllm_args)
+                    if base.runtime.vllm_args is not None
+                    else None
+                )
+            ),
+            node_selector=_scalar_model_override(
+                model_override.runtime.node_selector,
+                base.runtime.node_selector,
+            ),
+            affinity=_scalar_model_override(
+                model_override.runtime.affinity,
+                base.runtime.affinity,
+            ),
+            placement=_scalar_model_override(
+                model_override.runtime.placement,
+                base.runtime.placement,
+            ),
+            tolerations=_scalar_model_override(
+                model_override.runtime.tolerations,
+                base.runtime.tolerations,
+            ),
+            resources=_scalar_model_override(
+                model_override.runtime.resources,
+                base.runtime.resources,
+            ),
+        ),
+        benchmark=OverrideBenchmarkSpec(
+            rates=_scalar_model_override(
+                model_override.benchmark.rates,
+                base.benchmark.rates,
+            ),
+            max_seconds=_scalar_model_override(
+                model_override.benchmark.max_seconds,
+                base.benchmark.max_seconds,
+            ),
+            max_requests=_scalar_model_override(
+                model_override.benchmark.max_requests,
+                base.benchmark.max_requests,
+            ),
+            request_type=_scalar_model_override(
+                model_override.benchmark.request_type,
+                base.benchmark.request_type,
+            ),
+            env=_optional_env_override(
+                base.benchmark.env,
+                model_override.benchmark.env,
+            ),
+        ),
+        llm_d=OverrideLlmdSpec(
+            repo_ref=_scalar_model_override(
+                model_override.llm_d.repo_ref,
+                base.llm_d.repo_ref,
+            ),
+        ),
+        rhoai=OverrideRhoaiSpec(
+            enable_auth=_scalar_model_override(
+                model_override.rhoai.enable_auth,
+                base.rhoai.enable_auth,
+            ),
+        ),
+    )
+
+
 def _resolve_runtime_resources(
     profile: RuntimeResourcesSpec, override: RuntimeResourcesSpec | None
 ) -> RuntimeResourcesSpec:
@@ -341,7 +452,10 @@ def resolve_run_plan(
 
     release_name = _release_name_for(experiment)
     namespace = deployment_profile.spec.namespace or experiment.spec.namespace
-    overrides = experiment.spec.overrides
+    overrides = _merge_model_override(
+        experiment.spec.overrides,
+        experiment.spec.model_overrides.get(model_name),
+    )
 
     runtime_image_override = _scalar_override(
         overrides.images.runtime, "spec.overrides.images.runtime"
@@ -369,7 +483,11 @@ def resolve_run_plan(
             else deployment_profile.spec.runtime.tensor_parallelism
         ),
         vllm_args=_resolve_vllm_args(
-            deployment_args=deployment_profile.spec.runtime.vllm_args,
+            deployment_args=(
+                overrides.runtime.vllm_args
+                if overrides.runtime.vllm_args is not None
+                else deployment_profile.spec.runtime.vllm_args
+            ),
             benchmark_min_max_model_len=benchmark_profile.spec.requirements.min_max_model_len,
         ),
         env={

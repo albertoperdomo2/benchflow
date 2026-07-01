@@ -70,6 +70,14 @@ def _string_or_list(raw: Any, field_name: str) -> str | list[str] | None:
     )
 
 
+def _string_list(raw: Any, field_name: str) -> list[str] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValidationError(f"{field_name} must be a list of strings")
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
 def _int_or_list(raw: Any, field_name: str) -> int | list[int] | None:
     if raw is None:
         return None
@@ -284,8 +292,12 @@ def _local_object_reference_list(raw: Any, field_name: str) -> list[dict[str, st
     return refs
 
 
-def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
+def _overrides_from_dict(
+    raw: dict[str, Any] | None, *, field_name: str = "spec.overrides"
+) -> OverrideSpec:
     raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ValidationError(f"{field_name} must be a mapping")
     images = raw.get("images") or {}
     scale = raw.get("scale") or {}
     runtime = raw.get("runtime") or {}
@@ -296,19 +308,19 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
     return OverrideSpec(
         images=OverrideImagesSpec(
             runtime=_string_or_list(
-                images.get("runtime"), "spec.overrides.images.runtime"
+                images.get("runtime"), f"{field_name}.images.runtime"
             ),
             scheduler=_string_or_list(
-                images.get("scheduler"), "spec.overrides.images.scheduler"
+                images.get("scheduler"), f"{field_name}.images.scheduler"
             ),
         ),
         scale=OverrideScaleSpec(
             replicas=_int_or_list(
-                scale.get("replicas"), "spec.overrides.scale.replicas"
+                scale.get("replicas"), f"{field_name}.scale.replicas"
             ),
             tensor_parallelism=_int_or_list(
                 scale.get("tensor_parallelism"),
-                "spec.overrides.scale.tensor_parallelism",
+                f"{field_name}.scale.tensor_parallelism",
             ),
         ),
         runtime=OverrideRuntimeSpec(
@@ -316,22 +328,29 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
                 str(key): str(value)
                 for key, value in (runtime.get("env") or {}).items()
             },
+            vllm_args=(
+                _string_list(
+                    runtime.get("vllm_args"), f"{field_name}.runtime.vllm_args"
+                )
+                if "vllm_args" in runtime
+                else None
+            ),
             node_selector=(
                 _string_mapping(
                     runtime.get("node_selector"),
-                    "spec.overrides.runtime.node_selector",
+                    f"{field_name}.runtime.node_selector",
                 )
                 if "node_selector" in runtime
                 else None
             ),
             affinity=(
-                _mapping(runtime.get("affinity"), "spec.overrides.runtime.affinity")
+                _mapping(runtime.get("affinity"), f"{field_name}.runtime.affinity")
                 if "affinity" in runtime
                 else None
             ),
             placement=(
                 _runtime_placement_from_dict(
-                    runtime.get("placement"), "spec.overrides.runtime.placement"
+                    runtime.get("placement"), f"{field_name}.runtime.placement"
                 )
                 if "placement" in runtime
                 else None
@@ -339,37 +358,37 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
             tolerations=(
                 _mapping_list(
                     runtime.get("tolerations"),
-                    "spec.overrides.runtime.tolerations",
+                    f"{field_name}.runtime.tolerations",
                 )
                 if "tolerations" in runtime
                 else None
             ),
             resources=(
                 _runtime_resources_from_dict(
-                    runtime.get("resources"), "spec.overrides.runtime.resources"
+                    runtime.get("resources"), f"{field_name}.runtime.resources"
                 )
                 if "resources" in runtime
                 else None
             ),
         ),
         benchmark=OverrideBenchmarkSpec(
-            rates=_int_list(benchmark.get("rates"), "spec.overrides.benchmark.rates"),
+            rates=_int_list(benchmark.get("rates"), f"{field_name}.benchmark.rates"),
             max_seconds=_positive_int(
                 benchmark.get("max_seconds"),
-                "spec.overrides.benchmark.max_seconds",
+                f"{field_name}.benchmark.max_seconds",
             ),
             max_requests=_nonempty_string(
                 benchmark.get("max_requests"),
-                "spec.overrides.benchmark.max_requests",
+                f"{field_name}.benchmark.max_requests",
             ),
             request_type=_nonempty_string(
                 benchmark.get("request_type"),
-                "spec.overrides.benchmark.request_type",
+                f"{field_name}.benchmark.request_type",
             ),
             env=(
                 _string_mapping(
                     benchmark.get("env"),
-                    "spec.overrides.benchmark.env",
+                    f"{field_name}.benchmark.env",
                 )
                 if "env" in benchmark
                 else None
@@ -377,7 +396,7 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
         ),
         llm_d=OverrideLlmdSpec(
             repo_ref=_string_or_list(
-                llm_d.get("repo_ref"), "spec.overrides.llm_d.repo_ref"
+                llm_d.get("repo_ref"), f"{field_name}.llm_d.repo_ref"
             )
         ),
         rhoai=OverrideRhoaiSpec(
@@ -388,6 +407,42 @@ def _overrides_from_dict(raw: dict[str, Any] | None) -> OverrideSpec:
             )
         ),
     )
+
+
+def _reject_model_override_axes(override: OverrideSpec, *, field_name: str) -> None:
+    axis_fields = {
+        "images.runtime": override.images.runtime,
+        "images.scheduler": override.images.scheduler,
+        "scale.replicas": override.scale.replicas,
+        "scale.tensor_parallelism": override.scale.tensor_parallelism,
+        "llm_d.repo_ref": override.llm_d.repo_ref,
+    }
+    for suffix, value in axis_fields.items():
+        if isinstance(value, list):
+            raise ValidationError(
+                f"{field_name}.{suffix} must be a scalar; "
+                "model_overrides do not define matrix axes"
+            )
+
+
+def _model_overrides_from_dict(raw: Any) -> dict[str, OverrideSpec]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValidationError("spec.model_overrides must be a mapping")
+    overrides: dict[str, OverrideSpec] = {}
+    for model_name, override_raw in raw.items():
+        cleaned_model_name = str(model_name).strip()
+        if not cleaned_model_name:
+            raise ValidationError("spec.model_overrides keys must not be empty")
+        field_name = f"spec.model_overrides.{cleaned_model_name}"
+        override = _overrides_from_dict(
+            override_raw,
+            field_name=field_name,
+        )
+        _reject_model_override_axes(override, field_name=field_name)
+        overrides[cleaned_model_name] = override
+    return overrides
 
 
 def _target_cluster_from_dict(raw: dict[str, Any] | None) -> ClusterTargetSpec:
@@ -531,6 +586,7 @@ def load_experiment(path: Path) -> Experiment:
         target=_experiment_target_from_dict(spec.get("target")),
         target_cluster=_target_cluster_from_dict(spec.get("target_cluster")),
         overrides=_overrides_from_dict(spec.get("overrides")),
+        model_overrides=_model_overrides_from_dict(spec.get("model_overrides")),
     )
 
     return Experiment(

@@ -290,6 +290,7 @@ class OverrideScaleSpec:
 @dataclass(slots=True)
 class OverrideRuntimeSpec:
     env: dict[str, str] = field(default_factory=dict)
+    vllm_args: list[str] | None = None
     node_selector: dict[str, str] | None = None
     affinity: dict[str, Any] | None = None
     placement: "RuntimePlacementSpec | None" = None
@@ -341,6 +342,7 @@ class ExperimentSpec:
     target: ExperimentTargetSpec = field(default_factory=ExperimentTargetSpec)
     target_cluster: ClusterTargetSpec = field(default_factory=ClusterTargetSpec)
     overrides: OverrideSpec = field(default_factory=OverrideSpec)
+    model_overrides: dict[str, OverrideSpec] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

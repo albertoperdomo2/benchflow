@@ -425,13 +425,22 @@ spec:
     benchmark:
       env:
         GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: DEBUG # profile-owned benchmark env can be overridden per experiment
+  model_overrides:
+    deepseek-ai/DeepSeek-V4-Flash:
+      scale:
+        tensor_parallelism: 8
+      runtime:
+        vllm_args:
+          - --max-model-len=8192
+          - --gpu-memory-utilization=0.7
+          - --trust-remote-code
 ```
 
 Override semantics:
 
 - profile values remain the base
 - `images.runtime`, `images.scheduler`, `scale.replicas`, `scale.tensor_parallelism`, and `llm_d.repo_ref` replace the profile value
-- `runtime.vllm_args` is the base profile vLLM args
+- `runtime.vllm_args` replaces the deployment profile's vLLM args without replacing BenchFlow template-owned command arguments
 - `runtime.env` merges by key and override values win on collisions
 - `runtime.resources.requests` and `runtime.resources.limits` merge by resource name and override values win; CPU request and limit can also be set with `--runtime-cpu-request` and `--runtime-cpu-limit`
 - `runtime.node_selector`, `runtime.affinity`, and `runtime.tolerations` replace the profile value when set in `spec.overrides.runtime`
@@ -439,6 +448,8 @@ Override semantics:
 - `benchmark.env` merges by key and override values win on collisions
 - benchmark `requirements` can raise the effective deployment runtime settings for a given child `RunPlan`
 - today `requirements.min_max_model_len` raises the effective `--max-model-len` for that resolved run when the benchmark needs a larger context window than the deployment default
+- `model_overrides` is keyed by model name and is applied only after a matrix child resolves to a single model; listing models under `spec.model.name` does not change deployment configuration by itself, and model overrides cannot define new matrix axes
+- `model_overrides.<model>.runtime.vllm_args` has the same replacement behavior as `spec.overrides.runtime.vllm_args`, but only for that model
 - list-valued `model.name`, profile refs, and override axes produce a cartesian-product matrix
 - matrix children are submitted as independent child executions
 - `rhoai` and `llm-d` child executions can be admitted in parallel when target-cluster GPU capacity allows it

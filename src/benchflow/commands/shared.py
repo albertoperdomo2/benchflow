@@ -143,6 +143,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             target=ExperimentTargetSpec(),
             target_cluster=ClusterTargetSpec(),
             overrides=OverrideSpec(),
+            model_overrides={},
         )
         base_experiment = Experiment(
             api_version="benchflow.io/v1alpha1",
@@ -335,6 +336,11 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 **base_experiment.spec.overrides.runtime.env,
                 **cli_env,
             },
+            vllm_args=(
+                list(base_experiment.spec.overrides.runtime.vllm_args)
+                if base_experiment.spec.overrides.runtime.vllm_args is not None
+                else None
+            ),
             node_selector=(
                 dict(base_experiment.spec.overrides.runtime.node_selector)
                 if base_experiment.spec.overrides.runtime.node_selector is not None
@@ -436,6 +442,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 host_aliases=target_host_aliases,
             ),
             overrides=overrides,
+            model_overrides=dict(base_experiment.spec.model_overrides),
         ),
     )
 
