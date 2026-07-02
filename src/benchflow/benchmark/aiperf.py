@@ -29,6 +29,7 @@ from .common import (
     resolved_accelerator,
 )
 from .cli_args import render_cli_args
+from .comparison_metrics import build_comparison_metric_panels
 
 _AIPERF_SUMMARY_CANDIDATES = (
     "results/profile_export_aiperf.json",
@@ -758,6 +759,54 @@ def _report_table_css() -> str:
     .benchflow-report-table tbody tr:nth-child(even) td {
       background: #fafbfc;
     }
+    .metric-panel {
+      width: 1440px;
+      margin: 28px 0 42px;
+      background: white;
+    }
+    .metric-panel h2 {
+      margin: 0 0 4px;
+      color: #222222;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .metric-description {
+      margin: 0 0 12px;
+      color: #222222;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+    .metric-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 8px 18px;
+      margin: 8px 0 14px;
+      padding: 0;
+      color: #222222;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 12px;
+      line-height: 1.25;
+    }
+    .metric-legend-item {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      max-width: 460px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .metric-legend-line {
+      display: inline-block;
+      flex: 0 0 auto;
+      width: 42px;
+      height: 3px;
+      margin-right: 8px;
+      border-radius: 999px;
+    }
 """
 
 
@@ -953,6 +1002,108 @@ def _render_comparison_figure(
     return figure
 
 
+def _comparison_metric_panel_trace_specs(panel: Any) -> list[tuple[Any, str]]:
+    return [
+        (trace, REPORT_COLOR_PALETTE[index % len(REPORT_COLOR_PALETTE)])
+        for index, trace in enumerate(list(getattr(panel, "traces", []) or []))
+    ]
+
+
+def _render_comparison_metric_panel_section(panel: Any) -> str:
+    figure = go.Figure()
+    trace_specs = _comparison_metric_panel_trace_specs(panel)
+    if not trace_specs:
+        figure.add_annotation(
+            text="No archived series found for this metric",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font={"size": 13, "color": _COLORS["gray"]},
+        )
+    for trace, color in trace_specs:
+        figure.add_trace(
+            go.Scatter(
+                x=list(getattr(trace, "x", []) or []),
+                y=list(getattr(trace, "y", []) or []),
+                mode="lines",
+                name=str(getattr(trace, "name", "series")),
+                line={"color": color, "width": 2},
+                showlegend=False,
+                hovertemplate=(
+                    "<b>%{fullData.name}</b><br>"
+                    "Run progress: %{x:.2f} min<br>"
+                    "%{y:.4g}<extra></extra>"
+                ),
+            )
+        )
+    for reference_line in list(getattr(panel, "reference_lines", []) or []):
+        line_label = str(getattr(reference_line, "label", "") or "")
+        hline_kwargs: dict[str, Any] = {}
+        if line_label:
+            hline_kwargs = {
+                "annotation_text": line_label,
+                "annotation_position": "top left",
+                "annotation_font_size": 10,
+                "annotation_font_color": str(
+                    getattr(reference_line, "color", "#64748b") or "#64748b"
+                ),
+            }
+        figure.add_hline(
+            y=float(getattr(reference_line, "y")),
+            line_dash=str(getattr(reference_line, "dash", "dash") or "dash"),
+            line_color=str(getattr(reference_line, "color", "#64748b") or "#64748b"),
+            **hline_kwargs,
+        )
+
+    title = str(getattr(panel, "title", "") or "Metric")
+    description = str(getattr(panel, "description", "") or "")
+    figure.update_layout(
+        width=_HEADER_WIDTH,
+        height=430,
+        paper_bgcolor=_COLORS["paper"],
+        plot_bgcolor=_COLORS["paper"],
+        font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
+        margin=dict(l=75, r=35, t=20, b=65),
+        xaxis=dict(title="Run progress (min)"),
+        yaxis=dict(title=str(getattr(panel, "yaxis_title", "") or "Value")),
+    )
+    _apply_axis_style(figure)
+    legend_items = []
+    for trace, color in trace_specs:
+        name = html.escape(str(getattr(trace, "name", "series")))
+        legend_items.append(
+            "<span class='metric-legend-item'>"
+            f"<span class='metric-legend-line' style='background:{color}'></span>"
+            f"<span>{name}</span>"
+            "</span>"
+        )
+    legend_html = (
+        "<div class='metric-legend'>" + "\n".join(legend_items) + "</div>"
+        if legend_items
+        else ""
+    )
+    description_html = (
+        f"<div class='metric-description'>{html.escape(description)}</div>"
+        if description
+        else ""
+    )
+    plot_html = figure.to_html(
+        include_plotlyjs=False,
+        full_html=False,
+        config=_PLOTLY_CONFIG,
+    )
+    return (
+        "<section class='metric-panel'>"
+        f"<h2>{html.escape(title)}</h2>"
+        f"{description_html}"
+        f"{legend_html}"
+        f"{plot_html}"
+        "</section>"
+    )
+
+
 def _summary_table_figure(summary: dict[str, Any]) -> go.Figure:
     rows = [
         ("Request throughput", _nested_metric_value(summary, "request_throughput")),
@@ -1017,6 +1168,7 @@ def generate_report(
     output_file: Path | None,
     version_overrides: dict[str, str] | None = None,
     notes: list[str] | None = None,
+    metrics_yaml_path: Path | None = None,
 ) -> Path:
     if not mlflow_run_ids:
         raise ValidationError("AIPerf comparison reports require --mlflow-run-ids")
@@ -1048,7 +1200,9 @@ def generate_report(
             runs_data.append(
                 {
                     "run_id": run_id,
+                    "artifact_uri": run.info.artifact_uri,
                     "summary": summary,
+                    "composed_version": composed_version,
                     "version": overrides.get(composed_version, composed_version),
                     "accelerator": str(
                         run.data.params.get("accelerator")
@@ -1062,6 +1216,11 @@ def generate_report(
     finally:
         shutil.rmtree(cache_dir, ignore_errors=True)
 
+    comparison_metric_panels = build_comparison_metric_panels(
+        metrics_yaml_path=metrics_yaml_path,
+        runs_data=runs_data,
+        version_overrides=overrides,
+    )
     labels = [_label_for_run(item) for item in runs_data]
     hover_labels = [_full_label_for_run(item) for item in runs_data]
     series_labels = [item["version"] for item in runs_data]
@@ -1223,6 +1382,11 @@ def generate_report(
             ],
         ),
     ]
+    raw_sections = [_render_mooncake_stats_table(runs_data)]
+    raw_sections.extend(
+        _render_comparison_metric_panel_section(panel)
+        for panel in comparison_metric_panels
+    )
     output_path = _resolve_output_path(
         default_filename="benchmark-comparison-aiperf.html",
         output_dir=output_dir,
@@ -1239,7 +1403,7 @@ def generate_report(
         title="AIPerf Mooncake Comparison Report",
         subtitle_lines=subtitle,
         figures=figures,
-        raw_sections=[_render_mooncake_stats_table(runs_data)],
+        raw_sections=raw_sections,
         output_path=output_path,
     )
     return output_path

@@ -123,10 +123,6 @@ def generate_report(
             raise ValidationError(
                 "AIPerf comparison reports do not support --json-path; use --mlflow-run-ids"
             )
-        if metrics_yaml_path is not None:
-            raise ValidationError(
-                "AIPerf comparison reports do not support --metrics-yaml yet"
-            )
         if additional_csv_files:
             raise ValidationError(
                 "AIPerf comparison reports do not support --additional-csv"
@@ -138,6 +134,7 @@ def generate_report(
             output_file=output_file,
             version_overrides=version_overrides,
             notes=notes,
+            metrics_yaml_path=metrics_yaml_path,
         )
     return guidellm_backend.generate_report(
         json_path=json_path,
