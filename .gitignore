@@ -7,3 +7,4 @@ config/cluster/secrets/*
 dist/
 generated/
 *.html
+*.experimental.yaml
