@@ -684,13 +684,13 @@ def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
             normalized = _passthrough_value(value, field_name)
         if normalized is not None:
             args[key] = normalized
-    args.setdefault("streaming", True)
-    args.setdefault("fixed_schedule", True)
-    args.setdefault("fixed_schedule_auto_offset", True)
-
     public_dataset = str(args.get("public_dataset", "") or "").strip()
     dataset_url = str(raw.get("dataset_url", "") or "").strip()
     dataset_type = str(args.get("dataset_type", "") or "").strip()
+    args.setdefault("streaming", True)
+    if not public_dataset:
+        args.setdefault("fixed_schedule", True)
+        args.setdefault("fixed_schedule_auto_offset", True)
     missing = [
         field_name
         for field_name in sorted(_AIPERF_REQUIRED_FIELDS)

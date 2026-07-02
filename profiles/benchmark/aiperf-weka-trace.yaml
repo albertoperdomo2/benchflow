@@ -9,15 +9,15 @@ spec:
   requirements:
     min_max_model_len: 131072
   aiperf:
-    public_dataset: weka_hf
-    hf_weka_repo: semianalysisai/cc-traces-weka-061526
+    public_dataset: semianalysis_cc_traces_weka_with_subagents
     endpoint_type: chat
     endpoint_path: /v1/chat/completions
     streaming: true
-    fixed_schedule: true
+    request_count: 10000
+    # 15 min run: request_count: 9029
+    # 30 min run: request_count: 13459
     # Filter whole Weka traces by peak input + requested output context.
     max_context_length: 131072
-    max_seconds: 7200
     # Optional debug exports for broken/truncated streamed responses.
     # export_level: records
     # export_http_trace: true
