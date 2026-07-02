@@ -17,6 +17,7 @@ dependencies = [
   "plotly>=5.11.0",
   "mlflow==3.12.0",
   "certifi==2025.7.9",
+  "datasets==4.8.4",
   "mistral-common",
   "rich>=13.9.0",
   "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx",
