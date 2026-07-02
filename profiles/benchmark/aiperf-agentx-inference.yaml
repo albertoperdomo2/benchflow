@@ -1,0 +1,23 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: aiperf-agentx-inference
+spec:
+  tool: aiperf
+  env:
+    AIPERF_HTTP_SSL_VERIFY: "false"
+  requirements:
+    min_max_model_len: 131072
+  aiperf:
+    # Source: AIPerf InferenceX AgentX MVP scenario recipe.
+    # https://github.com/ai-dynamo/aiperf/blob/a75c4612b6f8cf7e3bc88e6cd560fbf9be7c1a69/docs/tutorials/agentx-mvp.md
+    scenario: inferencex-agentx-mvp
+    public_dataset: semianalysis_cc_traces_weka_with_subagents
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    use_server_token_count: true
+    max_context_length: 131072
+    concurrency: 32
+    benchmark_duration: 1800
+    max_seconds: 7200
