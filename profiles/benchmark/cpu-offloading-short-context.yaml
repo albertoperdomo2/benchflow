@@ -21,7 +21,7 @@ spec:
           prefix_count: 2*concurrency
     constraint:
       - kind: max_duration
-        seconds: 120
+        seconds: 240
   requirements:
     min_max_model_len: 40960
   env:

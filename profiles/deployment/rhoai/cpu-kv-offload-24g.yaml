@@ -20,7 +20,7 @@ spec:
       TORCHINDUCTOR_CACHE_DIR: /tmp/torchinductor
     vllm_args:
       - --max-model-len=8192
-      - --gpu-memory-utilization=0.8
+      - --gpu-memory-utilization=0.6
       - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":25769803776}}
       - --trust-remote-code
       - --no-enable-log-requests

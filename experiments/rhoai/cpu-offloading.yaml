@@ -5,9 +5,6 @@ metadata:
 spec:
   model:
     name:
-      # - QuantTrio/GLM-5.2-Int4-Int8Mix
-      # - nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4
-      # - RedHatAI/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8-dynamic
       - deepseek-ai/DeepSeek-V4-Flash
       - nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
       - google/gemma-4-31B
@@ -29,6 +26,9 @@ spec:
     nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8:
       scale:
         tensor_parallelism: 4
+    google/gemma-4-31B:
+      benchmark:
+        request_type: /v1/completions
   overrides:
     images:
       runtime: vllm/vllm-openai:v0.23.0
