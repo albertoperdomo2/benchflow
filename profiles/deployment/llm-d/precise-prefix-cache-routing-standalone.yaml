@@ -18,7 +18,5 @@ spec:
     tensor_parallelism: 2
     env:
       USER: benchflow
-      HOME: /tmp
-      TORCHINDUCTOR_CACHE_DIR: /tmp/torchinductor
     vllm_args:
       - --gpu-memory-utilization=0.95

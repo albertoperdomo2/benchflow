@@ -16,8 +16,6 @@ spec:
     tensor_parallelism: 2
     env:
       USER: benchflow
-      HOME: /tmp
-      TORCHINDUCTOR_CACHE_DIR: /tmp/torchinductor
     vllm_args:
       - --max-model-len=8192
       - --gpu-memory-utilization=0.6
