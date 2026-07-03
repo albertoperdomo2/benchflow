@@ -233,6 +233,7 @@ def generate_report(
     include_total_throughput: bool = False,
     baseline_version: str | None = None,
     metrics_yaml_path: Path | None = None,
+    force: bool = False,
 ) -> Path:
     module = _load_guidellm_module()
 
@@ -251,6 +252,7 @@ def generate_report(
             include_total_throughput=include_total_throughput,
             baseline_version=baseline_version,
             metrics_yaml_path=str(metrics_yaml_path) if metrics_yaml_path else None,
+            force=force,
         )
         if not html_path:
             raise CommandError("GuideLLM report generation returned no output path")

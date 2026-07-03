@@ -264,6 +264,7 @@ def generate_plan_report(
     include_total_throughput: bool = False,
     baseline_version: str | None = None,
     metrics_yaml_path: Path | None = None,
+    force: bool = False,
 ) -> Path:
     model = model_name or (plan.model.name if plan is not None else None)
     resolved_version = version or (
@@ -304,6 +305,7 @@ def generate_plan_report(
         include_total_throughput=include_total_throughput,
         baseline_version=baseline_version,
         metrics_yaml_path=metrics_yaml_path,
+        force=force,
     )
 
 

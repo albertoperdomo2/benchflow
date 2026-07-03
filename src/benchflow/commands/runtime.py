@@ -791,6 +791,7 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         metrics_yaml_path=(
             Path(args.metrics_yaml).resolve() if args.metrics_yaml else None
         ),
+        force=bool(args.force),
     )
     print(report_path)
     return 0
@@ -1795,6 +1796,14 @@ def _register_comparison_report_options(command):
     command = click.option(
         "--versions",
         help="Comma-separated version list for multi-run report generation.",
+    )(command)
+    command = click.option(
+        "--force",
+        is_flag=True,
+        help=(
+            "Skip GuideLLM MLflow run compatibility validation. "
+            "Use only when the runs are known comparable."
+        ),
     )(command)
     command = click.option(
         "--baseline",

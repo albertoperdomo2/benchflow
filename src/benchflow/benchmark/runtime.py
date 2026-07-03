@@ -1816,6 +1816,7 @@ def generate_plot_only_report(
     include_total_throughput: bool = False,
     baseline_version: str | None = None,
     metrics_yaml_path: str | None = None,
+    force: bool = False,
 ) -> str:
     """
     Generate HTML report from existing MLflow runs without running benchmarks.
@@ -1833,6 +1834,7 @@ def generate_plot_only_report(
         include_total_throughput: Render dashed total-throughput overlay in throughput charts
         baseline_version: Optional composed version name to use as the comparison-table baseline
         metrics_yaml_path: Optional report-metrics YAML path for archived Prometheus plots
+        force: Skip compatibility validation for known-comparable historical runs
 
     Returns:
         Path to generated HTML report
@@ -1854,10 +1856,18 @@ def generate_plot_only_report(
             baseline_version,
         )
 
-    # Validate runs compatibility
-    model, data_profile = validate_runs_compatibility(runs_data)
+    if force:
+        if not runs_data:
+            raise ValueError("No runs provided for report generation")
+        model = runs_data[0]["params"].get("model")
+        logger.warning(
+            "Skipping GuideLLM run compatibility validation because --force was set; "
+            "report metadata will use the first run as the reference"
+        )
+    else:
+        validate_runs_compatibility(runs_data)
 
-    # Extract full data profile parameters from first run
+    # Extract full data profile parameters from first run.
     first_run_params = runs_data[0]["params"]
     data_profile_params = _extract_data_profile_params(first_run_params)
 
