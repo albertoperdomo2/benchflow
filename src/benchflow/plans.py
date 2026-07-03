@@ -79,6 +79,37 @@ def _set_guidellm_backend_field(
     args["backend"] = backend
 
 
+def _set_aiperf_request_type(args: dict[str, object], request_type: str) -> None:
+    cleaned = request_type.strip()
+    normalized = cleaned.lower().replace("_", "-")
+    if normalized in {
+        "/v1/completions",
+        "v1/completions",
+        "completions",
+        "completion",
+        "text-completions",
+        "text-completion",
+    }:
+        args["endpoint_type"] = "completions"
+        args["endpoint_path"] = "/v1/completions"
+        return
+    if normalized in {
+        "/v1/chat/completions",
+        "v1/chat/completions",
+        "chat",
+        "chat-completions",
+        "chat-completion",
+    }:
+        args["endpoint_type"] = "chat"
+        args["endpoint_path"] = "/v1/chat/completions"
+        return
+    raise ValidationError(
+        "unsupported AIPerf benchmark.request_type override: "
+        f"{request_type!r}; supported values are /v1/completions and "
+        "/v1/chat/completions"
+    )
+
+
 def _set_guidellm_constraint(
     args: dict[str, object],
     *,
@@ -609,6 +640,11 @@ def resolve_run_plan(
             _set_guidellm_backend_field(
                 benchmark.guidellm.args,
                 "request_format",
+                overrides.benchmark.request_type,
+            )
+        elif benchmark.tool == "aiperf":
+            _set_aiperf_request_type(
+                benchmark.aiperf.args,
                 overrides.benchmark.request_type,
             )
     if overrides.benchmark.env is not None:
