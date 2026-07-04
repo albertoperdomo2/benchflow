@@ -136,6 +136,7 @@ def generate_report(
             version_overrides=version_overrides,
             notes=notes,
             metrics_yaml_path=metrics_yaml_path,
+            baseline_version=baseline_version,
         )
     return guidellm_backend.generate_report(
         json_path=json_path,

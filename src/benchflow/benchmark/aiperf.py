@@ -38,6 +38,25 @@ _AIPERF_SUMMARY_CANDIDATES = (
 )
 _AIPERF_ARTIFACT_ROOT = "benchmark"
 _PLOTLY_CONFIG = {"displaylogo": False, "responsive": True}
+_PUBLIC_DATASET_LABELS = {
+    "semianalysis_cc_traces_weka_with_subagents": (
+        "semianalysisai/cc-traces-weka-with-subagents-052726"
+    ),
+    "weka_hf": "semianalysisai/cc-traces-weka-061526",
+}
+_AIPERF_BASELINE_METRICS = (
+    ("Successful requests", "request_count", "avg", "requests", True, 0),
+    ("Request throughput", "request_throughput", "avg", "req/s", True, 3),
+    ("Output token throughput", "output_token_throughput", "avg", "tok/s", True, 2),
+    ("Total token throughput", "total_token_throughput", "avg", "tok/s", True, 2),
+    ("TTFT p50", "time_to_first_token", "p50", "ms", False, 2),
+    ("TTFT p95", "time_to_first_token", "p95", "ms", False, 2),
+    ("ITL p50", "inter_token_latency", "p50", "ms", False, 2),
+    ("ITL p95", "inter_token_latency", "p95", "ms", False, 2),
+    ("Latency p50", "request_latency", "p50", "ms", False, 2),
+    ("Latency p95", "request_latency", "p95", "ms", False, 2),
+    ("Error requests", "error_request_count", "avg", "requests", False, 0),
+)
 _COLORS = {
     "black": "#222222",
     "gray": "#6f6f6f",
@@ -517,6 +536,12 @@ def _comparison_dataset_label(runs_data: list[dict[str, Any]]) -> str:
         return "unknown"
     input_config = runs_data[0].get("summary", {}).get("input_config", {}) or {}
     input_section = input_config.get("input", {}) or {}
+    public_dataset = str(input_section.get("public_dataset") or "").strip()
+    detected_loader = str(input_section.get("detected_loader") or "").strip()
+    for dataset_id in (public_dataset, detected_loader):
+        if not dataset_id:
+            continue
+        return _PUBLIC_DATASET_LABELS.get(dataset_id, dataset_id)
     dataset_file = str(input_section.get("file") or "").strip()
     dataset_type = str(input_section.get("custom_dataset_type") or "").strip()
     dataset_name = Path(dataset_file).name if dataset_file else ""
@@ -622,6 +647,155 @@ def _format_compact(value: float | None) -> str:
     if absolute >= 1_000:
         return f"{value / 1_000:.2f}K"
     return f"{value:.0f}"
+
+
+def _baseline_candidates(runs_data: list[dict[str, Any]]) -> list[str]:
+    candidates: list[str] = []
+    for run_data in runs_data:
+        for key in ("composed_version", "version"):
+            value = str(run_data.get(key) or "").strip()
+            if value and value not in candidates:
+                candidates.append(value)
+    return candidates
+
+
+def _resolve_baseline_run(
+    runs_data: list[dict[str, Any]], baseline_version: str | None
+) -> dict[str, Any] | None:
+    cleaned = str(baseline_version or "").strip()
+    if not cleaned:
+        return None
+    matches = [
+        run_data
+        for run_data in runs_data
+        if cleaned
+        in {
+            str(run_data.get("composed_version") or "").strip(),
+            str(run_data.get("version") or "").strip(),
+        }
+    ]
+    if not matches:
+        available = ", ".join(_baseline_candidates(runs_data)) or "none"
+        raise ValidationError(
+            f"baseline version {cleaned!r} is not present in the AIPerf comparison "
+            f"data; available values: {available}"
+        )
+    if len(matches) > 1:
+        raise ValidationError(
+            f"baseline version {cleaned!r} matched multiple AIPerf runs; "
+            "use a unique composed version or display label"
+        )
+    return matches[0]
+
+
+def _format_baseline_value(value: float | None, precision: int) -> str:
+    if value is None:
+        return "—"
+    if precision <= 0:
+        return f"{value:,.0f}"
+    return f"{value:,.{precision}f}"
+
+
+def _baseline_delta_html(
+    *,
+    value: float | None,
+    baseline: float | None,
+    higher_is_better: bool,
+    is_baseline_row: bool,
+) -> str:
+    if value is None or baseline is None:
+        return ""
+    if is_baseline_row:
+        return (
+            "<span class='benchflow-report-delta "
+            "benchflow-report-delta-baseline'>Δ baseline</span>"
+        )
+    if baseline == 0:
+        return (
+            "<span class='benchflow-report-delta "
+            "benchflow-report-delta-neutral'>Δ n/a</span>"
+        )
+    delta_pct = ((value - baseline) / baseline) * 100.0
+    if delta_pct == 0:
+        delta_class = "neutral"
+    elif higher_is_better:
+        delta_class = "positive" if delta_pct > 0 else "negative"
+    else:
+        delta_class = "positive" if delta_pct < 0 else "negative"
+    return (
+        f"<span class='benchflow-report-delta "
+        f"benchflow-report-delta-{delta_class}'>{delta_pct:+.1f}%</span>"
+    )
+
+
+def _render_baseline_comparison_table(
+    runs_data: list[dict[str, Any]], baseline_run: dict[str, Any] | None
+) -> str:
+    if baseline_run is None:
+        return ""
+    headers = ["Run"] + [
+        f"{label}<br><span class='benchflow-report-unit'>{unit}</span>"
+        for label, _, _, unit, _, _ in _AIPERF_BASELINE_METRICS
+    ]
+    metric_column_width = (100 - 26) / (len(headers) - 1)
+    colgroup = (
+        "<colgroup>"
+        "<col style='width: 26%;'>"
+        + "".join(
+            f"<col style='width: {metric_column_width:.3f}%;'>" for _ in headers[1:]
+        )
+        + "</colgroup>"
+    )
+    header_cells = "".join(f"<th>{header}</th>" for header in headers)
+    baseline_summary = baseline_run["summary"]
+    baseline_values = {
+        (key, field): _nested_metric_value(baseline_summary, key, field)
+        for _, key, field, _, _, _ in _AIPERF_BASELINE_METRICS
+    }
+    rows: list[str] = []
+    for run_data in runs_data:
+        is_baseline_row = run_data is baseline_run
+        cells = [
+            f"<td>{html.escape(_full_label_for_run(run_data))}</td>",
+        ]
+        for _, key, field, _, higher_is_better, precision in _AIPERF_BASELINE_METRICS:
+            value = _nested_metric_value(run_data["summary"], key, field)
+            baseline_value = baseline_values.get((key, field))
+            value_text = html.escape(_format_baseline_value(value, precision))
+            delta_html = _baseline_delta_html(
+                value=value,
+                baseline=baseline_value,
+                higher_is_better=higher_is_better,
+                is_baseline_row=is_baseline_row,
+            )
+            cells.append(
+                "<td>"
+                f"<span class='benchflow-report-value'>{value_text}</span>"
+                f"{delta_html}"
+                "</td>"
+            )
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    baseline_label = html.escape(_full_label_for_run(baseline_run))
+    return f"""
+<section class="benchflow-report-table-section">
+  <details class="benchflow-report-table-details" open>
+    <summary>AIPerf Baseline Comparison</summary>
+    <p>Inline Δ values compare each run to baseline {baseline_label}. Higher throughput and successful request count are better; lower latency and error count are better.</p>
+    <div class="benchflow-report-table-shell">
+      <table class="benchflow-report-table">
+        {colgroup}
+        <thead>
+          <tr>{header_cells}</tr>
+        </thead>
+        <tbody>
+          {"".join(rows)}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+"""
 
 
 def _render_mooncake_stats_table(runs_data: list[dict[str, Any]]) -> str:
@@ -758,6 +932,31 @@ def _report_table_css() -> str:
     }
     .benchflow-report-table tbody tr:nth-child(even) td {
       background: #fafbfc;
+    }
+    .benchflow-report-unit {
+      color: #6f6f6f;
+      font-size: 10px;
+      font-weight: 500;
+    }
+    .benchflow-report-value {
+      display: block;
+      font-weight: 600;
+    }
+    .benchflow-report-delta {
+      display: block;
+      margin-top: 2px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .benchflow-report-delta-positive {
+      color: #0f7b43;
+    }
+    .benchflow-report-delta-negative {
+      color: #b42318;
+    }
+    .benchflow-report-delta-neutral,
+    .benchflow-report-delta-baseline {
+      color: #6f6f6f;
     }
     .metric-panel {
       width: 1440px;
@@ -1169,6 +1368,7 @@ def generate_report(
     version_overrides: dict[str, str] | None = None,
     notes: list[str] | None = None,
     metrics_yaml_path: Path | None = None,
+    baseline_version: str | None = None,
 ) -> Path:
     if not mlflow_run_ids:
         raise ValidationError("AIPerf comparison reports require --mlflow-run-ids")
@@ -1216,6 +1416,7 @@ def generate_report(
     finally:
         shutil.rmtree(cache_dir, ignore_errors=True)
 
+    baseline_run = _resolve_baseline_run(runs_data, baseline_version)
     comparison_metric_panels = build_comparison_metric_panels(
         metrics_yaml_path=metrics_yaml_path,
         runs_data=runs_data,
@@ -1382,7 +1583,10 @@ def generate_report(
             ],
         ),
     ]
-    raw_sections = [_render_mooncake_stats_table(runs_data)]
+    raw_sections = [
+        _render_baseline_comparison_table(runs_data, baseline_run),
+        _render_mooncake_stats_table(runs_data),
+    ]
     raw_sections.extend(
         _render_comparison_metric_panel_section(panel)
         for panel in comparison_metric_panels
