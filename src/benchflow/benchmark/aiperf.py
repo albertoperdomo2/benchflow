@@ -9,7 +9,7 @@ import html
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import mlflow
 import plotly.graph_objects as go
@@ -505,6 +505,68 @@ def _label_for_run(run_payload: dict[str, Any]) -> str:
     return f"{version}<br>tp={tp} | r={replicas}"
 
 
+def _ordered_unique_run_values(runs_data: list[dict[str, Any]], key: str) -> str:
+    values: list[str] = []
+    for run_data in runs_data:
+        value = str(run_data.get(key) or "unknown").strip() or "unknown"
+        if value not in values:
+            values.append(value)
+    return ", ".join(values) if values else "unknown"
+
+
+def _comparison_shape_line(runs_data: list[dict[str, Any]]) -> str:
+    accelerator = _ordered_unique_run_values(runs_data, "accelerator")
+    tp = _ordered_unique_run_values(runs_data, "tp")
+    replicas = _ordered_unique_run_values(runs_data, "replicas")
+    return (
+        f"Accelerator: {html.escape(accelerator)} | "
+        f"TP: {html.escape(tp)} | "
+        f"R: {html.escape(replicas)}"
+    )
+
+
+def _mlflow_run_url(*, tracking_uri: str, experiment_id: str, run_id: str) -> str:
+    if (
+        not tracking_uri.startswith(("http://", "https://"))
+        or not experiment_id
+        or not run_id
+    ):
+        return ""
+    url = f"{tracking_uri.rstrip('/')}/#/experiments/{experiment_id}/runs/{run_id}"
+    workspace = str(os.environ.get("MLFLOW_WORKSPACE") or "").strip()
+    if workspace:
+        url = f"{url}?workspace={quote(workspace)}"
+    return url
+
+
+def _comparison_run_links_line(runs_data: list[dict[str, Any]]) -> str:
+    links: list[str] = []
+    for run_data in runs_data:
+        label = str(
+            run_data.get("version")
+            or run_data.get("composed_version")
+            or run_data.get("run_id")
+            or "unknown"
+        ).strip()
+        run_id = str(run_data.get("run_id") or "").strip()
+        url = str(run_data.get("mlflow_url") or "").strip()
+        if url:
+            links.append(
+                "<a "
+                f"href='{html.escape(url, quote=True)}' "
+                "target='_blank' "
+                "rel='noopener noreferrer' "
+                "style='color:#1f77b4;text-decoration:underline;' "
+                f"title='{html.escape(run_id, quote=True)}'>"
+                f"{html.escape(label)}"
+                "</a>"
+            )
+        else:
+            fallback = f"{label} ({run_id})" if run_id else label
+            links.append(html.escape(fallback))
+    return "MLflow runs: " + ", ".join(links)
+
+
 def _composed_version_from_mlflow_run(run: mlflow.entities.Run) -> str:
     base_version = str(
         run.data.params.get("version") or run.data.tags.get("version") or "unknown"
@@ -798,7 +860,7 @@ def _render_baseline_comparison_table(
 """
 
 
-def _render_mooncake_stats_table(runs_data: list[dict[str, Any]]) -> str:
+def _render_trace_data_profile_table(runs_data: list[dict[str, Any]]) -> str:
     if not runs_data:
         return ""
     headers = [
@@ -854,8 +916,8 @@ def _render_mooncake_stats_table(runs_data: list[dict[str, Any]]) -> str:
     return f"""
 <section class="benchflow-report-table-section">
   <details class="benchflow-report-table-details">
-    <summary>Mooncake Trace Data Profile</summary>
-    <p>Raw input and output sequence length statistics from the AIPerf Mooncake trace artifacts.</p>
+    <summary>Trace Data Profile</summary>
+    <p>Raw input and output sequence length statistics from the AIPerf trace artifacts.</p>
     <div class="benchflow-report-table-shell">
       <table class="benchflow-report-table">
         {colgroup}
@@ -997,6 +1059,20 @@ def _report_table_css() -> str:
       max-width: 460px;
       overflow-wrap: anywhere;
       word-break: break-word;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .metric-legend-item.is-muted {
+      opacity: 0.38;
+    }
+    .metric-legend-item:focus-visible {
+      outline: 2px solid #1f77b4;
+      outline-offset: 3px;
     }
     .metric-legend-line {
       display: inline-block;
@@ -1018,9 +1094,10 @@ def _subtitle_text(lines: list[str]) -> str:
 
 def _build_header_figure(*, title: str, subtitle_lines: list[str]) -> go.Figure:
     figure = go.Figure()
+    height = max(120, 80 + len(subtitle_lines) * 18)
     figure.update_layout(
         width=_HEADER_WIDTH,
-        height=120,
+        height=height,
         paper_bgcolor=_COLORS["paper"],
         plot_bgcolor=_COLORS["paper"],
         margin={"l": 8, "r": 8, "t": 8, "b": 8},
@@ -1032,7 +1109,7 @@ def _build_header_figure(*, title: str, subtitle_lines: list[str]) -> go.Figure:
                 "xref": "paper",
                 "yref": "paper",
                 "x": 0.0,
-                "y": 0.78,
+                "y": 0.8,
                 "xanchor": "left",
                 "yanchor": "middle",
                 "showarrow": False,
@@ -1048,7 +1125,7 @@ def _build_header_figure(*, title: str, subtitle_lines: list[str]) -> go.Figure:
                 "xref": "paper",
                 "yref": "paper",
                 "x": 0.0,
-                "y": 0.28,
+                "y": 0.32,
                 "xanchor": "left",
                 "yanchor": "middle",
                 "showarrow": False,
@@ -1208,7 +1285,54 @@ def _comparison_metric_panel_trace_specs(panel: Any) -> list[tuple[Any, str]]:
     ]
 
 
-def _render_comparison_metric_panel_section(panel: Any) -> str:
+def _metric_panel_legend_script(section_id: str) -> str:
+    section_id_json = json.dumps(section_id)
+    return f"""
+<script type="text/javascript">
+(() => {{
+  const section = document.getElementById({section_id_json});
+  if (!section || section.dataset.legendBound === "true") {{
+    return;
+  }}
+  section.dataset.legendBound = "true";
+  const graph = section.querySelector(".plotly-graph-div");
+  if (!graph || !window.Plotly) {{
+    return;
+  }}
+  const hiddenTraces = new Set();
+  const setTraceVisible = (traceIndex, visible) => {{
+    window.Plotly.restyle(
+      graph,
+      {{ visible: [visible ? true : "legendonly"] }},
+      [traceIndex]
+    );
+  }};
+  section.querySelectorAll(".metric-legend-item[data-trace-index]").forEach((item) => {{
+    item.addEventListener("click", () => {{
+      const traceIndex = Number(item.dataset.traceIndex);
+      if (!Number.isInteger(traceIndex)) {{
+        return;
+      }}
+      const hidden = hiddenTraces.has(traceIndex);
+      if (hidden) {{
+        hiddenTraces.delete(traceIndex);
+        item.classList.remove("is-muted");
+        item.setAttribute("aria-pressed", "false");
+        setTraceVisible(traceIndex, true);
+      }} else {{
+        hiddenTraces.add(traceIndex);
+        item.classList.add("is-muted");
+        item.setAttribute("aria-pressed", "true");
+        setTraceVisible(traceIndex, false);
+      }}
+    }});
+  }});
+}})();
+</script>
+"""
+
+
+def _render_comparison_metric_panel_section(panel: Any, panel_index: int) -> str:
     figure = go.Figure()
     trace_specs = _comparison_metric_panel_trace_specs(panel)
     if not trace_specs:
@@ -1270,13 +1394,16 @@ def _render_comparison_metric_panel_section(panel: Any) -> str:
     )
     _apply_axis_style(figure)
     legend_items = []
-    for trace, color in trace_specs:
+    for trace_index, (trace, color) in enumerate(trace_specs):
         name = html.escape(str(getattr(trace, "name", "series")))
+        legend_title = html.escape(f"Toggle {str(getattr(trace, 'name', 'series'))}")
         legend_items.append(
-            "<span class='metric-legend-item'>"
+            "<button class='metric-legend-item' type='button' "
+            f"data-trace-index='{trace_index}' aria-pressed='false' "
+            f"title='{legend_title}'>"
             f"<span class='metric-legend-line' style='background:{color}'></span>"
             f"<span>{name}</span>"
-            "</span>"
+            "</button>"
         )
     legend_html = (
         "<div class='metric-legend'>" + "\n".join(legend_items) + "</div>"
@@ -1293,12 +1420,14 @@ def _render_comparison_metric_panel_section(panel: Any) -> str:
         full_html=False,
         config=_PLOTLY_CONFIG,
     )
+    section_id = f"aiperf-metric-panel-{panel_index}"
     return (
-        "<section class='metric-panel'>"
+        f"<section id='{section_id}' class='metric-panel'>"
         f"<h2>{html.escape(title)}</h2>"
         f"{description_html}"
         f"{legend_html}"
         f"{plot_html}"
+        f"{_metric_panel_legend_script(section_id) if legend_items else ''}"
         "</section>"
     )
 
@@ -1385,6 +1514,8 @@ def generate_report(
     try:
         for run_id in mlflow_run_ids:
             run = client.get_run(run_id)
+            resolved_run_id = str(run.info.run_id or run_id).strip()
+            experiment_id = str(run.info.experiment_id or "").strip()
             composed_version = _composed_version_from_mlflow_run(run)
             summary_artifact = _resolve_artifact_file(
                 run.info.artifact_uri,
@@ -1399,7 +1530,13 @@ def generate_report(
             )
             runs_data.append(
                 {
-                    "run_id": run_id,
+                    "run_id": resolved_run_id,
+                    "experiment_id": experiment_id,
+                    "mlflow_url": _mlflow_run_url(
+                        tracking_uri=tracking_uri,
+                        experiment_id=experiment_id,
+                        run_id=resolved_run_id,
+                    ),
                     "artifact_uri": run.info.artifact_uri,
                     "summary": summary,
                     "composed_version": composed_version,
@@ -1585,11 +1722,11 @@ def generate_report(
     ]
     raw_sections = [
         _render_baseline_comparison_table(runs_data, baseline_run),
-        _render_mooncake_stats_table(runs_data),
+        _render_trace_data_profile_table(runs_data),
     ]
     raw_sections.extend(
-        _render_comparison_metric_panel_section(panel)
-        for panel in comparison_metric_panels
+        _render_comparison_metric_panel_section(panel, panel_index)
+        for panel_index, panel in enumerate(comparison_metric_panels, start=1)
     )
     output_path = _resolve_output_path(
         default_filename="benchmark-comparison-aiperf.html",
@@ -1597,14 +1734,20 @@ def generate_report(
         output_file=output_file,
     )
     subtitle = [
-        f"Model: {_comparison_model_name(runs_data)}",
-        f"Dataset: {_comparison_dataset_label(runs_data)}",
-        f"MLflow runs: {', '.join(mlflow_run_ids)}",
+        f"Model: {html.escape(_comparison_model_name(runs_data))}",
+        f"Dataset: {html.escape(_comparison_dataset_label(runs_data))}",
+        _comparison_shape_line(runs_data),
+        _comparison_run_links_line(runs_data),
     ]
     if notes:
-        subtitle.extend([f"Notes: {notes[0]}", *notes[1:]])
+        subtitle.extend(
+            [
+                f"Notes: {html.escape(str(notes[0]))}",
+                *(html.escape(str(note)) for note in notes[1:]),
+            ]
+        )
     _render_report_html(
-        title="AIPerf Mooncake Comparison Report",
+        title="AIPerf Trace Comparison Report",
         subtitle_lines=subtitle,
         figures=figures,
         raw_sections=raw_sections,
