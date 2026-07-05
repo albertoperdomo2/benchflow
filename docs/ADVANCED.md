@@ -444,6 +444,7 @@ Override semantics:
 - `images.runtime`, `images.scheduler`, `scale.replicas`, `scale.tensor_parallelism`, and `llm_d.repo_ref` replace the profile value
 - `runtime.vllm_args` replaces the deployment profile's vLLM args without replacing BenchFlow template-owned command arguments
 - `runtime.vllm_extra_args` appends to the selected vLLM args; BenchFlow does not deduplicate duplicate flags
+- `runtime.host_paths` replaces the deployment profile's hostPath mounts when set; it is currently rendered only for `rhoai` and `rhaiis` runtime pods
 - `runtime.env` merges by key and override values win on collisions
 - `runtime.resources.requests` and `runtime.resources.limits` merge by resource name and override values win; CPU request and limit can also be set with `--runtime-cpu-request` and `--runtime-cpu-limit`
 - `runtime.node_selector`, `runtime.affinity`, and `runtime.tolerations` replace the profile value when set in `spec.overrides.runtime`
@@ -454,6 +455,7 @@ Override semantics:
 - `model_overrides` is keyed by model name and is applied only after a matrix child resolves to a single model; listing models under `spec.model.name` does not change deployment configuration by itself, and model overrides cannot define new matrix axes
 - `model_overrides.<model>.runtime.vllm_args` has the same replacement behavior as `spec.overrides.runtime.vllm_args`, but only for that model
 - `model_overrides.<model>.runtime.vllm_extra_args` appends after global `spec.overrides.runtime.vllm_extra_args`, but only for that model
+- `model_overrides.<model>.runtime.host_paths` has the same replacement behavior as `spec.overrides.runtime.host_paths`, but only for that model
 - list-valued `model.name`, profile refs, and override axes produce a cartesian-product matrix
 - matrix children are submitted as independent child executions
 - `rhoai` and `llm-d` child executions can be admitted in parallel when target-cluster GPU capacity allows it
@@ -513,6 +515,12 @@ spec:
       - --max-model-len=8192 # base guide args for the deployment profile
     env:
       VLLM_LOGGING_LEVEL: INFO # merged with spec.overrides.runtime.env or --env
+    host_paths: # rhoai/rhaiis only
+      - name: nvme-kv-cache # Kubernetes volume name; must not conflict with BenchFlow-owned volumes
+        host_path: /mnt/local-nvme/kv-cache # node-local path
+        mount_path: /mnt/nvme/kv-cache # path visible to the vLLM container
+        type: DirectoryOrCreate # optional Kubernetes hostPath type
+        read_only: false # optional, defaults to false
     resources:
       requests:
         cpu: "16" # overridden by spec.overrides.runtime.resources.requests.cpu or --runtime-cpu-request
@@ -581,6 +589,14 @@ the model-server HTTPS health endpoint on port `8000` with
 `failureThreshold: 120`, `periodSeconds: 10`, and `timeoutSeconds: 1`. Profiles
 can override those fields with `spec.options.startup_probe`; setting it to
 `false` disables BenchFlow's explicit startup probe.
+
+RHOAI and RHAIIS raw vLLM profiles can mount node-local storage with
+`spec.runtime.host_paths`. BenchFlow renders those entries as Kubernetes
+`hostPath` volumes and `volumeMounts`; it does not interpolate or derive vLLM
+arguments. If a vLLM flag needs the mount, put the exact `mount_path` in
+`runtime.vllm_args` or `runtime.vllm_extra_args`. Experiment and model overrides
+use the same shape under `spec.overrides.runtime.host_paths` and
+`spec.model_overrides.<model>.runtime.host_paths`.
 
 Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
 storage offloading with `spec.options.storage_offloading`. When present,

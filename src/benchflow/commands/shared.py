@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
@@ -343,6 +344,11 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             ),
             vllm_extra_args=list(
                 base_experiment.spec.overrides.runtime.vllm_extra_args
+            ),
+            host_paths=(
+                deepcopy(base_experiment.spec.overrides.runtime.host_paths)
+                if base_experiment.spec.overrides.runtime.host_paths is not None
+                else None
             ),
             node_selector=(
                 dict(base_experiment.spec.overrides.runtime.node_selector)

@@ -229,15 +229,34 @@ spec:
             value: "42"
 {% endif %}
 {% endif %}
-{% if profiling_enabled %}
+{% if runtime_host_path_mounts or profiling_enabled %}
         volumeMounts:
+{% for mount in runtime_host_path_mounts %}
+          - mountPath: {{ mount.mountPath | tojson }}
+            name: {{ mount.name | tojson }}
+{% if mount.readOnly %}
+            readOnly: true
+{% endif %}
+{% endfor %}
+{% if profiling_enabled %}
           - mountPath: {{ profiler_mount_path | tojson }}
             name: vllm-profiler
             readOnly: true
 {% endif %}
-{% if profiling_enabled %}
+{% endif %}
+{% if runtime_host_path_volumes or profiling_enabled %}
     volumes:
+{% for volume in runtime_host_path_volumes %}
+      - name: {{ volume.name | tojson }}
+        hostPath:
+          path: {{ volume.hostPath.path | tojson }}
+{% if volume.hostPath.type %}
+          type: {{ volume.hostPath.type | tojson }}
+{% endif %}
+{% endfor %}
+{% if profiling_enabled %}
       - name: vllm-profiler
         configMap:
           name: {{ profiler_configmap_name | tojson }}
+{% endif %}
 {% endif %}

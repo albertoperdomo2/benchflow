@@ -385,6 +385,10 @@ def _merge_model_override(
                 *base.runtime.vllm_extra_args,
                 *model_override.runtime.vllm_extra_args,
             ],
+            host_paths=_scalar_model_override(
+                model_override.runtime.host_paths,
+                base.runtime.host_paths,
+            ),
             node_selector=_scalar_model_override(
                 model_override.runtime.node_selector,
                 base.runtime.node_selector,
@@ -530,33 +534,38 @@ def resolve_run_plan(
         ),
         env={
             **deployment_profile.spec.runtime.env,
-            **experiment.spec.overrides.runtime.env,
+            **overrides.runtime.env,
         },
+        host_paths=(
+            deepcopy(overrides.runtime.host_paths)
+            if overrides.runtime.host_paths is not None
+            else deepcopy(deployment_profile.spec.runtime.host_paths)
+        ),
         node_selector=(
-            dict(experiment.spec.overrides.runtime.node_selector)
-            if experiment.spec.overrides.runtime.node_selector is not None
+            dict(overrides.runtime.node_selector)
+            if overrides.runtime.node_selector is not None
             else dict(deployment_profile.spec.runtime.node_selector)
         ),
         affinity=(
-            deepcopy(experiment.spec.overrides.runtime.affinity)
-            if experiment.spec.overrides.runtime.affinity is not None
+            deepcopy(overrides.runtime.affinity)
+            if overrides.runtime.affinity is not None
             else deepcopy(deployment_profile.spec.runtime.affinity)
         ),
         placement=(
-            deepcopy(experiment.spec.overrides.runtime.placement)
-            if experiment.spec.overrides.runtime.placement is not None
+            deepcopy(overrides.runtime.placement)
+            if overrides.runtime.placement is not None
             else deepcopy(deployment_profile.spec.runtime.placement)
         ),
         tolerations=(
-            deepcopy(experiment.spec.overrides.runtime.tolerations)
-            if experiment.spec.overrides.runtime.tolerations is not None
+            deepcopy(overrides.runtime.tolerations)
+            if overrides.runtime.tolerations is not None
             else deepcopy(deployment_profile.spec.runtime.tolerations)
         ),
         image_pull_secrets=deepcopy(deployment_profile.spec.runtime.image_pull_secrets),
         resources=(
             _resolve_runtime_resources(
                 deployment_profile.spec.runtime.resources,
-                experiment.spec.overrides.runtime.resources,
+                overrides.runtime.resources,
             )
         ),
     )
@@ -567,6 +576,13 @@ def resolve_run_plan(
     if runtime.placement.mode and deployment_profile.spec.mode == "isvc":
         raise ValidationError(
             "runtime.placement is not supported for rhoai isvc deployments"
+        )
+    if runtime.host_paths and deployment_profile.spec.platform not in {
+        "rhoai",
+        "rhaiis",
+    }:
+        raise ValidationError(
+            "runtime.host_paths is currently supported only for rhoai and rhaiis deployments"
         )
     _validate_profiling_support(
         platform=deployment_profile.spec.platform,

@@ -292,6 +292,7 @@ class OverrideRuntimeSpec:
     env: dict[str, str] = field(default_factory=dict)
     vllm_args: list[str] | None = None
     vllm_extra_args: list[str] = field(default_factory=list)
+    host_paths: list["RuntimeHostPathSpec"] | None = None
     node_selector: dict[str, str] | None = None
     affinity: dict[str, Any] | None = None
     placement: "RuntimePlacementSpec | None" = None
@@ -367,12 +368,22 @@ class RuntimePlacementSpec:
 
 
 @dataclass(slots=True)
+class RuntimeHostPathSpec:
+    name: str
+    host_path: str
+    mount_path: str
+    type: str = ""
+    read_only: bool = False
+
+
+@dataclass(slots=True)
 class RuntimeSpec:
     image: str = ""
     replicas: int = 1
     tensor_parallelism: int = 1
     vllm_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    host_paths: list[RuntimeHostPathSpec] = field(default_factory=list)
     node_selector: dict[str, str] = field(default_factory=dict)
     affinity: dict[str, Any] = field(default_factory=dict)
     placement: RuntimePlacementSpec = field(default_factory=RuntimePlacementSpec)

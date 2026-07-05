@@ -162,6 +162,27 @@ def _runtime_resource_requirements(
     return resources
 
 
+def _runtime_host_path_volume_mounts(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    mounts: list[dict[str, Any]] = []
+    for host_path in plan.deployment.runtime.host_paths:
+        mounts.append(
+            {
+                "name": host_path.name,
+                "mountPath": host_path.mount_path,
+                "readOnly": host_path.read_only,
+            }
+        )
+    return mounts
+
+
+def _runtime_host_path_volumes(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    volumes: list[dict[str, Any]] = []
+    for host_path in plan.deployment.runtime.host_paths:
+        host_path_spec = {"path": host_path.host_path, "type": host_path.type}
+        volumes.append({"name": host_path.name, "hostPath": host_path_spec})
+    return volumes
+
+
 def _rhoai_uses_isvc(plan: ResolvedRunPlan) -> bool:
     return plan.deployment.mode == "isvc"
 
@@ -356,6 +377,8 @@ def _rhoai_llminferenceservice_template_context(
         "runtime_tolerations": plan.deployment.runtime.tolerations,
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
+        "runtime_host_path_mounts": _runtime_host_path_volume_mounts(plan),
+        "runtime_host_path_volumes": _runtime_host_path_volumes(plan),
         "startup_probe_lines": _yaml_lines(_rhoai_startup_probe(plan)),
         "gpu_count": str(plan.deployment.runtime.tensor_parallelism),
         "custom_scheduler_enabled": custom_scheduler_enabled,
@@ -395,6 +418,8 @@ def _rhoai_inferenceservice_template_context(plan: ResolvedRunPlan) -> dict[str,
         "runtime_tolerations": plan.deployment.runtime.tolerations,
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
+        "runtime_host_path_mounts": _runtime_host_path_volume_mounts(plan),
+        "runtime_host_path_volumes": _runtime_host_path_volumes(plan),
         "model_storage_pvc_name": plan.deployment.model_storage.pvc_name,
         "model_storage_mount_path": plan.deployment.model_storage.mount_path,
         "profiling_enabled": plan.execution.profiling.enabled,
@@ -527,7 +552,8 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
             {
                 "name": "model-storage",
                 "mountPath": plan.deployment.model_storage.mount_path,
-            }
+            },
+            *_runtime_host_path_volume_mounts(plan),
         ],
     }
 
@@ -553,7 +579,8 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
                             "persistentVolumeClaim": {
                                 "claimName": plan.deployment.model_storage.pvc_name
                             },
-                        }
+                        },
+                        *_runtime_host_path_volumes(plan),
                     ],
                 },
             },

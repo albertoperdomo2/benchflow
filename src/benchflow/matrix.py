@@ -231,6 +231,12 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                             vllm_extra_args=list(
                                 experiment.spec.overrides.runtime.vllm_extra_args
                             ),
+                            host_paths=(
+                                deepcopy(experiment.spec.overrides.runtime.host_paths)
+                                if experiment.spec.overrides.runtime.host_paths
+                                is not None
+                                else None
+                            ),
                             node_selector=(
                                 dict(experiment.spec.overrides.runtime.node_selector)
                                 if experiment.spec.overrides.runtime.node_selector

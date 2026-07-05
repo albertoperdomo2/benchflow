@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ from .models import (
     ProfileRefs,
     ResolvedDeployment,
     ResolvedRunPlan,
+    RuntimeHostPathSpec,
     RuntimePlacementSpec,
     RuntimeResourcesSpec,
     RuntimeSpec,
@@ -52,6 +54,18 @@ from .models import (
 _AIPERF_REQUIRED_FIELDS = {"endpoint_type"}
 _AIPERF_RESERVED_FIELDS = {"dataset_url", "dataset_name", "dataset_cap", "max_seconds"}
 _GUIDELLM_RESERVED_FIELDS = {"pre_warmup"}
+_HOST_PATH_TYPES = {
+    "",
+    "DirectoryOrCreate",
+    "Directory",
+    "FileOrCreate",
+    "File",
+    "Socket",
+    "CharDevice",
+    "BlockDevice",
+}
+_HOST_PATH_RESERVED_VOLUME_NAMES = {"model-storage", "vllm-profiler"}
+_KUBERNETES_VOLUME_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
 def _string_or_list(raw: Any, field_name: str) -> str | list[str] | None:
@@ -268,6 +282,62 @@ def _runtime_placement_from_dict(
     return RuntimePlacementSpec(mode=mode, spread_pool=spread_pool)
 
 
+def _runtime_host_paths_from_dict(
+    raw: Any, field_name: str
+) -> list[RuntimeHostPathSpec]:
+    entries = _mapping_list(raw, field_name)
+    host_paths: list[RuntimeHostPathSpec] = []
+    names: set[str] = set()
+    mount_paths: set[str] = set()
+    for index, item in enumerate(entries):
+        item_field = f"{field_name}[{index}]"
+        name = _nonempty_string(item.get("name"), f"{item_field}.name")
+        host_path = _nonempty_string(item.get("host_path"), f"{item_field}.host_path")
+        mount_path = _nonempty_string(
+            item.get("mount_path"), f"{item_field}.mount_path"
+        )
+        if name is None:
+            raise ValidationError(f"{item_field}.name is required")
+        if host_path is None:
+            raise ValidationError(f"{item_field}.host_path is required")
+        if mount_path is None:
+            raise ValidationError(f"{item_field}.mount_path is required")
+        if len(name) > 63 or not _KUBERNETES_VOLUME_NAME_RE.match(name):
+            raise ValidationError(
+                f"{item_field}.name must be a valid Kubernetes volume name"
+            )
+        if name in _HOST_PATH_RESERVED_VOLUME_NAMES:
+            raise ValidationError(
+                f"{item_field}.name uses reserved BenchFlow volume name {name!r}"
+            )
+        if name in names:
+            raise ValidationError(f"{item_field}.name duplicates host path {name!r}")
+        if not host_path.startswith("/"):
+            raise ValidationError(f"{item_field}.host_path must be an absolute path")
+        if not mount_path.startswith("/"):
+            raise ValidationError(f"{item_field}.mount_path must be an absolute path")
+        if mount_path in mount_paths:
+            raise ValidationError(
+                f"{item_field}.mount_path duplicates mount path {mount_path!r}"
+            )
+        host_path_type = str(item.get("type", "") or "").strip()
+        if host_path_type not in _HOST_PATH_TYPES:
+            allowed = ", ".join(value for value in sorted(_HOST_PATH_TYPES) if value)
+            raise ValidationError(f"{item_field}.type must be one of: {allowed}")
+        host_paths.append(
+            RuntimeHostPathSpec(
+                name=name,
+                host_path=host_path,
+                mount_path=mount_path,
+                type=host_path_type,
+                read_only=_as_bool(item.get("read_only"), False),
+            )
+        )
+        names.add(name)
+        mount_paths.add(mount_path)
+    return host_paths
+
+
 def _mapping_list(raw: Any, field_name: str) -> list[dict[str, Any]]:
     if raw is None:
         return []
@@ -341,6 +411,13 @@ def _overrides_from_dict(
                     f"{field_name}.runtime.vllm_extra_args",
                 )
                 or []
+            ),
+            host_paths=(
+                _runtime_host_paths_from_dict(
+                    runtime.get("host_paths"), f"{field_name}.runtime.host_paths"
+                )
+                if "host_paths" in runtime
+                else None
             ),
             node_selector=(
                 _string_mapping(
@@ -519,6 +596,9 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
         tensor_parallelism=int(raw.get("tensor_parallelism", 1)),
         vllm_args=[str(item) for item in (raw.get("vllm_args") or [])],
         env=env,
+        host_paths=_runtime_host_paths_from_dict(
+            raw.get("host_paths"), "spec.runtime.host_paths"
+        ),
         node_selector=_string_mapping(
             raw.get("node_selector"), "spec.runtime.node_selector"
         ),
