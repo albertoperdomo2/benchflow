@@ -384,6 +384,7 @@ class RuntimeSpec:
     tensor_parallelism: int = 1
     vllm_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    shared_memory_size: str = ""
     host_paths: list[RuntimeHostPathSpec] = field(default_factory=list)
     service_account_name: str = ""
     node_selector: dict[str, str] = field(default_factory=dict)

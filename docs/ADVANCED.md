@@ -515,6 +515,7 @@ spec:
       - --max-model-len=8192 # base guide args for the deployment profile
     env:
       VLLM_LOGGING_LEVEL: INFO # merged with spec.overrides.runtime.env or --env
+    shared_memory_size: 200Gi # optional /dev/shm memory-backed emptyDir size for rhoai/rhaiis
     service_account_name: benchflow-hostpath-runtime # optional runtime pod service account for rhoai/rhaiis
     host_paths: # rhoai/rhaiis only
       - name: nvme-kv-cache # Kubernetes volume name; must not conflict with BenchFlow-owned volumes
@@ -598,6 +599,12 @@ arguments. If a vLLM flag needs the mount, put the exact `mount_path` in
 `runtime.vllm_args` or `runtime.vllm_extra_args`. Experiment and model overrides
 use the same shape under `spec.overrides.runtime.host_paths` and
 `spec.model_overrides.<model>.runtime.host_paths`.
+
+RHOAI and RHAIIS raw vLLM profiles can set `spec.runtime.shared_memory_size` to
+render a memory-backed `/dev/shm` `emptyDir` for the runtime pod. Use this when
+vLLM features create large shared-memory mappings, such as tiered KV offload.
+The value is a Kubernetes quantity such as `200Gi`; it does not reserve that
+memory upfront, but actual use consumes node RAM.
 
 OpenShift hostPath volumes require a service account that can use a
 hostPath-capable SCC. For RHOAI and RHAIIS raw vLLM profiles, set

@@ -540,6 +540,7 @@ def resolve_run_plan(
             **deployment_profile.spec.runtime.env,
             **overrides.runtime.env,
         },
+        shared_memory_size=deployment_profile.spec.runtime.shared_memory_size,
         host_paths=(
             deepcopy(overrides.runtime.host_paths)
             if overrides.runtime.host_paths is not None

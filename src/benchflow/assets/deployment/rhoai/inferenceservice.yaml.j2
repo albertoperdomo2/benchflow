@@ -98,6 +98,10 @@ spec:
         volumeMounts:
           - mountPath: {{ model_storage_mount_path | tojson }}
             name: model-storage
+{% if runtime_shared_memory_size %}
+          - mountPath: /dev/shm
+            name: dshm
+{% endif %}
 {% for mount in runtime_host_path_mounts %}
           - mountPath: {{ mount.mountPath | tojson }}
             name: {{ mount.name | tojson }}
@@ -114,6 +118,12 @@ spec:
       - name: model-storage
         persistentVolumeClaim:
           claimName: {{ model_storage_pvc_name | tojson }}
+{% if runtime_shared_memory_size %}
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: {{ runtime_shared_memory_size | tojson }}
+{% endif %}
 {% for volume in runtime_host_path_volumes %}
       - name: {{ volume.name | tojson }}
         hostPath:

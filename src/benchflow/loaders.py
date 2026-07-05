@@ -64,7 +64,7 @@ _HOST_PATH_TYPES = {
     "CharDevice",
     "BlockDevice",
 }
-_HOST_PATH_RESERVED_VOLUME_NAMES = {"model-storage", "vllm-profiler"}
+_HOST_PATH_RESERVED_VOLUME_NAMES = {"dshm", "model-storage", "vllm-profiler"}
 _KUBERNETES_VOLUME_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
@@ -604,6 +604,14 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
         tensor_parallelism=int(raw.get("tensor_parallelism", 1)),
         vllm_args=[str(item) for item in (raw.get("vllm_args") or [])],
         env=env,
+        shared_memory_size=(
+            _nonempty_string(
+                raw.get("shared_memory_size"), "spec.runtime.shared_memory_size"
+            )
+            if "shared_memory_size" in raw
+            else ""
+        )
+        or "",
         host_paths=_runtime_host_paths_from_dict(
             raw.get("host_paths"), "spec.runtime.host_paths"
         ),

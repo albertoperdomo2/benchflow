@@ -138,6 +138,7 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
             "tensorParallelism": plan.deployment.runtime.tensor_parallelism,
             "vllmArgs": plan.deployment.runtime.vllm_args,
             "env": plan.deployment.runtime.env,
+            "sharedMemorySize": plan.deployment.runtime.shared_memory_size,
             "nodeSelector": plan.deployment.runtime.node_selector,
             "affinity": plan.deployment.runtime.affinity,
             "tolerations": plan.deployment.runtime.tolerations,
@@ -378,6 +379,7 @@ def _rhoai_llminferenceservice_template_context(
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
         "runtime_service_account_name": plan.deployment.runtime.service_account_name,
+        "runtime_shared_memory_size": plan.deployment.runtime.shared_memory_size,
         "runtime_host_path_mounts": _runtime_host_path_volume_mounts(plan),
         "runtime_host_path_volumes": _runtime_host_path_volumes(plan),
         "startup_probe_lines": _yaml_lines(_rhoai_startup_probe(plan)),
@@ -420,6 +422,7 @@ def _rhoai_inferenceservice_template_context(plan: ResolvedRunPlan) -> dict[str,
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
         "runtime_service_account_name": plan.deployment.runtime.service_account_name,
+        "runtime_shared_memory_size": plan.deployment.runtime.shared_memory_size,
         "runtime_host_path_mounts": _runtime_host_path_volume_mounts(plan),
         "runtime_host_path_volumes": _runtime_host_path_volumes(plan),
         "model_storage_pvc_name": plan.deployment.model_storage.pvc_name,
@@ -555,6 +558,11 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
                 "name": "model-storage",
                 "mountPath": plan.deployment.model_storage.mount_path,
             },
+            *(
+                [{"name": "dshm", "mountPath": "/dev/shm"}]
+                if plan.deployment.runtime.shared_memory_size
+                else []
+            ),
             *_runtime_host_path_volume_mounts(plan),
         ],
     }
@@ -582,6 +590,21 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
                                 "claimName": plan.deployment.model_storage.pvc_name
                             },
                         },
+                        *(
+                            [
+                                {
+                                    "name": "dshm",
+                                    "emptyDir": {
+                                        "medium": "Memory",
+                                        "sizeLimit": (
+                                            plan.deployment.runtime.shared_memory_size
+                                        ),
+                                    },
+                                }
+                            ]
+                            if plan.deployment.runtime.shared_memory_size
+                            else []
+                        ),
                         *_runtime_host_path_volumes(plan),
                     ],
                 },

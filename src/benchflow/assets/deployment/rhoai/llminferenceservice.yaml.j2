@@ -232,8 +232,12 @@ spec:
             value: "42"
 {% endif %}
 {% endif %}
-{% if runtime_host_path_mounts or profiling_enabled %}
+{% if runtime_shared_memory_size or runtime_host_path_mounts or profiling_enabled %}
         volumeMounts:
+{% if runtime_shared_memory_size %}
+          - mountPath: /dev/shm
+            name: dshm
+{% endif %}
 {% for mount in runtime_host_path_mounts %}
           - mountPath: {{ mount.mountPath | tojson }}
             name: {{ mount.name | tojson }}
@@ -247,8 +251,14 @@ spec:
             readOnly: true
 {% endif %}
 {% endif %}
-{% if runtime_host_path_volumes or profiling_enabled %}
+{% if runtime_shared_memory_size or runtime_host_path_volumes or profiling_enabled %}
     volumes:
+{% if runtime_shared_memory_size %}
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: {{ runtime_shared_memory_size | tojson }}
+{% endif %}
 {% for volume in runtime_host_path_volumes %}
       - name: {{ volume.name | tojson }}
         hostPath:
