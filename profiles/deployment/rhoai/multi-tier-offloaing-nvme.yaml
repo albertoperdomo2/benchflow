@@ -1,0 +1,49 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: multi-tier-offloaing-nvme
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0-ea.1
+  platform_channel: beta
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+    # Required for hostPath volumes on OpenShift. For RHOAI LLMInferenceService,
+    # bind this service account to an SCC that allows both hostPath and
+    # runtime/default seccomp; on Poseidon, use:
+    # openshift-ai-llminferenceservice-multi-node-scc.
+    service_account_name: benchflow-hostpath-runtime
+    host_paths:
+      # poseidon H100 nodes mount local NVMe at /var/mnt/modelcache. This
+      # subdirectory is pre-created on each node with mode 1777 so random
+      # non-root OpenShift UIDs can write to it. Do not rely on DirectoryOrCreate
+      # here: kubelet-created hostPath directories are root-owned and may not be
+      # writable by the vLLM container.
+      #
+      # The filesystem tier does not enforce byte capacity in vLLM config. Size
+      # it by provisioning/quotaing this host directory, and wipe it between
+      # benchmark runs because old tier files are not reused by later engines.
+      - name: nvme-kv-cache
+        host_path: /var/mnt/modelcache/benchflow-kv-cache
+        mount_path: /mnt/nvme-kv-cache
+        type: Directory
+        read_only: false
+    vllm_args:
+      - --max-model-len=8192
+      # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":171798691840,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false

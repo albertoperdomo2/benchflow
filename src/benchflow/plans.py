@@ -389,6 +389,10 @@ def _merge_model_override(
                 model_override.runtime.host_paths,
                 base.runtime.host_paths,
             ),
+            service_account_name=_scalar_model_override(
+                model_override.runtime.service_account_name,
+                base.runtime.service_account_name,
+            ),
             node_selector=_scalar_model_override(
                 model_override.runtime.node_selector,
                 base.runtime.node_selector,
@@ -541,6 +545,10 @@ def resolve_run_plan(
             if overrides.runtime.host_paths is not None
             else deepcopy(deployment_profile.spec.runtime.host_paths)
         ),
+        service_account_name=str(
+            overrides.runtime.service_account_name
+            or deployment_profile.spec.runtime.service_account_name
+        ).strip(),
         node_selector=(
             dict(overrides.runtime.node_selector)
             if overrides.runtime.node_selector is not None

@@ -350,6 +350,9 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 if base_experiment.spec.overrides.runtime.host_paths is not None
                 else None
             ),
+            service_account_name=(
+                base_experiment.spec.overrides.runtime.service_account_name
+            ),
             node_selector=(
                 dict(base_experiment.spec.overrides.runtime.node_selector)
                 if base_experiment.spec.overrides.runtime.node_selector is not None

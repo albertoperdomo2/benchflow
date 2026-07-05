@@ -515,6 +515,7 @@ spec:
       - --max-model-len=8192 # base guide args for the deployment profile
     env:
       VLLM_LOGGING_LEVEL: INFO # merged with spec.overrides.runtime.env or --env
+    service_account_name: benchflow-hostpath-runtime # optional runtime pod service account for rhoai/rhaiis
     host_paths: # rhoai/rhaiis only
       - name: nvme-kv-cache # Kubernetes volume name; must not conflict with BenchFlow-owned volumes
         host_path: /mnt/local-nvme/kv-cache # node-local path
@@ -597,6 +598,16 @@ arguments. If a vLLM flag needs the mount, put the exact `mount_path` in
 `runtime.vllm_args` or `runtime.vllm_extra_args`. Experiment and model overrides
 use the same shape under `spec.overrides.runtime.host_paths` and
 `spec.model_overrides.<model>.runtime.host_paths`.
+
+OpenShift hostPath volumes require a service account that can use a
+hostPath-capable SCC. For RHOAI and RHAIIS raw vLLM profiles, set
+`spec.runtime.service_account_name` to that dedicated runtime service account.
+For RHOAI `LLMInferenceService`, the controller may inject `RuntimeDefault`
+seccomp, so the SCC must allow both `hostPath` volumes and `runtime/default`
+seccomp. On Poseidon, `openshift-ai-llminferenceservice-multi-node-scc` matches
+that requirement.
+Do not grant hostPath SCC access to the namespace `default` service account
+unless the whole namespace is intentionally trusted for host filesystem access.
 
 Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
 storage offloading with `spec.options.storage_offloading`. When present,

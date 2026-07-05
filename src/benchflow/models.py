@@ -293,6 +293,7 @@ class OverrideRuntimeSpec:
     vllm_args: list[str] | None = None
     vllm_extra_args: list[str] = field(default_factory=list)
     host_paths: list["RuntimeHostPathSpec"] | None = None
+    service_account_name: str | None = None
     node_selector: dict[str, str] | None = None
     affinity: dict[str, Any] | None = None
     placement: "RuntimePlacementSpec | None" = None
@@ -384,6 +385,7 @@ class RuntimeSpec:
     vllm_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     host_paths: list[RuntimeHostPathSpec] = field(default_factory=list)
+    service_account_name: str = ""
     node_selector: dict[str, str] = field(default_factory=dict)
     affinity: dict[str, Any] = field(default_factory=dict)
     placement: RuntimePlacementSpec = field(default_factory=RuntimePlacementSpec)

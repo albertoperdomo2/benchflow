@@ -237,6 +237,9 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                                 is not None
                                 else None
                             ),
+                            service_account_name=(
+                                experiment.spec.overrides.runtime.service_account_name
+                            ),
                             node_selector=(
                                 dict(experiment.spec.overrides.runtime.node_selector)
                                 if experiment.spec.overrides.runtime.node_selector

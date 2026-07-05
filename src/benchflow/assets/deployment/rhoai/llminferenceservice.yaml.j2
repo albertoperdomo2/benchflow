@@ -140,6 +140,9 @@ spec:
             resources: {}
 {% endif %}
   template:
+{% if runtime_service_account_name %}
+    serviceAccountName: {{ runtime_service_account_name | tojson }}
+{% endif %}
 {% if runtime_node_selector %}
     nodeSelector: {{ runtime_node_selector | tojson }}
 {% endif %}

@@ -419,6 +419,14 @@ def _overrides_from_dict(
                 if "host_paths" in runtime
                 else None
             ),
+            service_account_name=(
+                _nonempty_string(
+                    runtime.get("service_account_name"),
+                    f"{field_name}.runtime.service_account_name",
+                )
+                if "service_account_name" in runtime
+                else None
+            ),
             node_selector=(
                 _string_mapping(
                     runtime.get("node_selector"),
@@ -599,6 +607,7 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
         host_paths=_runtime_host_paths_from_dict(
             raw.get("host_paths"), "spec.runtime.host_paths"
         ),
+        service_account_name=str(raw.get("service_account_name", "") or "").strip(),
         node_selector=_string_mapping(
             raw.get("node_selector"), "spec.runtime.node_selector"
         ),
