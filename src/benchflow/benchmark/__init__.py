@@ -168,12 +168,14 @@ def generate_run_report(
     output_dir: Path | None = None,
     output_file: Path | None = None,
     columns: int = 3,
+    metrics_yaml_path: Path | None = None,
 ) -> Path:
     if aiperf_backend.is_aiperf_artifacts_dir(artifacts_dir):
         return aiperf_backend.generate_run_report(
             artifacts_dir=artifacts_dir,
             output_dir=output_dir,
             output_file=output_file,
+            metrics_yaml_path=metrics_yaml_path,
         )
     return generate_guidellm_run_report(
         artifacts_dir=artifacts_dir,

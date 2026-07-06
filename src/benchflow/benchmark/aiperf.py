@@ -18,7 +18,7 @@ from mlflow.store.artifact.artifact_repository_registry import get_artifact_repo
 from plotly.offline import get_plotlyjs
 from plotly.subplots import make_subplots
 
-from ..cluster import CommandError, require_command
+from ..cluster import CommandError, discover_repo_root, require_command
 from ..mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from ..models import AiperfBenchmarkSpec, ResolvedRunPlan, ValidationError
 from ..plotting import REPORT_COLOR_PALETTE
@@ -29,7 +29,11 @@ from .common import (
     resolved_accelerator,
 )
 from .cli_args import render_cli_args
-from .comparison_metrics import build_comparison_metric_panels
+from .comparison_metrics import (
+    build_comparison_metric_panels,
+    build_run_metric_panels,
+    find_metrics_artifacts_dir,
+)
 
 _AIPERF_SUMMARY_CANDIDATES = (
     "results/profile_export_aiperf.json",
@@ -37,6 +41,9 @@ _AIPERF_SUMMARY_CANDIDATES = (
     "profile_export_aiperf.json",
 )
 _AIPERF_ARTIFACT_ROOT = "benchmark"
+_DEFAULT_AIPERF_REPORT_METRICS_PROFILE = Path(
+    "profiles/report-metrics/cpu-kv-offload.yaml"
+)
 _PLOTLY_CONFIG = {"displaylogo": False, "responsive": True}
 _PUBLIC_DATASET_LABELS = {
     "semianalysis_cc_traces_weka_with_subagents": (
@@ -1488,6 +1495,22 @@ def _summary_table_figure(summary: dict[str, Any]) -> go.Figure:
     return figure
 
 
+def _default_report_metrics_yaml_path() -> Path | None:
+    try:
+        path = discover_repo_root(Path.cwd()) / _DEFAULT_AIPERF_REPORT_METRICS_PROFILE
+    except CommandError:
+        return None
+    return path if path.exists() else None
+
+
+def _resolved_run_report_metrics_yaml_path(
+    metrics_yaml_path: Path | None,
+) -> Path | None:
+    if metrics_yaml_path is not None:
+        return metrics_yaml_path
+    return _default_report_metrics_yaml_path()
+
+
 def generate_report(
     *,
     mlflow_run_ids: list[str],
@@ -1761,6 +1784,7 @@ def generate_run_report(
     artifacts_dir: Path,
     output_dir: Path | None,
     output_file: Path | None,
+    metrics_yaml_path: Path | None = None,
 ) -> Path:
     summary_path = next(
         (
@@ -1789,6 +1813,15 @@ def generate_run_report(
     )
     summary = _load_json(summary_path)
     distributions = _load_jsonl_metrics(jsonl_path) if jsonl_path else {}
+    report_metrics_yaml_path = _resolved_run_report_metrics_yaml_path(metrics_yaml_path)
+    metric_panels = [
+        panel
+        for panel in build_run_metric_panels(
+            metrics_yaml_path=report_metrics_yaml_path,
+            metrics_dir=find_metrics_artifacts_dir(artifacts_dir),
+        )
+        if list(getattr(panel, "traces", []) or [])
+    ]
 
     figures = [_summary_table_figure(summary)]
     for metric_name, title in (
@@ -1838,6 +1871,10 @@ def generate_run_report(
         title="BenchFlow AIPerf Run Report",
         subtitle_lines=subtitle,
         figures=figures,
+        raw_sections=[
+            _render_comparison_metric_panel_section(panel, panel_index)
+            for panel_index, panel in enumerate(metric_panels, start=1)
+        ],
         output_path=output_path,
     )
     return output_path

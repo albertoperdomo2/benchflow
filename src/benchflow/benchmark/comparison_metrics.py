@@ -530,8 +530,10 @@ def _trace_name(
     else:
         short_series = _short_resource_name(_default_series_suffix(labels, series))
     if short_series and short_series != "series":
-        return f"{version_label}-{short_series}"
-    return version_label
+        if version_label:
+            return f"{version_label}-{short_series}"
+        return short_series
+    return version_label or "series"
 
 
 def _append_averaged_point(
@@ -649,6 +651,78 @@ def _build_metric_panel(
     )
 
 
+def _build_run_metric_panel(
+    *,
+    spec: ReportMetricSpec,
+    metrics_dir: Path,
+) -> ComparisonMetricPanel:
+    metric_name, points, used_fallback = _metric_name_and_points_for_spec(
+        metrics_dir, spec
+    )
+    trace_yaxis: dict[str, str] = {}
+    grouped_values: dict[str, dict[float, list[float]]] = {}
+
+    if metric_name and points:
+        start_timestamp = _run_start_timestamp(metrics_dir, points)
+        yaxis_title = _inferred_yaxis(metric_name, spec)
+        value_scale = _inferred_scale(metric_name, spec)
+        for series, bucket in _group_points(points).items():
+            labels = dict(bucket.get("labels") or {})
+            trace_name = _trace_name(
+                spec=spec,
+                labels=labels,
+                series=series,
+                version_label="",
+                series_template=(
+                    spec.fallback_series_template
+                    if used_fallback and spec.fallback_series_template
+                    else None
+                ),
+            )
+            trace_yaxis[trace_name] = yaxis_title
+            for point in bucket["points"]:
+                try:
+                    timestamp = (float(point["timestamp"]) - start_timestamp) / 60.0
+                    value = float(point["value"]) * value_scale
+                except (KeyError, TypeError, ValueError):
+                    continue
+                _append_averaged_point(
+                    grouped_values,
+                    trace_name=trace_name,
+                    timestamp=timestamp,
+                    value=value,
+                )
+
+    traces: list[ComparisonMetricTrace] = []
+    for trace_name, points_by_timestamp in sorted(grouped_values.items()):
+        timestamps = sorted(points_by_timestamp)
+        traces.append(
+            ComparisonMetricTrace(
+                name=trace_name,
+                x=timestamps,
+                y=[
+                    sum(points_by_timestamp[timestamp])
+                    / len(points_by_timestamp[timestamp])
+                    for timestamp in timestamps
+                ],
+                yaxis_title=trace_yaxis.get(
+                    trace_name,
+                    _inferred_yaxis(metric_name or spec.metric or spec.name, spec),
+                ),
+            )
+        )
+
+    return ComparisonMetricPanel(
+        title=spec.title
+        or _humanize_metric_name(metric_name or spec.metric or spec.name),
+        description=spec.description,
+        yaxis_title=_inferred_yaxis(metric_name or spec.metric or spec.name, spec),
+        traces=traces,
+        missing_runs=[] if traces else ["local artifacts"],
+        reference_lines=list(spec.reference_lines),
+    )
+
+
 def build_comparison_metric_panels(
     *,
     metrics_yaml_path: Path | None,
@@ -664,5 +738,31 @@ def build_comparison_metric_panels(
             runs_data=runs_data,
             version_overrides=version_overrides or {},
         )
+        for metric in spec.metrics
+    ]
+
+
+def find_metrics_artifacts_dir(root: Path) -> Path | None:
+    for candidate in (
+        root,
+        root / "metrics",
+        root / "benchmark" / "metrics",
+        root / "results" / "metrics",
+    ):
+        if _metrics_cache_ready(candidate):
+            return candidate
+    return None
+
+
+def build_run_metric_panels(
+    *,
+    metrics_yaml_path: Path | None,
+    metrics_dir: Path | None,
+) -> list[ComparisonMetricPanel]:
+    if metrics_yaml_path is None or metrics_dir is None:
+        return []
+    spec = load_report_metrics_spec(metrics_yaml_path)
+    return [
+        _build_run_metric_panel(spec=metric, metrics_dir=metrics_dir)
         for metric in spec.metrics
     ]

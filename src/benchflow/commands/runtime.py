@@ -803,6 +803,9 @@ def cmd_benchmark_plot_run(args: argparse.Namespace) -> int:
         output_dir=Path(args.output_dir).resolve() if args.output_dir else None,
         output_file=Path(args.output_file).resolve() if args.output_file else None,
         columns=int(args.columns),
+        metrics_yaml_path=(
+            Path(args.metrics_yaml).resolve() if args.metrics_yaml else None
+        ),
     )
     print(report_path)
     return 0
@@ -1745,6 +1748,15 @@ def benchmark_plot_group() -> None:
     default=3,
     show_default=True,
     help="Number of columns for the diagnostics section.",
+)
+@click.option(
+    "--metrics-yaml",
+    type=click.Path(dir_okay=False, exists=True, path_type=Path),
+    help=(
+        "Report-only YAML selecting collected Prometheus metrics to append. "
+        "AIPerf reports default to profiles/report-metrics/cpu-kv-offload.yaml "
+        "when it exists."
+    ),
 )
 def benchmark_plot_run_command(**kwargs: object) -> int:
     return invoke_handler(cmd_benchmark_plot_run, **kwargs)
