@@ -226,6 +226,16 @@ def _metric_rows(paths: ArtifactPaths, metric_name: str) -> list[dict]:
     return payload if isinstance(payload, list) else []
 
 
+def _hostpath_nvme_metric_rows(paths: ArtifactPaths, metric_name: str) -> list[dict]:
+    rows = _metric_rows(paths, metric_name)
+    return [
+        row
+        for row in rows
+        if (row.get("labels") or {}).get("mountpoint")
+        and (row.get("labels") or {}).get("device")
+    ]
+
+
 def _rows_to_series(rows: list[dict]) -> dict[int, float]:
     series: dict[int, float] = {}
     for row in rows:
@@ -437,13 +447,6 @@ def _node_mount_label(row: dict) -> str:
     mount = str(labels.get("mountpoint") or labels.get("device") or "mount")
     device = str(labels.get("device") or "").strip()
     return f"{node} {mount} {device}".strip()
-
-
-def _container_fs_direction_label(row: dict) -> str:
-    labels = row.get("labels", {})
-    device = str(labels.get("device") or "fs")
-    direction = str(labels.get("direction") or "unknown").lower()
-    return f"{_workload_pod_label(row)} {device} {direction}"
 
 
 def _node_label(row: dict) -> str:
@@ -1195,34 +1198,33 @@ def _build_system_figures(
         _node_label,
     )
     storage_nvme_bytes_per_second_by_node_device = _rows_to_grouped_series(
-        _metric_rows(paths, "storage_nvme_bytes_per_second_by_node_device"),
+        _hostpath_nvme_metric_rows(
+            paths, "storage_nvme_bytes_per_second_by_node_device"
+        ),
         _node_device_direction_label,
     )
     storage_nvme_iops_by_node_device = _rows_to_grouped_series(
-        _metric_rows(paths, "storage_nvme_iops_by_node_device"),
+        _hostpath_nvme_metric_rows(paths, "storage_nvme_iops_by_node_device"),
         _node_device_direction_label,
     )
     storage_nvme_busy_seconds_per_second_by_node_device = _rows_to_grouped_series(
-        _metric_rows(paths, "storage_nvme_busy_seconds_per_second_by_node_device"),
+        _hostpath_nvme_metric_rows(
+            paths, "storage_nvme_busy_seconds_per_second_by_node_device"
+        ),
         _node_device_label,
     )
     storage_nvme_filesystem_avail_bytes_by_node_mount = _rows_to_grouped_series(
-        _metric_rows(paths, "storage_nvme_filesystem_avail_bytes_by_node_mount"),
+        _hostpath_nvme_metric_rows(
+            paths, "storage_nvme_filesystem_avail_bytes_by_node_mount"
+        ),
         _node_mount_label,
     )
     storage_nvme_filesystem_usage_percent_by_node_mount = _rows_to_grouped_series(
-        _metric_rows(paths, "storage_nvme_filesystem_usage_percent_by_node_mount"),
+        _hostpath_nvme_metric_rows(
+            paths, "storage_nvme_filesystem_usage_percent_by_node_mount"
+        ),
         _node_mount_label,
     )
-    container_fs_bytes_per_second_by_pod_device = _rows_to_grouped_series(
-        _metric_rows(paths, "container_fs_bytes_per_second_by_pod_device"),
-        _container_fs_direction_label,
-    )
-    container_fs_iops_by_pod_device = _rows_to_grouped_series(
-        _metric_rows(paths, "container_fs_iops_by_pod_device"),
-        _container_fs_direction_label,
-    )
-
     token_rate_by_pod = _rows_to_grouped_series(
         _metric_rows(paths, "generation_token_rate_per_second"),
         _workload_pod_label,
@@ -1594,49 +1596,6 @@ def _build_system_figures(
                 )
             )
 
-    if container_fs_bytes_per_second_by_pod_device:
-        timestamps = _grouped_timestamps(container_fs_bytes_per_second_by_pod_device)
-        if timestamps:
-            figures.append(
-                _build_grouped_line_figure(
-                    minutes=_relative_minutes(timestamps),
-                    timestamps=timestamps,
-                    grouped=container_fs_bytes_per_second_by_pod_device,
-                    segments=segments,
-                    title="(ap) Model container filesystem throughput",
-                    subtitle=(
-                        "cAdvisor container filesystem read/write byte rate for "
-                        "model-server pods. Device labels depend on the runtime and "
-                        "may reflect block-device accounting rather than mount paths."
-                    ),
-                    yaxis_title="Container FS throughput (MiB/s)",
-                    scale=1.0 / 1024.0 / 1024.0,
-                    hover_value="%{y:.1f} MiB/s",
-                    hover_label="Throughput",
-                )
-            )
-
-    if container_fs_iops_by_pod_device:
-        timestamps = _grouped_timestamps(container_fs_iops_by_pod_device)
-        if timestamps:
-            figures.append(
-                _build_grouped_line_figure(
-                    minutes=_relative_minutes(timestamps),
-                    timestamps=timestamps,
-                    grouped=container_fs_iops_by_pod_device,
-                    segments=segments,
-                    title="(aq) Model container filesystem IOPS",
-                    subtitle=(
-                        "cAdvisor container filesystem read/write operation rate "
-                        "for model-server pods. Use this as pod-attributed I/O "
-                        "context alongside node-level NVMe metrics."
-                    ),
-                    yaxis_title="Container FS IOPS",
-                    hover_value="%{y:.1f} ops/s",
-                    hover_label="IOPS",
-                )
-            )
-
     if storage_nfs_requests_rate_by_node_method:
         timestamps = _grouped_timestamps(storage_nfs_requests_rate_by_node_method)
         if timestamps:
@@ -1646,7 +1605,7 @@ def _build_system_figures(
                     timestamps=timestamps,
                     grouped=storage_nfs_requests_rate_by_node_method,
                     segments=segments,
-                    title="(ar) Node NFS request rate",
+                    title="(ap) Node NFS request rate",
                     subtitle=(
                         "Node-level NFS client request rate from node-exporter. "
                         "This is not pod-specific, but it helps identify whether "
@@ -1667,7 +1626,7 @@ def _build_system_figures(
                     timestamps=timestamps,
                     grouped=storage_nfs_retransmissions_rate_by_node,
                     segments=segments,
-                    title="(as) Node NFS retransmissions",
+                    title="(aq) Node NFS retransmissions",
                     subtitle=(
                         "Node-level NFS RPC retransmission rate from node-exporter. "
                         "Spikes indicate transport or storage pressure that can "

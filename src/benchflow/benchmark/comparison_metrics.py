@@ -33,6 +33,7 @@ class ReportMetricSpec:
     query: str
     series_template: str
     fallback_series_template: str
+    required_labels: list[str]
     reference_lines: list["ReportMetricReferenceLine"]
 
 
@@ -288,6 +289,9 @@ def _metric_spec_from_dict(raw: dict[str, Any], index: int) -> ReportMetricSpec:
     reference_lines = _reference_lines_from_raw(
         raw.get("reference_lines"), f"metrics[{index}].reference_lines"
     )
+    required_labels = _string_list(
+        raw.get("required_labels"), f"metrics[{index}].required_labels"
+    )
     return ReportMetricSpec(
         name=str(raw.get("name") or metric or f"metric_{index + 1}").strip(),
         metric=metric,
@@ -304,8 +308,23 @@ def _metric_spec_from_dict(raw: dict[str, Any], index: int) -> ReportMetricSpec:
         fallback_series_template=str(
             raw.get("fallback_series") or raw.get("fallback_series_template") or ""
         ).strip(),
+        required_labels=required_labels,
         reference_lines=reference_lines,
     )
+
+
+def _string_list(raw: Any, field_name: str) -> list[str]:
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, list):
+        raise ValidationError(f"{field_name} must be a list")
+    values: list[str] = []
+    for index, item in enumerate(raw):
+        value = str(item or "").strip()
+        if not value:
+            raise ValidationError(f"{field_name}[{index}] must be a non-empty string")
+        values.append(value)
+    return values
 
 
 def _reference_lines_from_raw(
@@ -442,20 +461,41 @@ def _load_points(metrics_dir: Path, metric_name: str) -> list[dict[str, Any]]:
     return payload if isinstance(payload, list) else []
 
 
+def _filter_required_label_points(
+    points: list[dict[str, Any]],
+    required_labels: list[str],
+) -> list[dict[str, Any]]:
+    if not required_labels:
+        return points
+    filtered: list[dict[str, Any]] = []
+    for point in points:
+        labels = point.get("labels") or {}
+        if not isinstance(labels, dict):
+            continue
+        if all(labels.get(label) not in {None, ""} for label in required_labels):
+            filtered.append(point)
+    return filtered
+
+
 def _metric_name_and_points_for_spec(
     metrics_dir: Path,
     spec: ReportMetricSpec,
 ) -> tuple[str | None, list[dict[str, Any]], bool]:
     metric_name = _metric_name_for_spec(metrics_dir, spec)
     if metric_name is not None:
-        points = _load_points(metrics_dir, metric_name)
+        points = _filter_required_label_points(
+            _load_points(metrics_dir, metric_name), spec.required_labels
+        )
         if points:
             return metric_name, points, False
 
     if spec.fallback_metric:
         fallback_path = metrics_dir / "raw" / f"{spec.fallback_metric}.json"
         if fallback_path.exists():
-            points = _load_points(metrics_dir, spec.fallback_metric)
+            points = _filter_required_label_points(
+                _load_points(metrics_dir, spec.fallback_metric),
+                spec.required_labels,
+            )
             if points:
                 return spec.fallback_metric, points, True
 

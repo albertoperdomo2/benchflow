@@ -84,44 +84,36 @@ metrics:
   - title: Node NVMe throughput
     description: Node-exporter read/write byte rate for the hostPath-backed NVMe filesystem on nodes running model-server pods.
     metric: storage_nvme_bytes_per_second_by_node_device
-    series: '{{node}} {{mountpoint}} {{device}} {{direction}}'
+    required_labels: [mountpoint, device]
+    series: '{{mountpoint}} {{device}} {{direction}}'
     scale: 0.000001
     yaxis: MB/s
 
   - title: Node NVMe IOPS
     description: Node-exporter completed read/write operation rate for the hostPath-backed NVMe filesystem on nodes running model-server pods.
     metric: storage_nvme_iops_by_node_device
-    series: '{{node}} {{mountpoint}} {{device}} {{direction}}'
+    required_labels: [mountpoint, device]
+    series: '{{mountpoint}} {{device}} {{direction}}'
     yaxis: ops/s
 
   - title: Node NVMe busy time
     description: Fractional seconds per second that the hostPath-backed NVMe device is busy on nodes running model-server pods.
     metric: storage_nvme_busy_seconds_per_second_by_node_device
-    series: '{{node}} {{mountpoint}} {{device}}'
+    required_labels: [mountpoint, device]
+    series: '{{mountpoint}} {{device}}'
     yaxis: seconds/s
 
   - title: NVMe filesystem available capacity
     description: Available capacity for the hostPath-backed NVMe filesystem on nodes running model-server pods.
     metric: storage_nvme_filesystem_avail_bytes_by_node_mount
-    series: '{{node}} {{mountpoint}} {{device}}'
+    required_labels: [mountpoint, device]
+    series: '{{mountpoint}} {{device}}'
     scale: 0.000000001
     yaxis: GB
 
   - title: NVMe filesystem usage
     description: Percent used for the hostPath-backed NVMe filesystem on nodes running model-server pods.
     metric: storage_nvme_filesystem_usage_percent_by_node_mount
-    series: '{{node}} {{mountpoint}} {{device}}'
+    required_labels: [mountpoint, device]
+    series: '{{mountpoint}} {{device}}'
     yaxis: percent
-
-  - title: Model container filesystem throughput
-    description: cAdvisor read/write byte rate for model-server container filesystems.
-    metric: container_fs_bytes_per_second_by_pod_device
-    series: '{{pod}} {{device}} {{direction}}'
-    scale: 0.000001
-    yaxis: MB/s
-
-  - title: Model container filesystem IOPS
-    description: cAdvisor read/write operation rate for model-server container filesystems.
-    metric: container_fs_iops_by_pod_device
-    series: '{{pod}} {{device}} {{direction}}'
-    yaxis: ops/s
