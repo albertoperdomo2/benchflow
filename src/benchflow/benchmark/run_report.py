@@ -403,9 +403,18 @@ def _nfs_node_method_label(row: dict) -> str:
 
 def _node_device_label(row: dict) -> str:
     labels = row.get("labels", {})
-    node = _short_node_name(str(labels.get("instance") or row.get("series") or ""))
+    node = _short_node_name(
+        str(
+            labels.get("node")
+            or labels.get("nodename")
+            or labels.get("instance")
+            or row.get("series")
+            or ""
+        )
+    )
     device = str(labels.get("device") or "device")
-    return f"{node} {device}"
+    mount = str(labels.get("mountpoint") or "").strip()
+    return f"{node} {mount} {device}".strip()
 
 
 def _node_device_direction_label(row: dict) -> str:
@@ -416,9 +425,18 @@ def _node_device_direction_label(row: dict) -> str:
 
 def _node_mount_label(row: dict) -> str:
     labels = row.get("labels", {})
-    node = _short_node_name(str(labels.get("instance") or row.get("series") or ""))
+    node = _short_node_name(
+        str(
+            labels.get("node")
+            or labels.get("nodename")
+            or labels.get("instance")
+            or row.get("series")
+            or ""
+        )
+    )
     mount = str(labels.get("mountpoint") or labels.get("device") or "mount")
-    return f"{node} {mount}"
+    device = str(labels.get("device") or "").strip()
+    return f"{node} {mount} {device}".strip()
 
 
 def _container_fs_direction_label(row: dict) -> str:

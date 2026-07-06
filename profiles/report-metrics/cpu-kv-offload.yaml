@@ -82,35 +82,35 @@ metrics:
     query: 'rate({__name__=~"DCGM_FI_PROF_PCIE_RX_BYTES", exported_namespace="$namespace", exported_pod=~"$modelserver_pod_regex"}[5m])'
 
   - title: Node NVMe throughput
-    description: Node-exporter read/write byte rate for NVMe devices.
+    description: Node-exporter read/write byte rate for the hostPath-backed NVMe filesystem on nodes running model-server pods.
     metric: storage_nvme_bytes_per_second_by_node_device
-    series: '{{instance}} {{device}} {{direction}}'
+    series: '{{node}} {{mountpoint}} {{device}} {{direction}}'
     scale: 0.000001
     yaxis: MB/s
 
   - title: Node NVMe IOPS
-    description: Node-exporter completed read/write operation rate for NVMe devices.
+    description: Node-exporter completed read/write operation rate for the hostPath-backed NVMe filesystem on nodes running model-server pods.
     metric: storage_nvme_iops_by_node_device
-    series: '{{instance}} {{device}} {{direction}}'
+    series: '{{node}} {{mountpoint}} {{device}} {{direction}}'
     yaxis: ops/s
 
   - title: Node NVMe busy time
-    description: Fractional seconds per second that each NVMe device is busy.
+    description: Fractional seconds per second that the hostPath-backed NVMe device is busy on nodes running model-server pods.
     metric: storage_nvme_busy_seconds_per_second_by_node_device
-    series: '{{instance}} {{device}}'
+    series: '{{node}} {{mountpoint}} {{device}}'
     yaxis: seconds/s
 
   - title: NVMe filesystem available capacity
-    description: Available capacity for filesystems backed by NVMe devices.
+    description: Available capacity for the hostPath-backed NVMe filesystem on nodes running model-server pods.
     metric: storage_nvme_filesystem_avail_bytes_by_node_mount
-    series: '{{instance}} {{mountpoint}}'
+    series: '{{node}} {{mountpoint}} {{device}}'
     scale: 0.000000001
     yaxis: GB
 
   - title: NVMe filesystem usage
-    description: Percent used for filesystems backed by NVMe devices.
+    description: Percent used for the hostPath-backed NVMe filesystem on nodes running model-server pods.
     metric: storage_nvme_filesystem_usage_percent_by_node_mount
-    series: '{{instance}} {{mountpoint}}'
+    series: '{{node}} {{mountpoint}} {{device}}'
     yaxis: percent
 
   - title: Model container filesystem throughput

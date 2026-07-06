@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import ssl
 import urllib.error
 import urllib.parse
@@ -15,6 +16,7 @@ from ..models import ResolvedRunPlan
 from ..ui import detail, step, success, warning
 
 _NO_POD_MATCH = "a^"
+_HOST_PATH_FILESYSTEM_TYPES = "tmpfs|overlay|squashfs|proc|sysfs|devtmpfs|cgroup2"
 
 
 def _parse_iso8601(value: str) -> datetime:
@@ -168,7 +170,29 @@ def _query_template_values(
         "$modelserver_pod_regex": modelserver_pod_regex,
         "$scheduler_pod_regex": scheduler_pod_regex,
         "$scheduler_endpoint_regex": scheduler_endpoint_regex,
+        "$hostpath_mount_regex": _hostpath_mount_regex(plan),
+        "$hostpath_filesystem_exclude_regex": _HOST_PATH_FILESYSTEM_TYPES,
     }
+
+
+def _hostpath_mount_regex(plan: ResolvedRunPlan) -> str:
+    mountpoints: set[str] = set()
+    for host_path in plan.deployment.runtime.host_paths:
+        raw_path = str(host_path.host_path or "").strip()
+        if not raw_path.startswith("/"):
+            continue
+        path = Path(raw_path)
+        candidates = [path]
+        if path.parent != path and str(path.parent) != "/":
+            candidates.append(path.parent)
+        for candidate in candidates:
+            value = str(candidate).rstrip("/") or "/"
+            if value != "/":
+                mountpoints.add(value)
+    if not mountpoints:
+        return _NO_POD_MATCH
+    escaped = [re.escape(item) for item in sorted(mountpoints, key=len, reverse=True)]
+    return f"^({'|'.join(escaped)})$"
 
 
 def _resolve_query_template(query_template: str, values: dict[str, str]) -> str:
