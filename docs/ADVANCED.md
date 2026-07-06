@@ -16,6 +16,7 @@ work and should be treated as an unsupported placeholder.
 - [Matrix Experiments](#matrix-experiments)
 - [Dynamic MLflow Defaults](#dynamic-mlflow-defaults)
 - [Runtime Commands](#runtime-commands)
+- [Maintainer Image Releases](#maintainer-image-releases)
 - [Monitoring and Results](#monitoring-and-results)
 - [Local Metrics Viewer](#local-metrics-viewer)
 - [Comparison Reports](#comparison-reports)
@@ -1200,6 +1201,28 @@ Tear down llm-d setup explicitly:
 
 ```bash
 bflow teardown llm-d --run-plan-file runplan.json --state-path setup-state.json
+```
+
+## Maintainer Image Releases
+
+Normal pushes to `main` keep producing temporary `latest` and `main-<sha>`
+images. The image cleanup job prunes old automatic tags and should stay that
+way.
+
+For a permanent image, create a release tag from local `main`:
+
+```bash
+scripts/release-image.sh minor
+scripts/release-image.sh major
+```
+
+The script fetches tags, requires local `main` to match `origin/main`, requires
+a clean worktree, creates the next annotated `vMAJOR.MINOR` tag, and pushes it.
+Patch tags are intentionally unsupported. The existing image workflow then
+publishes the permanent image as:
+
+```text
+ghcr.io/<repository-owner>/benchflow:vMAJOR.MINOR
 ```
 
 ## Monitoring and Results
