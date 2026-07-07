@@ -214,6 +214,12 @@ def _nonempty_string(raw: Any, field_name: str) -> str | None:
     return cleaned
 
 
+def _optional_string(raw: Any) -> str:
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
 def _string_mapping(raw: Any, field_name: str) -> dict[str, str]:
     if raw is None:
         return {}
@@ -604,14 +610,7 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
         tensor_parallelism=int(raw.get("tensor_parallelism", 1)),
         vllm_args=[str(item) for item in (raw.get("vllm_args") or [])],
         env=env,
-        shared_memory_size=(
-            _nonempty_string(
-                raw.get("shared_memory_size"), "spec.runtime.shared_memory_size"
-            )
-            if "shared_memory_size" in raw
-            else ""
-        )
-        or "",
+        shared_memory_size=_optional_string(raw.get("shared_memory_size")),
         host_paths=_runtime_host_paths_from_dict(
             raw.get("host_paths"), "spec.runtime.host_paths"
         ),
