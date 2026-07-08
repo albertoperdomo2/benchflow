@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -39,6 +40,11 @@ _AIPERF_SUMMARY_CANDIDATES = (
     "results/profile_export_aiperf.json",
     "benchmark/profile_export_aiperf.json",
     "profile_export_aiperf.json",
+)
+_AIPERF_RECORD_CANDIDATES = (
+    "results/profile_export.jsonl",
+    "benchmark/profile_export.jsonl",
+    "profile_export.jsonl",
 )
 _AIPERF_ARTIFACT_ROOT = "benchmark"
 _DEFAULT_AIPERF_REPORT_METRICS_PROFILE = Path(
@@ -458,24 +464,160 @@ def _download_run_file(artifact_uri: str, artifact_path: str, cache_dir: Path) -
 
 
 def _load_jsonl_metrics(path: Path) -> dict[str, list[float]]:
-    buckets: dict[str, list[float]] = {
+    return _load_jsonl_analysis(path)["distributions"]
+
+
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _percentile(values: list[float], quantile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] * (upper - position) + ordered[upper] * (position - lower)
+
+
+def _value_stats(values: list[float], *, unit: str = "") -> dict[str, Any]:
+    if not values:
+        return {}
+    return {
+        "unit": unit,
+        "count": len(values),
+        "avg": sum(values) / len(values),
+        "min": min(values),
+        "p50": _percentile(values, 0.50),
+        "p90": _percentile(values, 0.90),
+        "p95": _percentile(values, 0.95),
+        "p99": _percentile(values, 0.99),
+        "max": max(values),
+    }
+
+
+def _session_group_id(metadata: dict[str, Any]) -> str:
+    conversation_id = str(metadata.get("conversation_id") or "").strip()
+    if conversation_id:
+        return conversation_id.split("::", 1)[0]
+    # Do not use session_num or x_correlation_id as a fallback: in current
+    # AgentX exports they are per request, not stable session identifiers.
+    return ""
+
+
+def _load_jsonl_analysis(path: Path) -> dict[str, Any]:
+    distributions: dict[str, list[float]] = {
         "request_latency": [],
         "time_to_first_token": [],
         "inter_token_latency": [],
     }
     if not path.exists():
-        return buckets
+        return {"distributions": distributions, "session_metrics": {}}
+
+    sessions: dict[str, list[dict[str, Any]]] = {}
+    total_records = 0
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue
+            total_records += 1
             payload = json.loads(line)
             metrics = payload.get("metrics") or {}
-            for name in list(buckets):
+            for name in list(distributions):
                 value = (metrics.get(name) or {}).get("value")
                 if isinstance(value, (int, float)):
-                    buckets[name].append(float(value))
-    return buckets
+                    distributions[name].append(float(value))
+
+            metadata = payload.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                continue
+            session_id = _session_group_id(metadata)
+            if not session_id:
+                continue
+            sessions.setdefault(session_id, []).append(
+                {
+                    "start_ns": _as_float(metadata.get("request_start_ns")),
+                    "end_ns": _as_float(metadata.get("request_end_ns")),
+                    "agent_depth": _as_float(metadata.get("agent_depth")) or 0.0,
+                    "turn_index": metadata.get("turn_index"),
+                    "request_latency_ms": _as_float(
+                        (metrics.get("request_latency") or {}).get("value")
+                    ),
+                    "failed": bool(payload.get("error")),
+                }
+            )
+
+    session_durations: list[float] = []
+    request_counts: list[float] = []
+    turn_counts: list[float] = []
+    max_agent_depths: list[float] = []
+    active_request_seconds: list[float] = []
+    failed_sessions = 0
+    agentic_sessions = 0
+    for records in sessions.values():
+        starts = [
+            record["start_ns"]
+            for record in records
+            if isinstance(record.get("start_ns"), (int, float))
+        ]
+        ends = [
+            record["end_ns"]
+            for record in records
+            if isinstance(record.get("end_ns"), (int, float))
+        ]
+        if starts and ends:
+            session_durations.append((max(ends) - min(starts)) / 1_000_000_000)
+        request_counts.append(float(len(records)))
+        turns = {record.get("turn_index") for record in records}
+        turn_counts.append(float(len(turns)))
+        max_depth = max(float(record.get("agent_depth") or 0.0) for record in records)
+        max_agent_depths.append(max_depth)
+        if max_depth > 0:
+            agentic_sessions += 1
+        if any(record.get("failed") for record in records):
+            failed_sessions += 1
+        request_seconds = [
+            float(record["request_latency_ms"]) / 1000.0
+            for record in records
+            if isinstance(record.get("request_latency_ms"), (int, float))
+        ]
+        if request_seconds:
+            active_request_seconds.append(sum(request_seconds))
+
+    session_metrics: dict[str, Any] = {}
+    if sessions and session_durations:
+        session_metrics = {
+            "session_definition": (
+                "Root conversation_id; AgentX sub-agent suffixes after '::' "
+                "are folded into the parent session."
+            ),
+            "record_count": {"unit": "requests", "avg": float(total_records)},
+            "session_count": {"unit": "sessions", "avg": float(len(sessions))},
+            "failed_session_count": {
+                "unit": "sessions",
+                "avg": float(failed_sessions),
+            },
+            "agentic_session_count": {
+                "unit": "sessions",
+                "avg": float(agentic_sessions),
+            },
+            "session_duration_seconds": _value_stats(session_durations, unit="sec"),
+            "requests_per_session": _value_stats(request_counts, unit="requests"),
+            "turns_per_session": _value_stats(turn_counts, unit="turns"),
+            "max_agent_depth": _value_stats(max_agent_depths, unit="depth"),
+            "active_request_seconds": _value_stats(active_request_seconds, unit="sec"),
+            "session_duration_values": session_durations,
+            "requests_per_session_values": request_counts,
+        }
+    return {"distributions": distributions, "session_metrics": session_metrics}
 
 
 def _resolve_output_path(
@@ -695,6 +837,23 @@ def _metric_stat(
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _session_metric_value(
+    session_metrics: dict[str, Any], metric_name: str, stat_name: str = "avg"
+) -> float | None:
+    metric = session_metrics.get(metric_name)
+    if not isinstance(metric, dict):
+        return None
+    return _as_float(metric.get(stat_name))
+
+
+def _has_session_metrics(run_data: dict[str, Any]) -> bool:
+    session_metrics = run_data.get("session_metrics")
+    return bool(
+        isinstance(session_metrics, dict)
+        and session_metrics.get("session_duration_seconds")
+    )
 
 
 def _format_number(value: float | None, *, precision: int = 0) -> str:
@@ -925,6 +1084,106 @@ def _render_trace_data_profile_table(runs_data: list[dict[str, Any]]) -> str:
   <details class="benchflow-report-table-details">
     <summary>Trace Data Profile</summary>
     <p>Raw input and output sequence length statistics from the AIPerf trace artifacts.</p>
+    <div class="benchflow-report-table-shell">
+      <table class="benchflow-report-table">
+        {colgroup}
+        <thead>
+          <tr>{header_cells}</tr>
+        </thead>
+        <tbody>
+          {"".join(table_rows)}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+"""
+
+
+def _render_session_profile_table(runs_data: list[dict[str, Any]]) -> str:
+    available_runs = [
+        run_data for run_data in runs_data if _has_session_metrics(run_data)
+    ]
+    if not available_runs:
+        return ""
+    headers = [
+        "Run",
+        "Sessions",
+        "Failed",
+        "Agentic",
+        "Duration p50",
+        "Duration p95",
+        "Duration max",
+        "Req/session p50",
+        "Req/session p95",
+        "Req/session max",
+        "Max depth p95",
+    ]
+    metric_column_width = (100 - 30) / (len(headers) - 1)
+    colgroup = (
+        "<colgroup>"
+        "<col style='width: 30%;'>"
+        + "".join(
+            f"<col style='width: {metric_column_width:.3f}%;'>" for _ in headers[1:]
+        )
+        + "</colgroup>"
+    )
+    header_cells = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+    table_rows: list[str] = []
+    for run_data in runs_data:
+        session_metrics = run_data.get("session_metrics") or {}
+        duration = "session_duration_seconds"
+        requests = "requests_per_session"
+        values = [
+            _full_label_for_run(run_data),
+            _format_number(_session_metric_value(session_metrics, "session_count")),
+            _format_number(
+                _session_metric_value(session_metrics, "failed_session_count")
+            ),
+            _format_number(
+                _session_metric_value(session_metrics, "agentic_session_count")
+            ),
+            _format_number(
+                _session_metric_value(session_metrics, duration, "p50"),
+                precision=1,
+            ),
+            _format_number(
+                _session_metric_value(session_metrics, duration, "p95"),
+                precision=1,
+            ),
+            _format_number(
+                _session_metric_value(session_metrics, duration, "max"),
+                precision=1,
+            ),
+            _format_number(
+                _session_metric_value(session_metrics, requests, "p50"),
+                precision=1,
+            ),
+            _format_number(
+                _session_metric_value(session_metrics, requests, "p95"),
+                precision=1,
+            ),
+            _format_number(
+                _session_metric_value(session_metrics, requests, "max"),
+                precision=1,
+            ),
+            _format_number(
+                _session_metric_value(session_metrics, "max_agent_depth", "p95"),
+                precision=1,
+            ),
+        ]
+        value_cells = "".join(f"<td>{html.escape(value)}</td>" for value in values[1:])
+        table_rows.append(f"<tr><td>{html.escape(values[0])}</td>{value_cells}</tr>")
+
+    first_session_metrics = available_runs[0].get("session_metrics") or {}
+    definition = html.escape(
+        str(first_session_metrics.get("session_definition") or "Root conversation_id.")
+    )
+    return f"""
+<section class="benchflow-report-table-section">
+  <details class="benchflow-report-table-details" open>
+    <summary>AIPerf Session Profile</summary>
+    <p>{definition} Durations are wall-clock seconds from first request start to last response end inside each session.</p>
     <div class="benchflow-report-table-shell">
       <table class="benchflow-report-table">
         {colgroup}
@@ -1210,14 +1469,36 @@ def _render_comparison_figure(
     labels: list[str],
     hover_labels: list[str],
     series_labels: list[str],
-    metrics: list[tuple[str, str, list[float]]],
+    metrics: list[tuple[str, str, list[float | None]]],
+    section_titles: list[tuple[int, str]] | None = None,
+    show_shared_legend: bool = True,
+    row_height: int = 430,
+    vertical_spacing: float | None = None,
 ) -> go.Figure:
-    rows = max(1, (len(metrics) + 1) // 2)
+    section_starts = {start for start, _ in section_titles or []}
+    metric_slots: dict[int, int] = {}
+    slot_offset = 0
+    for index in range(1, len(metrics) + 1):
+        slot = index + slot_offset
+        if index in section_starts and index != 1 and slot % 2 == 0:
+            slot_offset += 1
+            slot += 1
+        metric_slots[index] = slot
+    rows = max(1, (max(metric_slots.values(), default=1) + 1) // 2)
+    resolved_vertical_spacing = (
+        min(0.038, 0.34 / max(1, rows - 1))
+        if vertical_spacing is None
+        else vertical_spacing
+    )
+    title_by_slot = {
+        metric_slots[index]: title
+        for index, (title, _, _) in enumerate(metrics, start=1)
+    }
     figure = make_subplots(
         rows=rows,
         cols=2,
-        subplot_titles=[item[0] for item in metrics],
-        vertical_spacing=0.06,
+        subplot_titles=[title_by_slot.get(slot, "") for slot in range(1, rows * 2 + 1)],
+        vertical_spacing=resolved_vertical_spacing,
         horizontal_spacing=0.08,
     )
     version_colors: dict[str, str] = {}
@@ -1229,23 +1510,30 @@ def _render_comparison_figure(
 
     legend_versions: set[str] = set()
     for index, (_, y_axis_title, values) in enumerate(metrics, start=1):
-        row = ((index - 1) // 2) + 1
-        col = ((index - 1) % 2) + 1
+        slot = metric_slots[index]
+        row = ((slot - 1) // 2) + 1
+        col = ((slot - 1) % 2) + 1
         for label, hover_label, series_label, value in zip(
             labels, hover_labels, series_labels, values, strict=True
         ):
-            showlegend = index == 1 and series_label not in legend_versions
+            numeric_value = 0.0 if value is None else float(value)
+            value_text = "—" if value is None else f"{numeric_value:.2f}"
+            showlegend = (
+                show_shared_legend
+                and index == 1
+                and series_label not in legend_versions
+            )
             if showlegend:
                 legend_versions.add(series_label)
             color = version_colors[series_label]
             figure.add_trace(
                 go.Bar(
                     x=[label],
-                    y=[value],
-                    text=[f"{value:.2f}"],
+                    y=[numeric_value],
+                    text=[value_text],
                     textposition="outside",
-                    customdata=[hover_label],
-                    hovertemplate="%{customdata}<br>%{y:.2f}<extra></extra>",
+                    customdata=[f"{hover_label}<br>{value_text}"],
+                    hovertemplate="%{customdata}<extra></extra>",
                     marker_color=color,
                     marker_line={"color": color, "width": 1},
                     cliponaxis=False,
@@ -1258,30 +1546,67 @@ def _render_comparison_figure(
             )
         figure.update_yaxes(title_text=y_axis_title, row=row, col=col)
         figure.update_xaxes(tickangle=-18, row=row, col=col)
-        max_value = max(values) if values else 0.0
+        max_value = max(
+            (float(value) for value in values if value is not None),
+            default=0.0,
+        )
         upper_bound = 1.0 if max_value <= 0 else max_value * 1.18
         figure.update_yaxes(range=[0, upper_bound], row=row, col=col)
 
+    used_slots = set(metric_slots.values())
+    for slot in range(1, rows * 2 + 1):
+        if slot in used_slots:
+            continue
+        row = ((slot - 1) // 2) + 1
+        col = ((slot - 1) % 2) + 1
+        figure.update_xaxes(visible=False, row=row, col=col)
+        figure.update_yaxes(visible=False, row=row, col=col)
+
     figure.update_layout(
         width=_HEADER_WIDTH,
-        height=430 * rows + 140,
+        height=row_height * rows + (140 if show_shared_legend else 90),
         paper_bgcolor=_COLORS["paper"],
         plot_bgcolor=_COLORS["paper"],
         font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
-        margin=dict(l=75, r=35, t=70, b=40),
-        showlegend=True,
+        margin=dict(l=75, r=35, t=84, b=65),
+        showlegend=show_shared_legend,
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=1.025,
             xanchor="left",
             x=0.0,
             font={"size": 12, "color": _COLORS["black"]},
         ),
     )
+    section_annotation_texts = {
+        f"<b>{html.escape(title)}</b>" for _, title in section_titles or []
+    }
+    for start, title in section_titles or []:
+        slot = metric_slots.get(start)
+        if not slot:
+            continue
+        row = ((slot - 1) // 2) + 1
+        axis_index = ((row - 1) * 2) + 1
+        yaxis_name = "yaxis" if axis_index == 1 else f"yaxis{axis_index}"
+        yaxis = getattr(figure.layout, yaxis_name, None)
+        y = yaxis.domain[1] if yaxis and yaxis.domain else 1.0
+        figure.add_annotation(
+            text=f"<b>{html.escape(title)}</b>",
+            x=0,
+            y=y,
+            xref="paper",
+            yref="paper",
+            xanchor="left",
+            yanchor="bottom",
+            yshift=20 if row == 1 else 14,
+            showarrow=False,
+            font={"size": 17, "color": _COLORS["black"]},
+        )
     _apply_axis_style(figure)
     for annotation in figure.layout.annotations:
-        annotation.font = {"size": 14, "color": _COLORS["black"]}
+        if annotation.text not in section_annotation_texts:
+            annotation.font = {"size": 14, "color": _COLORS["black"]}
     return figure
 
 
@@ -1551,6 +1876,18 @@ def generate_report(
             summary = _load_json(
                 _download_run_file(run.info.artifact_uri, summary_artifact, cache_dir)
             )
+            record_artifact = _resolve_artifact_file(
+                run.info.artifact_uri,
+                _AIPERF_RECORD_CANDIDATES,
+            )
+            session_metrics: dict[str, Any] = {}
+            if record_artifact:
+                record_path = _download_run_file(
+                    run.info.artifact_uri,
+                    record_artifact,
+                    cache_dir,
+                )
+                session_metrics = _load_jsonl_analysis(record_path)["session_metrics"]
             runs_data.append(
                 {
                     "run_id": resolved_run_id,
@@ -1562,6 +1899,7 @@ def generate_report(
                     ),
                     "artifact_uri": run.info.artifact_uri,
                     "summary": summary,
+                    "session_metrics": session_metrics,
                     "composed_version": composed_version,
                     "version": overrides.get(composed_version, composed_version),
                     "accelerator": str(
@@ -1585,167 +1923,255 @@ def generate_report(
     labels = [_label_for_run(item) for item in runs_data]
     hover_labels = [_full_label_for_run(item) for item in runs_data]
     series_labels = [item["version"] for item in runs_data]
+    comparison_metrics: list[tuple[str, str, list[float | None]]] = [
+        (
+            "Request Throughput",
+            "requests/sec",
+            [
+                _nested_metric_value(item["summary"], "request_throughput") or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Output Token Throughput",
+            "tokens/sec",
+            [
+                _nested_metric_value(item["summary"], "output_token_throughput") or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Total Token Throughput",
+            "tokens/sec",
+            [
+                _nested_metric_value(item["summary"], "total_token_throughput") or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "TTFT P50",
+            "ms",
+            [
+                _nested_metric_value(item["summary"], "time_to_first_token", "p50")
+                or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "TTFT P95",
+            "ms",
+            [
+                _nested_metric_value(item["summary"], "time_to_first_token", "p95")
+                or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "ITL P50",
+            "ms",
+            [
+                _nested_metric_value(item["summary"], "inter_token_latency", "p50")
+                or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "ITL P95",
+            "ms",
+            [
+                _nested_metric_value(item["summary"], "inter_token_latency", "p95")
+                or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Request Latency P50",
+            "ms",
+            [
+                _nested_metric_value(item["summary"], "request_latency", "p50") or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Request Latency P95",
+            "ms",
+            [
+                _nested_metric_value(item["summary"], "request_latency", "p95") or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Input Sequence Length Avg",
+            "tokens",
+            [
+                _nested_metric_value(item["summary"], "input_sequence_length") or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Output Sequence Length Avg",
+            "tokens",
+            [
+                _nested_metric_value(item["summary"], "output_sequence_length") or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Prefill Throughput Per User Avg",
+            "tokens/sec/user",
+            [
+                _nested_metric_value(item["summary"], "prefill_throughput_per_user")
+                or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Output Token Throughput Per User Avg",
+            "tokens/sec/user",
+            [
+                _nested_metric_value(
+                    item["summary"], "output_token_throughput_per_user"
+                )
+                or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Time to Second Token P95",
+            "ms",
+            [
+                _nested_metric_value(item["summary"], "time_to_second_token", "p95")
+                or 0.0
+                for item in runs_data
+            ],
+        ),
+        (
+            "Error Request Count",
+            "requests",
+            [
+                _nested_metric_value(item["summary"], "error_request_count") or 0.0
+                for item in runs_data
+            ],
+        ),
+    ]
+    comparison_sections = [(1, "Request level metrics")]
+    if any(_has_session_metrics(item) for item in runs_data):
+        session_section_start = len(comparison_metrics) + 1
+        comparison_sections.append((session_section_start, "Session level metrics"))
+        comparison_metrics.extend(
+            [
+                (
+                    "Session Count",
+                    "sessions",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {}, "session_count"
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Failed Session Count",
+                    "sessions",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {},
+                            "failed_session_count",
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Agentic Session Count<br>"
+                    "<span style='font-size:11px;color:#6f6f6f'>"
+                    "Sessions with at least one sub-agent turn "
+                    "(agent_depth &gt; 0)"
+                    "</span>",
+                    "sessions",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {},
+                            "agentic_session_count",
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Session Duration P50",
+                    "seconds",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {},
+                            "session_duration_seconds",
+                            "p50",
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Session Duration P95",
+                    "seconds",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {},
+                            "session_duration_seconds",
+                            "p95",
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Requests Per Session P50",
+                    "requests",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {},
+                            "requests_per_session",
+                            "p50",
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Requests Per Session P95",
+                    "requests",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {},
+                            "requests_per_session",
+                            "p95",
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Max Agent Depth P95",
+                    "depth",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {},
+                            "max_agent_depth",
+                            "p95",
+                        )
+                        for item in runs_data
+                    ],
+                ),
+            ]
+        )
     figures = [
         _render_comparison_figure(
             labels=labels,
             hover_labels=hover_labels,
             series_labels=series_labels,
-            metrics=[
-                (
-                    "Request Throughput",
-                    "requests/sec",
-                    [
-                        _nested_metric_value(item["summary"], "request_throughput")
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Output Token Throughput",
-                    "tokens/sec",
-                    [
-                        _nested_metric_value(item["summary"], "output_token_throughput")
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Total Token Throughput",
-                    "tokens/sec",
-                    [
-                        _nested_metric_value(item["summary"], "total_token_throughput")
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "TTFT P50",
-                    "ms",
-                    [
-                        _nested_metric_value(
-                            item["summary"], "time_to_first_token", "p50"
-                        )
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "TTFT P95",
-                    "ms",
-                    [
-                        _nested_metric_value(
-                            item["summary"], "time_to_first_token", "p95"
-                        )
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "ITL P50",
-                    "ms",
-                    [
-                        _nested_metric_value(
-                            item["summary"], "inter_token_latency", "p50"
-                        )
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "ITL P95",
-                    "ms",
-                    [
-                        _nested_metric_value(
-                            item["summary"], "inter_token_latency", "p95"
-                        )
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Request Latency P50",
-                    "ms",
-                    [
-                        _nested_metric_value(item["summary"], "request_latency", "p50")
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Request Latency P95",
-                    "ms",
-                    [
-                        _nested_metric_value(item["summary"], "request_latency", "p95")
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Input Sequence Length Avg",
-                    "tokens",
-                    [
-                        _nested_metric_value(item["summary"], "input_sequence_length")
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Output Sequence Length Avg",
-                    "tokens",
-                    [
-                        _nested_metric_value(item["summary"], "output_sequence_length")
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Prefill Throughput Per User Avg",
-                    "tokens/sec/user",
-                    [
-                        _nested_metric_value(
-                            item["summary"], "prefill_throughput_per_user"
-                        )
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Output Token Throughput Per User Avg",
-                    "tokens/sec/user",
-                    [
-                        _nested_metric_value(
-                            item["summary"], "output_token_throughput_per_user"
-                        )
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Time to Second Token P95",
-                    "ms",
-                    [
-                        _nested_metric_value(
-                            item["summary"], "time_to_second_token", "p95"
-                        )
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Error Request Count",
-                    "requests",
-                    [
-                        _nested_metric_value(item["summary"], "error_request_count")
-                        or 0.0
-                        for item in runs_data
-                    ],
-                ),
-            ],
-        ),
+            metrics=comparison_metrics,
+            section_titles=comparison_sections,
+            row_height=410,
+        )
     ]
     raw_sections = [
         _render_baseline_comparison_table(runs_data, baseline_run),
         _render_trace_data_profile_table(runs_data),
+        _render_session_profile_table(runs_data),
     ]
     raw_sections.extend(
         _render_comparison_metric_panel_section(panel, panel_index)
@@ -1812,7 +2238,13 @@ def generate_run_report(
         None,
     )
     summary = _load_json(summary_path)
-    distributions = _load_jsonl_metrics(jsonl_path) if jsonl_path else {}
+    jsonl_analysis = (
+        _load_jsonl_analysis(jsonl_path)
+        if jsonl_path
+        else {"distributions": {}, "session_metrics": {}}
+    )
+    distributions = jsonl_analysis["distributions"]
+    session_metrics = jsonl_analysis["session_metrics"]
     report_metrics_yaml_path = _resolved_run_report_metrics_yaml_path(metrics_yaml_path)
     metric_panels = [
         panel
@@ -1857,6 +2289,46 @@ def generate_run_report(
         _apply_axis_style(figure)
         figures.append(figure)
 
+    if session_metrics:
+        for values, title, axis_title in (
+            (
+                session_metrics.get("session_duration_values") or [],
+                "Session Duration Distribution",
+                "seconds",
+            ),
+            (
+                session_metrics.get("requests_per_session_values") or [],
+                "Requests Per Session Distribution",
+                "requests",
+            ),
+        ):
+            if not values:
+                continue
+            figure = go.Figure(
+                data=[
+                    go.Histogram(
+                        x=list(values),
+                        marker_color=_COLORS["green"],
+                        marker_line={"color": _COLORS["green"], "width": 1},
+                    )
+                ]
+            )
+            figure.update_layout(
+                title=title,
+                width=_HEADER_WIDTH,
+                height=460,
+                paper_bgcolor=_COLORS["paper"],
+                plot_bgcolor=_COLORS["paper"],
+                font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
+                margin=dict(l=75, r=35, t=80, b=60),
+                xaxis=dict(title=axis_title),
+                yaxis=dict(title="sessions"),
+                bargap=0.08,
+                showlegend=False,
+            )
+            _apply_axis_style(figure)
+            figures.append(figure)
+
     output_path = _resolve_output_path(
         default_filename="full_run_artifacts_report.html",
         output_dir=output_dir,
@@ -1872,8 +2344,22 @@ def generate_run_report(
         subtitle_lines=subtitle,
         figures=figures,
         raw_sections=[
-            _render_comparison_metric_panel_section(panel, panel_index)
-            for panel_index, panel in enumerate(metric_panels, start=1)
+            _render_session_profile_table(
+                [
+                    {
+                        "version": "run",
+                        "accelerator": "unknown",
+                        "tp": "unknown",
+                        "replicas": "unknown",
+                        "summary": summary,
+                        "session_metrics": session_metrics,
+                    }
+                ]
+            ),
+            *(
+                _render_comparison_metric_panel_section(panel, panel_index)
+                for panel_index, panel in enumerate(metric_panels, start=1)
+            ),
         ],
         output_path=output_path,
     )
