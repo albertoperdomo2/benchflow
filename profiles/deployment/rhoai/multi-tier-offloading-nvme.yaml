@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: multi-tier-offloaing-nvme
+  name: multi-tier-offloading-nvme
 spec:
   platform: rhoai
   mode: distributed-default
@@ -16,6 +16,9 @@ spec:
     tensor_parallelism: 2
     env:
       USER: benchflow
+    # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
+    # larger than cpu_bytes_to_use below, plus some headroom.
+    shared_memory_size: 200Gi
     # Required for hostPath volumes on OpenShift. For RHOAI LLMInferenceService,
     # bind this service account to an SCC that allows both hostPath and
     # runtime/default seccomp; on Poseidon, use:
@@ -39,7 +42,7 @@ spec:
     vllm_args:
       - --max-model-len=8192
       # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":171798691840,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":103079215104,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching

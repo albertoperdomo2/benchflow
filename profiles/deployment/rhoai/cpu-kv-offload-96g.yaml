@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: rhoai-cpu-kv-offload-24g
+  name: rhoai-cpu-kv-offload-96g
 spec:
   platform: rhoai
   mode: distributed-default
@@ -18,7 +18,7 @@ spec:
       USER: benchflow
     vllm_args:
       - --max-model-len=8192
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":25769803776}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":103079215104}}
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching

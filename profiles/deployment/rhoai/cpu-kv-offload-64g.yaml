@@ -1,0 +1,28 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-cpu-kv-offload-64g
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0-ea.1
+  platform_channel: beta
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+    vllm_args:
+      - --max-model-len=8192
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":68719476736}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false

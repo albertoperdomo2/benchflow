@@ -1,0 +1,48 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: multi-tier-offloading-cephfs
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0-ea.1
+  platform_channel: beta
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+      # Required for cross-process filesystem-tier block sharing. Without this,
+      # vLLM salts block filenames differently per process and identical content
+      # from different replicas will not hit the shared CephFS cache.
+      PYTHONHASHSEED: "0"
+    # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
+    # larger than cpu_bytes_to_use below, plus some headroom.
+    shared_memory_size: 128Gi
+    pvc_mounts:
+      # BenchFlow creates this RWX CephFS PVC before deploying the model server
+      # and deletes it during cleanup because filesystem-tier cache files persist
+      # and are not useful across unrelated vLLM engine starts.
+      - name: cephfs-kv-cache
+        claim_name: vllm-kv-cache
+        mount_path: /mnt/kv_cache
+        create: true
+        storage_class_name: rook-cephfs
+        size: 5Ti
+        access_modes:
+          - ReadWriteMany
+    vllm_args:
+      - --max-model-len=8192
+      # Keep secondary_tiers[].root_dir in sync with runtime.pvc_mounts[].mount_path.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":107374182400,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/kv_cache","n_read_threads":32,"n_write_threads":16}]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
