@@ -117,3 +117,72 @@ metrics:
     required_labels: [mountpoint, device]
     series: '{{mountpoint}} {{device}}'
     yaxis: percent
+
+  - title: Runtime PVC used capacity
+    description: Used capacity for runtime PVCs mounted into the model-server pod, including CephFS-backed KV offload PVCs.
+    metric: storage_runtime_pvc_used_bytes_by_claim
+    required_labels: [persistentvolumeclaim]
+    series: '{{persistentvolumeclaim}}'
+    scale: 0.000000001
+    yaxis: GB
+
+  - title: Runtime PVC available capacity
+    description: Available capacity for runtime PVCs mounted into the model-server pod.
+    metric: storage_runtime_pvc_available_bytes_by_claim
+    required_labels: [persistentvolumeclaim]
+    series: '{{persistentvolumeclaim}}'
+    scale: 0.000000001
+    yaxis: GB
+
+  - title: Runtime PVC usage
+    description: Percent used for runtime PVCs mounted into the model-server pod.
+    metric: storage_runtime_pvc_usage_percent_by_claim
+    required_labels: [persistentvolumeclaim]
+    series: '{{persistentvolumeclaim}}'
+    yaxis: percent
+
+  - title: Ceph pool throughput
+    description: Ceph read/write byte rate for CephFS pools used by runtime PVC-backed KV offload.
+    metric: storage_ceph_pool_bytes_per_second_by_pool
+    required_labels: [pool, direction]
+    series: '{{pool}} {{direction}}'
+    scale: 0.000001
+    yaxis: MB/s
+
+  - title: Ceph pool IOPS
+    description: Ceph read/write operation rate for CephFS pools used by runtime PVC-backed KV offload.
+    metric: storage_ceph_pool_iops_by_pool
+    required_labels: [pool, direction]
+    series: '{{pool}} {{direction}}'
+    yaxis: ops/s
+
+  - title: Ceph OSD operation latency
+    description: Average Ceph OSD read/write operation latency while runtime PVC-backed KV offload is active.
+    metric: storage_ceph_osd_op_latency_seconds_by_daemon
+    required_labels: [direction]
+    series: '{{series}} {{direction}}'
+    yaxis: seconds
+
+  - title: Ceph health status
+    description: Ceph cluster health status during runtime PVC-backed KV offload; 0 is healthy.
+    metric: storage_ceph_health_status
+    yaxis: status
+
+  - title: CephFS MDS client request rate
+    description: Metadata-server client request rate while runtime PVC-backed KV offload is active.
+    metric: storage_ceph_mds_client_requests_per_second_by_daemon
+    series: '{{ceph_daemon}}'
+    yaxis: requests/s
+
+  - title: CephFS MDS cache inodes
+    description: Metadata-server inode cache size while runtime PVC-backed KV offload is active.
+    metric: storage_ceph_mds_cache_inodes_by_daemon
+    series: '{{ceph_daemon}}'
+    yaxis: inodes
+
+  - title: CephFS MDS memory
+    description: Metadata-server memory usage while runtime PVC-backed KV offload is active.
+    metric: storage_ceph_mds_memory_bytes_by_daemon
+    series: '{{ceph_daemon}}'
+    scale: 0.000000001
+    yaxis: GB

@@ -172,7 +172,52 @@ def _query_template_values(
         "$scheduler_endpoint_regex": scheduler_endpoint_regex,
         "$hostpath_mount_regex": _hostpath_mount_regex(plan),
         "$hostpath_filesystem_exclude_regex": _HOST_PATH_FILESYSTEM_TYPES,
+        "$runtime_pvc_regex": _runtime_pvc_regex(plan),
+        "$ceph_pvc_regex": _ceph_pvc_regex(plan),
+        "$ceph_pool_regex": _ceph_pool_regex(plan),
     }
+
+
+def _runtime_pvc_regex(plan: ResolvedRunPlan) -> str:
+    claim_names = {
+        str(pvc_mount.claim_name or "").strip()
+        for pvc_mount in plan.deployment.runtime.pvc_mounts
+    }
+    claim_names.discard("")
+    if not claim_names:
+        return _NO_POD_MATCH
+    escaped = [re.escape(item) for item in sorted(claim_names)]
+    return f"^({'|'.join(escaped)})$"
+
+
+def _is_ceph_pvc_mount(pvc_mount: object) -> bool:
+    storage_class = str(getattr(pvc_mount, "storage_class_name", "") or "").lower()
+    return not storage_class or "ceph" in storage_class or "rook" in storage_class
+
+
+def _ceph_pvc_regex(plan: ResolvedRunPlan) -> str:
+    claim_names = {
+        str(pvc_mount.claim_name or "").strip()
+        for pvc_mount in plan.deployment.runtime.pvc_mounts
+        if _is_ceph_pvc_mount(pvc_mount)
+    }
+    claim_names.discard("")
+    if not claim_names:
+        return _NO_POD_MATCH
+    escaped = [re.escape(item) for item in sorted(claim_names)]
+    return f"^({'|'.join(escaped)})$"
+
+
+def _ceph_pool_regex(plan: ResolvedRunPlan) -> str:
+    pvc_mounts = [
+        pvc_mount
+        for pvc_mount in plan.deployment.runtime.pvc_mounts
+        if _is_ceph_pvc_mount(pvc_mount)
+    ]
+    if not pvc_mounts:
+        return _NO_POD_MATCH
+
+    return ".*(cephfs|cephfilesystem|filesystem).*|.*[-_.]data[0-9]*.*"
 
 
 def _hostpath_mount_regex(plan: ResolvedRunPlan) -> str:
