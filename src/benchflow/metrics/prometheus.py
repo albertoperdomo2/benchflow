@@ -19,6 +19,10 @@ _NO_POD_MATCH = "a^"
 _HOST_PATH_FILESYSTEM_TYPES = "tmpfs|overlay|squashfs|proc|sysfs|devtmpfs|cgroup2"
 
 
+def _promql_regex_escape(value: str) -> str:
+    return re.escape(value).replace("\\", "\\\\")
+
+
 def _parse_iso8601(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
@@ -186,7 +190,7 @@ def _runtime_pvc_regex(plan: ResolvedRunPlan) -> str:
     claim_names.discard("")
     if not claim_names:
         return _NO_POD_MATCH
-    escaped = [re.escape(item) for item in sorted(claim_names)]
+    escaped = [_promql_regex_escape(item) for item in sorted(claim_names)]
     return f"^({'|'.join(escaped)})$"
 
 
@@ -204,7 +208,7 @@ def _ceph_pvc_regex(plan: ResolvedRunPlan) -> str:
     claim_names.discard("")
     if not claim_names:
         return _NO_POD_MATCH
-    escaped = [re.escape(item) for item in sorted(claim_names)]
+    escaped = [_promql_regex_escape(item) for item in sorted(claim_names)]
     return f"^({'|'.join(escaped)})$"
 
 
@@ -236,7 +240,10 @@ def _hostpath_mount_regex(plan: ResolvedRunPlan) -> str:
                 mountpoints.add(value)
     if not mountpoints:
         return _NO_POD_MATCH
-    escaped = [re.escape(item) for item in sorted(mountpoints, key=len, reverse=True)]
+    escaped = [
+        _promql_regex_escape(item)
+        for item in sorted(mountpoints, key=len, reverse=True)
+    ]
     return f"^({'|'.join(escaped)})$"
 
 
