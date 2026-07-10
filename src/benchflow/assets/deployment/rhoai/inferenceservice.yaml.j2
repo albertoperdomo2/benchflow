@@ -109,6 +109,13 @@ spec:
             readOnly: true
 {% endif %}
 {% endfor %}
+{% for mount in runtime_pvc_mounts %}
+          - mountPath: {{ mount.mountPath | tojson }}
+            name: {{ mount.name | tojson }}
+{% if mount.readOnly %}
+            readOnly: true
+{% endif %}
+{% endfor %}
 {% if profiling_enabled %}
           - mountPath: {{ profiler_mount_path | tojson }}
             name: vllm-profiler
@@ -131,6 +138,11 @@ spec:
 {% if volume.hostPath.type %}
           type: {{ volume.hostPath.type | tojson }}
 {% endif %}
+{% endfor %}
+{% for volume in runtime_pvc_volumes %}
+      - name: {{ volume.name | tojson }}
+        persistentVolumeClaim:
+          claimName: {{ volume.persistentVolumeClaim.claimName | tojson }}
 {% endfor %}
 {% if profiling_enabled %}
       - name: vllm-profiler

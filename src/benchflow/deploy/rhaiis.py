@@ -7,6 +7,7 @@ import yaml
 from ..cluster import CommandError, require_any_command, run_command
 from ..models import ResolvedRunPlan, ValidationError
 from ..renderers.deployment import (
+    render_runtime_pvc_manifests,
     render_rhaiis_raw_vllm_manifests,
     rhaiis_raw_vllm_deployment_name,
 )
@@ -61,6 +62,16 @@ def _verify_deployment(
     success(f"RHAIIS deployment {deployment_name} is ready")
 
 
+def _apply_runtime_pvc_manifests(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    for manifest in render_runtime_pvc_manifests(plan):
+        name = str(manifest.get("metadata", {}).get("name") or "").strip()
+        step(f"Ensuring runtime PVC {name} in namespace {plan.deployment.namespace}")
+        run_command(
+            [kubectl_cmd, "apply", "-f", "-"],
+            input_text=yaml.safe_dump(manifest, sort_keys=False),
+        )
+
+
 def deploy_rhaiis(
     plan: ResolvedRunPlan,
     *,
@@ -82,6 +93,13 @@ def deploy_rhaiis(
 
     if manifests_dir is not None:
         manifests_dir.mkdir(parents=True, exist_ok=True)
+        for pvc_manifest in render_runtime_pvc_manifests(plan):
+            pvc_name = str(pvc_manifest.get("metadata", {}).get("name") or "runtime")
+            pvc_target = manifests_dir / f"pvc-{pvc_name}.yaml"
+            pvc_target.write_text(
+                yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
+            )
+            detail(f"Rendered runtime PVC manifest written to {pvc_target}")
         for manifest, name in zip(
             manifests,
             ["deployment.yaml", "service.yaml", "servicemonitor.yaml"],
@@ -97,6 +115,7 @@ def deploy_rhaiis(
         f"Applying RHAIIS {plan.deployment.mode} deployment {plan.deployment.release_name} "
         f"in namespace {namespace}"
     )
+    _apply_runtime_pvc_manifests(plan, kubectl_cmd)
     for manifest in manifests:
         run_command(
             [kubectl_cmd, "apply", "-f", "-"],

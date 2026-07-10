@@ -180,6 +180,33 @@ def _validate_benchmark_env(env: dict[str, str]) -> None:
             raise ValidationError(message)
 
 
+def _validate_runtime_volume_mounts(runtime: RuntimeSpec) -> None:
+    names: dict[str, str] = {}
+    mount_paths: dict[str, str] = {}
+    entries = [
+        *(
+            (host_path.name, host_path.mount_path, "runtime.host_paths")
+            for host_path in runtime.host_paths
+        ),
+        *(
+            (pvc_mount.name, pvc_mount.mount_path, "runtime.pvc_mounts")
+            for pvc_mount in runtime.pvc_mounts
+        ),
+    ]
+    for name, mount_path, source in entries:
+        if name in names:
+            raise ValidationError(
+                f"{source} volume name {name!r} conflicts with {names[name]}"
+            )
+        if mount_path in mount_paths:
+            raise ValidationError(
+                f"{source} mount_path {mount_path!r} conflicts with "
+                f"{mount_paths[mount_path]}"
+            )
+        names[name] = source
+        mount_paths[mount_path] = source
+
+
 def _release_name_for(experiment: Experiment) -> str:
     child_index = str(
         (experiment.metadata.labels or {}).get(_MATRIX_CHILD_INDEX_LABEL) or ""
@@ -546,6 +573,7 @@ def resolve_run_plan(
             if overrides.runtime.host_paths is not None
             else deepcopy(deployment_profile.spec.runtime.host_paths)
         ),
+        pvc_mounts=deepcopy(deployment_profile.spec.runtime.pvc_mounts),
         service_account_name=str(
             overrides.runtime.service_account_name
             or deployment_profile.spec.runtime.service_account_name
@@ -593,6 +621,14 @@ def resolve_run_plan(
         raise ValidationError(
             "runtime.host_paths is currently supported only for rhoai and rhaiis deployments"
         )
+    if runtime.pvc_mounts and deployment_profile.spec.platform not in {
+        "rhoai",
+        "rhaiis",
+    }:
+        raise ValidationError(
+            "runtime.pvc_mounts is currently supported only for rhoai and rhaiis deployments"
+        )
+    _validate_runtime_volume_mounts(runtime)
     _validate_profiling_support(
         platform=deployment_profile.spec.platform,
         profiling_enabled=experiment.spec.execution.profiling.enabled,

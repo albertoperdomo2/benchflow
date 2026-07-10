@@ -34,6 +34,26 @@ def _delete_profiler_configmap(
     )
 
 
+def _delete_runtime_pvcs(
+    plan: ResolvedRunPlan, *, kubectl_cmd: str, namespace: str
+) -> None:
+    for pvc_mount in plan.deployment.runtime.pvc_mounts:
+        if not pvc_mount.create:
+            continue
+        run_command(
+            [
+                kubectl_cmd,
+                "delete",
+                "pvc",
+                pvc_mount.claim_name,
+                "-n",
+                namespace,
+                "--ignore-not-found",
+            ],
+            check=False,
+        )
+
+
 def cleanup_rhoai(
     plan: ResolvedRunPlan,
     *,
@@ -63,6 +83,7 @@ def cleanup_rhoai(
     )
     if exists.returncode != 0:
         _delete_profiler_configmap(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
+        _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
         if skip_if_not_exists:
             return
         raise CommandError(
@@ -82,6 +103,7 @@ def cleanup_rhoai(
 
     if not wait_for_deletion:
         _delete_profiler_configmap(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
+        _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
         return
 
     deadline = time.time() + timeout_seconds
@@ -104,6 +126,7 @@ def cleanup_rhoai(
             _delete_profiler_configmap(
                 plan, kubectl_cmd=kubectl_cmd, namespace=namespace
             )
+            _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
             return
         time.sleep(5)
 

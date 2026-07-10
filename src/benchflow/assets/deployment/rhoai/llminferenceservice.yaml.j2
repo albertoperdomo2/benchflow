@@ -232,7 +232,7 @@ spec:
             value: "42"
 {% endif %}
 {% endif %}
-{% if runtime_shared_memory_size or runtime_host_path_mounts or profiling_enabled %}
+{% if runtime_shared_memory_size or runtime_host_path_mounts or runtime_pvc_mounts or profiling_enabled %}
         volumeMounts:
 {% if runtime_shared_memory_size %}
           - mountPath: /dev/shm
@@ -245,13 +245,20 @@ spec:
             readOnly: true
 {% endif %}
 {% endfor %}
+{% for mount in runtime_pvc_mounts %}
+          - mountPath: {{ mount.mountPath | tojson }}
+            name: {{ mount.name | tojson }}
+{% if mount.readOnly %}
+            readOnly: true
+{% endif %}
+{% endfor %}
 {% if profiling_enabled %}
           - mountPath: {{ profiler_mount_path | tojson }}
             name: vllm-profiler
             readOnly: true
 {% endif %}
 {% endif %}
-{% if runtime_shared_memory_size or runtime_host_path_volumes or profiling_enabled %}
+{% if runtime_shared_memory_size or runtime_host_path_volumes or runtime_pvc_volumes or profiling_enabled %}
     volumes:
 {% if runtime_shared_memory_size %}
       - name: dshm
@@ -266,6 +273,11 @@ spec:
 {% if volume.hostPath.type %}
           type: {{ volume.hostPath.type | tojson }}
 {% endif %}
+{% endfor %}
+{% for volume in runtime_pvc_volumes %}
+      - name: {{ volume.name | tojson }}
+        persistentVolumeClaim:
+          claimName: {{ volume.persistentVolumeClaim.claimName | tojson }}
 {% endfor %}
 {% if profiling_enabled %}
       - name: vllm-profiler

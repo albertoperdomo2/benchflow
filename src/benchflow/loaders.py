@@ -38,6 +38,7 @@ from .models import (
     ResolvedRunPlan,
     RuntimeHostPathSpec,
     RuntimePlacementSpec,
+    RuntimePVCMountSpec,
     RuntimeResourcesSpec,
     RuntimeSpec,
     StageSpec,
@@ -64,7 +65,8 @@ _HOST_PATH_TYPES = {
     "CharDevice",
     "BlockDevice",
 }
-_HOST_PATH_RESERVED_VOLUME_NAMES = {"dshm", "model-storage", "vllm-profiler"}
+_RESERVED_RUNTIME_VOLUME_NAMES = {"dshm", "model-storage", "vllm-profiler"}
+_HOST_PATH_RESERVED_VOLUME_NAMES = _RESERVED_RUNTIME_VOLUME_NAMES
 _KUBERNETES_VOLUME_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
@@ -344,6 +346,88 @@ def _runtime_host_paths_from_dict(
     return host_paths
 
 
+def _runtime_pvc_mounts_from_dict(
+    raw: Any, field_name: str
+) -> list[RuntimePVCMountSpec]:
+    entries = _mapping_list(raw, field_name)
+    pvc_mounts: list[RuntimePVCMountSpec] = []
+    names: set[str] = set()
+    mount_paths: set[str] = set()
+    for index, item in enumerate(entries):
+        item_field = f"{field_name}[{index}]"
+        name = _nonempty_string(item.get("name"), f"{item_field}.name")
+        claim_name = _nonempty_string(
+            item.get("claim_name") or item.get("pvc_name"),
+            f"{item_field}.claim_name",
+        )
+        mount_path = _nonempty_string(
+            item.get("mount_path"), f"{item_field}.mount_path"
+        )
+        if name is None:
+            raise ValidationError(f"{item_field}.name is required")
+        if claim_name is None:
+            raise ValidationError(f"{item_field}.claim_name is required")
+        if mount_path is None:
+            raise ValidationError(f"{item_field}.mount_path is required")
+        if len(name) > 63 or not _KUBERNETES_VOLUME_NAME_RE.match(name):
+            raise ValidationError(
+                f"{item_field}.name must be a valid Kubernetes volume name"
+            )
+        if name in _RESERVED_RUNTIME_VOLUME_NAMES:
+            raise ValidationError(
+                f"{item_field}.name uses reserved BenchFlow volume name {name!r}"
+            )
+        if name in names:
+            raise ValidationError(f"{item_field}.name duplicates PVC mount {name!r}")
+        if len(claim_name) > 253 or not _KUBERNETES_VOLUME_NAME_RE.match(claim_name):
+            raise ValidationError(
+                f"{item_field}.claim_name must be a valid Kubernetes PVC name"
+            )
+        if not mount_path.startswith("/"):
+            raise ValidationError(f"{item_field}.mount_path must be an absolute path")
+        if mount_path in mount_paths:
+            raise ValidationError(
+                f"{item_field}.mount_path duplicates mount path {mount_path!r}"
+            )
+
+        create = _as_bool(item.get("create"), False)
+        storage_class_name = str(
+            item.get("storage_class_name") or item.get("storage_class") or ""
+        ).strip()
+        size = str(item.get("size") or "").strip()
+        access_modes_raw = item.get("access_modes")
+        if access_modes_raw is None and item.get("access_mode") is not None:
+            access_modes_raw = [item.get("access_mode")]
+        access_modes = [
+            _nonempty_string(value, f"{item_field}.access_modes[]") or ""
+            for value in (access_modes_raw or [])
+        ]
+        access_modes = [value for value in access_modes if value]
+        if create:
+            if not size:
+                raise ValidationError(f"{item_field}.size is required when create=true")
+            if not access_modes:
+                raise ValidationError(
+                    f"{item_field}.access_modes is required when create=true"
+                )
+
+        pvc_mounts.append(
+            RuntimePVCMountSpec(
+                name=name,
+                claim_name=claim_name,
+                mount_path=mount_path,
+                read_only=_as_bool(item.get("read_only"), False),
+                create=create,
+                storage_class_name=storage_class_name,
+                size=size,
+                access_modes=access_modes,
+            )
+        )
+        names.add(name)
+        mount_paths.add(mount_path)
+    return pvc_mounts
+
+
 def _mapping_list(raw: Any, field_name: str) -> list[dict[str, Any]]:
     if raw is None:
         return []
@@ -613,6 +697,9 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
         shared_memory_size=_optional_string(raw.get("shared_memory_size")),
         host_paths=_runtime_host_paths_from_dict(
             raw.get("host_paths"), "spec.runtime.host_paths"
+        ),
+        pvc_mounts=_runtime_pvc_mounts_from_dict(
+            raw.get("pvc_mounts"), "spec.runtime.pvc_mounts"
         ),
         service_account_name=str(raw.get("service_account_name", "") or "").strip(),
         node_selector=_string_mapping(

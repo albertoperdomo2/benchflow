@@ -378,6 +378,18 @@ class RuntimeHostPathSpec:
 
 
 @dataclass(slots=True)
+class RuntimePVCMountSpec:
+    name: str
+    claim_name: str
+    mount_path: str
+    read_only: bool = False
+    create: bool = False
+    storage_class_name: str = ""
+    size: str = ""
+    access_modes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class RuntimeSpec:
     image: str = ""
     replicas: int = 1
@@ -386,6 +398,7 @@ class RuntimeSpec:
     env: dict[str, str] = field(default_factory=dict)
     shared_memory_size: str = ""
     host_paths: list[RuntimeHostPathSpec] = field(default_factory=list)
+    pvc_mounts: list[RuntimePVCMountSpec] = field(default_factory=list)
     service_account_name: str = ""
     node_selector: dict[str, str] = field(default_factory=dict)
     affinity: dict[str, Any] = field(default_factory=dict)

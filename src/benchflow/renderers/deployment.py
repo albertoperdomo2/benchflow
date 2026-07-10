@@ -176,12 +176,66 @@ def _runtime_host_path_volume_mounts(plan: ResolvedRunPlan) -> list[dict[str, An
     return mounts
 
 
+def _runtime_pvc_volume_mounts(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    mounts: list[dict[str, Any]] = []
+    for pvc_mount in plan.deployment.runtime.pvc_mounts:
+        mounts.append(
+            {
+                "name": pvc_mount.name,
+                "mountPath": pvc_mount.mount_path,
+                "readOnly": pvc_mount.read_only,
+            }
+        )
+    return mounts
+
+
 def _runtime_host_path_volumes(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     volumes: list[dict[str, Any]] = []
     for host_path in plan.deployment.runtime.host_paths:
         host_path_spec = {"path": host_path.host_path, "type": host_path.type}
         volumes.append({"name": host_path.name, "hostPath": host_path_spec})
     return volumes
+
+
+def _runtime_pvc_volumes(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    volumes: list[dict[str, Any]] = []
+    for pvc_mount in plan.deployment.runtime.pvc_mounts:
+        volumes.append(
+            {
+                "name": pvc_mount.name,
+                "persistentVolumeClaim": {"claimName": pvc_mount.claim_name},
+            }
+        )
+    return volumes
+
+
+def render_runtime_pvc_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    manifests: list[dict[str, Any]] = []
+    for pvc_mount in plan.deployment.runtime.pvc_mounts:
+        if not pvc_mount.create:
+            continue
+        spec: dict[str, Any] = {
+            "accessModes": list(pvc_mount.access_modes),
+            "resources": {"requests": {"storage": pvc_mount.size}},
+        }
+        if pvc_mount.storage_class_name:
+            spec["storageClassName"] = pvc_mount.storage_class_name
+        manifests.append(
+            {
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "metadata": {
+                    "name": pvc_mount.claim_name,
+                    "namespace": plan.deployment.namespace,
+                    "labels": {
+                        **_base_labels(plan),
+                        "benchflow.io/purpose": "runtime-pvc-mount",
+                    },
+                },
+                "spec": spec,
+            }
+        )
+    return manifests
 
 
 def _rhoai_uses_isvc(plan: ResolvedRunPlan) -> bool:
@@ -382,6 +436,8 @@ def _rhoai_llminferenceservice_template_context(
         "runtime_shared_memory_size": plan.deployment.runtime.shared_memory_size,
         "runtime_host_path_mounts": _runtime_host_path_volume_mounts(plan),
         "runtime_host_path_volumes": _runtime_host_path_volumes(plan),
+        "runtime_pvc_mounts": _runtime_pvc_volume_mounts(plan),
+        "runtime_pvc_volumes": _runtime_pvc_volumes(plan),
         "startup_probe_lines": _yaml_lines(_rhoai_startup_probe(plan)),
         "gpu_count": str(plan.deployment.runtime.tensor_parallelism),
         "custom_scheduler_enabled": custom_scheduler_enabled,
@@ -425,6 +481,8 @@ def _rhoai_inferenceservice_template_context(plan: ResolvedRunPlan) -> dict[str,
         "runtime_shared_memory_size": plan.deployment.runtime.shared_memory_size,
         "runtime_host_path_mounts": _runtime_host_path_volume_mounts(plan),
         "runtime_host_path_volumes": _runtime_host_path_volumes(plan),
+        "runtime_pvc_mounts": _runtime_pvc_volume_mounts(plan),
+        "runtime_pvc_volumes": _runtime_pvc_volumes(plan),
         "model_storage_pvc_name": plan.deployment.model_storage.pvc_name,
         "model_storage_mount_path": plan.deployment.model_storage.mount_path,
         "profiling_enabled": plan.execution.profiling.enabled,
@@ -564,6 +622,7 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
                 else []
             ),
             *_runtime_host_path_volume_mounts(plan),
+            *_runtime_pvc_volume_mounts(plan),
         ],
     }
 
@@ -606,6 +665,7 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
                             else []
                         ),
                         *_runtime_host_path_volumes(plan),
+                        *_runtime_pvc_volumes(plan),
                     ],
                 },
             },
@@ -681,6 +741,13 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
         return written
 
     if plan.deployment.platform == "rhoai":
+        for pvc_manifest in render_runtime_pvc_manifests(plan):
+            pvc_name = str(pvc_manifest.get("metadata", {}).get("name") or "runtime")
+            target = output_dir / f"pvc-{pvc_name}.yaml"
+            target.write_text(
+                yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
+            )
+            written.append(target)
         if plan.execution.profiling.enabled:
             profiler_target = output_dir / "vllm-profiler-configmap.yaml"
             profiler_target.write_text(
@@ -697,6 +764,13 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
         return written
 
     if plan.deployment.platform == "rhaiis":
+        for pvc_manifest in render_runtime_pvc_manifests(plan):
+            pvc_name = str(pvc_manifest.get("metadata", {}).get("name") or "runtime")
+            target = output_dir / f"pvc-{pvc_name}.yaml"
+            target.write_text(
+                yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
+            )
+            written.append(target)
         manifests = render_rhaiis_raw_vllm_manifests(plan)
         names = ["deployment.yaml", "service.yaml", "servicemonitor.yaml"]
         for manifest, name in zip(manifests, names, strict=True):

@@ -8,6 +8,7 @@ import yaml
 from ..cluster import CommandError, require_any_command, run_command, run_json_command
 from ..models import ResolvedRunPlan
 from ..renderers.deployment import (
+    render_runtime_pvc_manifests,
     render_rhoai_manifest,
     render_rhoai_profiler_configmap,
 )
@@ -52,6 +53,16 @@ def _deployment_exists(
 
 def _profiling_enabled(plan: ResolvedRunPlan) -> bool:
     return plan.execution.profiling.enabled
+
+
+def _apply_runtime_pvc_manifests(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    for manifest in render_runtime_pvc_manifests(plan):
+        name = str(manifest.get("metadata", {}).get("name") or "").strip()
+        step(f"Ensuring runtime PVC {name} in namespace {plan.deployment.namespace}")
+        run_command(
+            [kubectl_cmd, "apply", "-f", "-"],
+            input_text=yaml.safe_dump(manifest, sort_keys=False),
+        )
 
 
 def _status_snapshot(payload: dict[str, object]) -> tuple[bool, str, str]:
@@ -290,6 +301,13 @@ def deploy_rhoai(
     manifests = [render_rhoai_manifest(plan)]
     if manifests_dir is not None:
         manifests_dir.mkdir(parents=True, exist_ok=True)
+        for pvc_manifest in render_runtime_pvc_manifests(plan):
+            pvc_name = str(pvc_manifest.get("metadata", {}).get("name") or "runtime")
+            pvc_target = manifests_dir / f"pvc-{pvc_name}.yaml"
+            pvc_target.write_text(
+                yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
+            )
+            detail(f"Rendered runtime PVC manifest written to {pvc_target}")
         if profiler_configmap is not None:
             profiler_target = manifests_dir / "vllm-profiler-configmap.yaml"
             profiler_target.write_text(
@@ -314,6 +332,8 @@ def deploy_rhoai(
             input_text=yaml.safe_dump(profiler_configmap, sort_keys=False),
         )
         success(f"Applied profiler ConfigMap {configmap_name} in namespace {namespace}")
+
+    _apply_runtime_pvc_manifests(plan, kubectl_cmd)
 
     step(
         f"Applying RHOAI {plan.deployment.mode} deployment {release_name} "
