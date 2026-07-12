@@ -1364,6 +1364,37 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
         path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
+def _runtime_vllm_arg_value(plan: ResolvedRunPlan, flag: str) -> str:
+    args = list(plan.deployment.runtime.vllm_args or [])
+    index = 0
+    while index < len(args):
+        item = str(args[index]).strip()
+        if item.startswith(f"{flag}="):
+            return item.split("=", 1)[1].strip()
+        if item == flag and index + 1 < len(args):
+            return str(args[index + 1]).strip()
+        index += 1
+    return ""
+
+
+def _render_arg_present(args: list[str], flag: str) -> bool:
+    return any(item == flag or item.startswith(f"{flag}=") for item in args)
+
+
+def _append_render_arg_if_missing(args: list[str], flag: str, value: str) -> None:
+    if value and not _render_arg_present(args, flag):
+        args.append(f"{flag}={value}")
+
+
+def _upsert_env_value(env: list[Any], name: str, value: str) -> None:
+    for entry in env:
+        if isinstance(entry, dict) and str(entry.get("name") or "") == name:
+            entry["value"] = value
+            entry.pop("valueFrom", None)
+            return
+    env.append({"name": name, "value": value})
+
+
 def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> None:
     """Patch the temporary upstream render-tokenizer overlay for BenchFlow releases.
 
@@ -1427,9 +1458,19 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
             args[0] = plan.model.name
         else:
             args = [plan.model.name, "--port=8000"]
+        render_max_model_len = _runtime_vllm_arg_value(plan, "--max-model-len")
+        _append_render_arg_if_missing(args, "--max-model-len", render_max_model_len)
+        # vLLM 0.23 CPU render disables prefix caching for linear-attention
+        # models on AMX after Mamba config has initialized mamba_block_size.
+        # Keeping mamba_block_size equal to max_model_len makes validation treat
+        # it as unset while preserving render-only tokenization behavior.
+        _append_render_arg_if_missing(args, "--mamba-block-size", render_max_model_len)
         container["args"] = args
         env = container.setdefault("env", [])
         if isinstance(env, list):
+            _upsert_env_value(env, "HOME", "/tmp")
+            _upsert_env_value(env, "XDG_CACHE_HOME", "/tmp/.cache")
+            _upsert_env_value(env, "VLLM_CACHE_ROOT", "/tmp/.cache/vllm")
             for env_entry in env:
                 if str(env_entry.get("name") or "") != "HF_TOKEN":
                     continue
