@@ -26,6 +26,8 @@ from ..repository import clone_repo
 from ..ui import detail, step, success
 
 RECIPE_LAYOUT_ISTIO_VERSION = "1.29.2"
+ISTIO_SYSTEM_NAMESPACE = "istio-system"
+ISTIO_INGRESSGATEWAY_SERVICE_ACCOUNT = "istio-ingressgateway-service-account"
 
 
 def _empty_state(plan: ResolvedRunPlan) -> dict[str, Any]:
@@ -211,6 +213,54 @@ def _apply_runner_rbac_in_istio_system(
     run_command(
         [kubectl_cmd, "apply", "-f", "-"],
         input_text=yaml.safe_dump_all(documents, sort_keys=False),
+    )
+
+
+def _ensure_istio_ingressgateway_anyuid_scc(kubectl_cmd: str) -> None:
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "clusterrole",
+            "system:openshift:scc:anyuid",
+            "-o",
+            "name",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return
+
+    # Upstream Istio's ingress gateway runs as UID 1337. OpenShift's restricted
+    # SCC rejects that fixed UID unless the gateway service account can use anyuid.
+    role_binding = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {
+            "name": "benchflow-istio-ingressgateway-anyuid",
+            "namespace": ISTIO_SYSTEM_NAMESPACE,
+            "labels": {
+                "app.kubernetes.io/name": "benchflow",
+                "app.kubernetes.io/component": "llm-d-setup",
+            },
+        },
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "system:openshift:scc:anyuid",
+        },
+        "subjects": [
+            {
+                "kind": "ServiceAccount",
+                "name": ISTIO_INGRESSGATEWAY_SERVICE_ACCOUNT,
+                "namespace": ISTIO_SYSTEM_NAMESPACE,
+            }
+        ],
+    }
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text=yaml.safe_dump(role_binding, sort_keys=False),
     )
 
 
@@ -644,8 +694,9 @@ def setup_llmd(
             return state
 
         step("Ensuring llm-d Istio namespace and runner RBAC")
-        _ensure_namespace(kubectl_cmd, "istio-system")
+        _ensure_namespace(kubectl_cmd, ISTIO_SYSTEM_NAMESPACE)
         _apply_runner_rbac_in_istio_system(kubectl_cmd, plan.deployment.namespace)
+        _ensure_istio_ingressgateway_anyuid_scc(kubectl_cmd)
 
         if not legacy_gateway_provider:
             if _istiod_present(kubectl_cmd):
