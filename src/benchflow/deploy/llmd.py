@@ -21,6 +21,7 @@ from ..cluster import (
     run_json_command,
 )
 from ..models import ResolvedRunPlan, sanitize_name
+from ..renderers.deployment import render_runtime_pvc_manifests
 from ..platform_state import (
     load_cluster_platform_state,
     persist_cluster_platform_state,
@@ -476,6 +477,98 @@ def _apply_runtime_resources(container: dict[str, Any], plan: ResolvedRunPlan) -
         resources.setdefault("limits", {}).update(runtime_resources.limits)
 
 
+def _apply_runtime_pvc_manifests(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    for manifest in render_runtime_pvc_manifests(plan):
+        name = str(manifest.get("metadata", {}).get("name") or "").strip()
+        step(f"Ensuring runtime PVC {name} in namespace {plan.deployment.namespace}")
+        run_command(
+            [kubectl_cmd, "apply", "-f", "-"],
+            input_text=yaml.safe_dump(manifest, sort_keys=False),
+        )
+
+
+def _upsert_named_item(items: list[Any], item: dict[str, Any]) -> None:
+    name = str(item.get("name") or "").strip()
+    for index, existing in enumerate(items):
+        if not isinstance(existing, dict):
+            continue
+        if str(existing.get("name") or "").strip() == name:
+            items[index] = item
+            return
+    items.append(item)
+
+
+def _host_path_volume(host_path: Any) -> dict[str, Any]:
+    host_path_spec: dict[str, Any] = {"path": host_path.host_path}
+    if host_path.type:
+        host_path_spec["type"] = host_path.type
+    return {"name": host_path.name, "hostPath": host_path_spec}
+
+
+def _pvc_volume(pvc_mount: Any) -> dict[str, Any]:
+    return {
+        "name": pvc_mount.name,
+        "persistentVolumeClaim": {"claimName": pvc_mount.claim_name},
+    }
+
+
+def _apply_runtime_pod_customizations(
+    container: dict[str, Any], pod_spec: dict[str, Any], plan: ResolvedRunPlan
+) -> None:
+    runtime = plan.deployment.runtime
+    volume_mounts = container.setdefault("volumeMounts", [])
+    if not isinstance(volume_mounts, list):
+        volume_mounts = []
+        container["volumeMounts"] = volume_mounts
+    volumes = pod_spec.setdefault("volumes", [])
+    if not isinstance(volumes, list):
+        volumes = []
+        pod_spec["volumes"] = volumes
+
+    if runtime.service_account_name:
+        pod_spec["serviceAccountName"] = runtime.service_account_name
+    if runtime.image_pull_secrets:
+        pod_spec["imagePullSecrets"] = list(runtime.image_pull_secrets)
+
+    if runtime.shared_memory_size:
+        _upsert_named_item(
+            volume_mounts,
+            {"name": "dshm", "mountPath": "/dev/shm"},
+        )
+        _upsert_named_item(
+            volumes,
+            {
+                "name": "dshm",
+                "emptyDir": {
+                    "medium": "Memory",
+                    "sizeLimit": runtime.shared_memory_size,
+                },
+            },
+        )
+
+    for host_path in runtime.host_paths:
+        _upsert_named_item(
+            volume_mounts,
+            {
+                "name": host_path.name,
+                "mountPath": host_path.mount_path,
+                "readOnly": host_path.read_only,
+            },
+        )
+        _upsert_named_item(volumes, _host_path_volume(host_path))
+
+    for pvc_mount in runtime.pvc_mounts:
+        _upsert_named_item(
+            volume_mounts,
+            {
+                "name": pvc_mount.name,
+                "mountPath": pvc_mount.mount_path,
+                "readOnly": pvc_mount.read_only,
+            },
+        )
+        _upsert_named_item(volumes, _pvc_volume(pvc_mount))
+
+
 def _release_match_labels(release_name: str) -> dict[str, str]:
     return {
         _LLMD_INFERENCE_SERVING_LABEL: "true",
@@ -712,6 +805,8 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
         if volume_mount.get("name") == "models-storage":
             volume_mount["mountPath"] = storage.mount_path
             volume_mount["readOnly"] = True
+    pod_spec = decode.setdefault("template", {}).setdefault("spec", {})
+    _apply_runtime_pod_customizations(container, pod_spec, plan)
 
     values_file.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
     return values
@@ -1310,6 +1405,7 @@ def _patch_recipe_modelserver_overlay(
         pod_spec["tolerations"] = list(runtime.tolerations)
     if runtime.image_pull_secrets:
         pod_spec["imagePullSecrets"] = list(runtime.image_pull_secrets)
+    _apply_runtime_pod_customizations(container, pod_spec, plan)
 
     podmonitor_path = overlay_dir / _MODELSERVER_PODMONITOR_FILE
     podmonitor_path.write_text(
@@ -2297,6 +2393,7 @@ def deploy_llmd(
             f"Installing llm-d recipe scheduler {helm_args[2]} "
             f"into namespace {plan.deployment.namespace}"
         )
+        _apply_runtime_pvc_manifests(plan, kubectl_cmd)
         run_command(helm_args, cwd=guide_dir, env=env)
         _apply_recipe_epp_podmonitor(plan, kubectl_cmd, router_chart=router_chart)
 
@@ -2407,6 +2504,7 @@ def deploy_llmd(
             f"Applying helmfile environment {env['HELMFILE_ENVIRONMENT']} "
             f"into namespace {plan.deployment.namespace}"
         )
+        _apply_runtime_pvc_manifests(plan, kubectl_cmd)
         run_command(
             [
                 "helmfile",

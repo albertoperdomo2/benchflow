@@ -103,6 +103,26 @@ def _delete_storage_offloading_pvc(
     )
 
 
+def _delete_runtime_pvcs(
+    plan: ResolvedRunPlan, *, kubectl_cmd: str, namespace: str
+) -> None:
+    for pvc_mount in plan.deployment.runtime.pvc_mounts:
+        if not pvc_mount.create:
+            continue
+        run_command(
+            [
+                kubectl_cmd,
+                "delete",
+                "pvc",
+                pvc_mount.claim_name,
+                "-n",
+                namespace,
+                "--ignore-not-found",
+            ],
+            check=False,
+        )
+
+
 def _pod_container_name(pod: dict) -> str:
     containers = pod.get("spec", {}).get("containers", [])
     if not isinstance(containers, list):
@@ -324,6 +344,7 @@ def cleanup_llmd(
                     wait_for_deletion=wait_for_deletion,
                     timeout_seconds=timeout_seconds,
                 )
+                _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
                 _delete_shared_gateway_if_unused(
                     kubectl_cmd,
                     namespace,
@@ -338,6 +359,7 @@ def cleanup_llmd(
                     wait_for_deletion=wait_for_deletion,
                     timeout_seconds=timeout_seconds,
                 )
+                _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
                 if pvc_deleted:
                     _delete_shared_gateway_if_unused(
                         kubectl_cmd,
@@ -356,6 +378,7 @@ def cleanup_llmd(
                 wait_for_deletion=wait_for_deletion,
                 timeout_seconds=timeout_seconds,
             )
+            _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
             return
         else:
             pvc_deleted = _delete_storage_offloading_pvc(
@@ -364,6 +387,7 @@ def cleanup_llmd(
                 wait_for_deletion=wait_for_deletion,
                 timeout_seconds=timeout_seconds,
             )
+            _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
             if pvc_deleted:
                 return
             raise CommandError(
@@ -471,6 +495,7 @@ def cleanup_llmd(
         wait_for_deletion=wait_for_deletion,
         timeout_seconds=timeout_seconds,
     )
+    _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
     if recipe_layout:
         _delete_shared_gateway_if_unused(
             kubectl_cmd,

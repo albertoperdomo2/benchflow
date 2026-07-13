@@ -139,10 +139,34 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
             "vllmArgs": plan.deployment.runtime.vllm_args,
             "env": plan.deployment.runtime.env,
             "sharedMemorySize": plan.deployment.runtime.shared_memory_size,
+            "serviceAccountName": plan.deployment.runtime.service_account_name,
             "nodeSelector": plan.deployment.runtime.node_selector,
             "affinity": plan.deployment.runtime.affinity,
             "tolerations": plan.deployment.runtime.tolerations,
             "imagePullSecrets": plan.deployment.runtime.image_pull_secrets,
+            "hostPaths": [
+                {
+                    "name": host_path.name,
+                    "hostPath": host_path.host_path,
+                    "mountPath": host_path.mount_path,
+                    "type": host_path.type,
+                    "readOnly": host_path.read_only,
+                }
+                for host_path in plan.deployment.runtime.host_paths
+            ],
+            "pvcMounts": [
+                {
+                    "name": pvc_mount.name,
+                    "claimName": pvc_mount.claim_name,
+                    "mountPath": pvc_mount.mount_path,
+                    "readOnly": pvc_mount.read_only,
+                    "create": pvc_mount.create,
+                    "storageClassName": pvc_mount.storage_class_name,
+                    "size": pvc_mount.size,
+                    "accessModes": list(pvc_mount.access_modes),
+                }
+                for pvc_mount in plan.deployment.runtime.pvc_mounts
+            ],
             "resources": {
                 "limits": dict(plan.deployment.runtime.resources.limits),
                 "requests": dict(plan.deployment.runtime.resources.requests),
@@ -740,6 +764,13 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
     written: list[Path] = []
 
     if plan.deployment.platform == "llm-d":
+        for pvc_manifest in render_runtime_pvc_manifests(plan):
+            pvc_name = str(pvc_manifest.get("metadata", {}).get("name") or "runtime")
+            target = output_dir / f"pvc-{pvc_name}.yaml"
+            target.write_text(
+                yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
+            )
+            written.append(target)
         target = output_dir / "llm-d-values.yaml"
         target.write_text(
             yaml.safe_dump(render_llmd_values(plan), sort_keys=False), encoding="utf-8"

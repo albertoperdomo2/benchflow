@@ -447,7 +447,7 @@ Override semantics:
 - `images.runtime`, `images.scheduler`, `scale.replicas`, `scale.tensor_parallelism`, and `llm_d.repo_ref` replace the profile value
 - `runtime.vllm_args` replaces the deployment profile's vLLM args without replacing BenchFlow template-owned command arguments
 - `runtime.vllm_extra_args` appends to the selected vLLM args; BenchFlow does not deduplicate duplicate flags
-- `runtime.host_paths` replaces the deployment profile's hostPath mounts when set; it is currently rendered only for `rhoai` and `rhaiis` runtime pods
+- `runtime.host_paths` replaces the deployment profile's hostPath mounts when set; it is currently rendered for `llm-d`, `rhoai`, and `rhaiis` runtime pods
 - `runtime.env` merges by key and override values win on collisions
 - `runtime.resources.requests` and `runtime.resources.limits` merge by resource name and override values win; CPU request and limit can also be set with `--runtime-cpu-request` and `--runtime-cpu-limit`
 - `runtime.resources.remove_requests` and `runtime.resources.remove_limits` remove named resource keys from the rendered runtime container; use this when a guide or deployment profile has a default resource that should not apply, for example `remove_limits: [memory]`
@@ -519,9 +519,9 @@ spec:
       - --max-model-len=8192 # base guide args for the deployment profile
     env:
       VLLM_LOGGING_LEVEL: INFO # merged with spec.overrides.runtime.env or --env
-    shared_memory_size: 200Gi # optional /dev/shm memory-backed emptyDir size for rhoai/rhaiis
-    service_account_name: benchflow-hostpath-runtime # optional runtime pod service account for rhoai/rhaiis
-    host_paths: # rhoai/rhaiis only
+    shared_memory_size: 200Gi # optional /dev/shm memory-backed emptyDir size for llm-d/rhoai/rhaiis
+    service_account_name: benchflow-hostpath-runtime # optional runtime pod service account for llm-d/rhoai/rhaiis
+    host_paths: # llm-d/rhoai/rhaiis only
       - name: nvme-kv-cache # Kubernetes volume name; must not conflict with BenchFlow-owned volumes
         host_path: /mnt/local-nvme/kv-cache # node-local path
         mount_path: /mnt/nvme/kv-cache # path visible to the vLLM container
@@ -598,7 +598,7 @@ the model-server HTTPS health endpoint on port `8000` with
 can override those fields with `spec.options.startup_probe`; setting it to
 `false` disables BenchFlow's explicit startup probe.
 
-RHOAI and RHAIIS raw vLLM profiles can mount node-local storage with
+llm-d, RHOAI, and RHAIIS raw vLLM profiles can mount node-local storage with
 `spec.runtime.host_paths`. BenchFlow renders those entries as Kubernetes
 `hostPath` volumes and `volumeMounts`; it does not interpolate or derive vLLM
 arguments. If a vLLM flag needs the mount, put the exact `mount_path` in
@@ -606,14 +606,14 @@ arguments. If a vLLM flag needs the mount, put the exact `mount_path` in
 use the same shape under `spec.overrides.runtime.host_paths` and
 `spec.model_overrides.<model>.runtime.host_paths`.
 
-RHOAI and RHAIIS raw vLLM profiles can set `spec.runtime.shared_memory_size` to
+llm-d, RHOAI, and RHAIIS raw vLLM profiles can set `spec.runtime.shared_memory_size` to
 render a memory-backed `/dev/shm` `emptyDir` for the runtime pod. Use this when
 vLLM features create large shared-memory mappings, such as tiered KV offload.
 The value is a Kubernetes quantity such as `200Gi`; it does not reserve that
 memory upfront, but actual use consumes node RAM.
 
 OpenShift hostPath volumes require a service account that can use a
-hostPath-capable SCC. For RHOAI and RHAIIS raw vLLM profiles, set
+hostPath-capable SCC. For llm-d, RHOAI, and RHAIIS raw vLLM profiles, set
 `spec.runtime.service_account_name` to that dedicated runtime service account.
 For RHOAI `LLMInferenceService`, the controller may inject `RuntimeDefault`
 seccomp, so the SCC must allow both `hostPath` volumes and `runtime/default`

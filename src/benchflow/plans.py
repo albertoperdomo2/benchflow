@@ -629,18 +629,20 @@ def resolve_run_plan(
             "runtime.placement is not supported for rhoai isvc deployments"
         )
     if runtime.host_paths and deployment_profile.spec.platform not in {
+        "llm-d",
         "rhoai",
         "rhaiis",
     }:
         raise ValidationError(
-            "runtime.host_paths is currently supported only for rhoai and rhaiis deployments"
+            "runtime.host_paths is currently supported only for llm-d, rhoai, and rhaiis deployments"
         )
     if runtime.pvc_mounts and deployment_profile.spec.platform not in {
+        "llm-d",
         "rhoai",
         "rhaiis",
     }:
         raise ValidationError(
-            "runtime.pvc_mounts is currently supported only for rhoai and rhaiis deployments"
+            "runtime.pvc_mounts is currently supported only for llm-d, rhoai, and rhaiis deployments"
         )
     _validate_runtime_volume_mounts(runtime)
     _validate_profiling_support(

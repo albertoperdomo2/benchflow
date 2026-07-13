@@ -1,0 +1,50 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-multi-tier-offloading-nvme
+spec:
+  platform: llm-d
+  mode: precise-prefix-cache
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v0.8.0
+  gateway: istio
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /model-cache
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+    # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
+    # larger than cpu_bytes_to_use below, plus some headroom.
+    shared_memory_size: 200Gi
+    # Required for hostPath volumes on OpenShift. Bind this service account to an
+    # SCC that allows hostPath volumes before using this profile.
+    service_account_name: benchflow-hostpath-runtime
+    host_paths:
+      # Keep secondary_tiers[].root_dir in sync with this mount_path. The host
+      # directory must already exist and be writable by random non-root
+      # OpenShift UIDs; kubelet-created hostPath directories are usually
+      # root-owned and not writable by the vLLM container.
+      #
+      # The filesystem tier does not enforce byte capacity in vLLM config. Size
+      # it by provisioning/quotaing this host directory, and wipe it between
+      # benchmark runs because old tier files are not reused by later engines.
+      - name: nvme-kv-cache
+        host_path: /var/mnt/modelcache/benchflow-kv-cache
+        mount_path: /mnt/nvme-kv-cache
+        type: Directory
+        read_only: false
+    vllm_args:
+      - --gpu-memory-utilization=0.7
+      - --max-model-len=8192
+      # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":103079215104,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01

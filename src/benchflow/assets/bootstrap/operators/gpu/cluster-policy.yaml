@@ -51,6 +51,8 @@ spec:
     config:
       default: all-disabled
       name: default-mig-parted-config
+  nodeStatusExporter:
+    enabled: false
   operator:
     defaultRuntime: crio
     runtimeClass: nvidia
