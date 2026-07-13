@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import html
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,12 @@ _AIPERF_RECORD_CANDIDATES = (
     "results/profile_export.jsonl",
     "benchmark/profile_export.jsonl",
     "profile_export.jsonl",
+)
+_AIPERF_LOG_CANDIDATES = (
+    "benchmark/logs/aiperf.log",
+    "results/logs/aiperf.log",
+    "logs/aiperf.log",
+    "aiperf.log",
 )
 _AIPERF_ARTIFACT_ROOT = "benchmark"
 _DEFAULT_AIPERF_REPORT_METRICS_PROFILE = Path(
@@ -92,6 +99,15 @@ _AIPERF_COMPARISON_VERSION_PALETTE = [
 _HEADER_WIDTH = 1440
 _REPORT_FONT = "Arial, Helvetica, sans-serif"
 _TITLE_FONT = "Times New Roman, Georgia, serif"
+_AIPERF_PROFILING_SENDING_COMPLETE_RE = re.compile(
+    r"Phase profiling sending complete .*?sessions: sent=(?P<sent>[\d,]+), completed=(?P<completed>[\d,]+)"
+)
+_AIPERF_PROFILING_COMPLETE_RE = re.compile(
+    r"Phase profiling complete .*?sessions: completed=(?P<completed>[\d,]+), cancelled=(?P<cancelled>[\d,]+)"
+)
+_AIPERF_BRANCH_STATS_RE = re.compile(
+    r"BranchOrchestrator stats: .*?\bspawned=(?P<spawned>[\d,]+)\b.*?\bcompleted=(?P<completed>[\d,]+)\b.*?\berrored=(?P<errored>[\d,]+)\b"
+)
 
 
 def _iso8601_now() -> str:
@@ -488,29 +504,92 @@ def _percentile(values: list[float], quantile: float) -> float | None:
     return ordered[lower] * (upper - position) + ordered[upper] * (position - lower)
 
 
-def _value_stats(values: list[float], *, unit: str = "") -> dict[str, Any]:
-    if not values:
+def _parse_int(raw: str) -> float | None:
+    cleaned = str(raw or "").replace(",", "").strip()
+    if not cleaned:
+        return None
+    try:
+        return float(int(cleaned))
+    except ValueError:
+        return None
+
+
+def _load_aiperf_log_session_metrics(path: Path) -> dict[str, Any]:
+    if not path.exists():
         return {}
-    return {
-        "unit": unit,
-        "count": len(values),
-        "avg": sum(values) / len(values),
-        "min": min(values),
-        "p50": _percentile(values, 0.50),
-        "p90": _percentile(values, 0.90),
-        "p95": _percentile(values, 0.95),
-        "p99": _percentile(values, 0.99),
-        "max": max(values),
-    }
 
+    sessions_sent: float | None = None
+    sessions_completed_at_send_stop: float | None = None
+    sessions_completed: float | None = None
+    sessions_cancelled: float | None = None
+    branches_spawned: float | None = None
+    branches_completed: float | None = None
+    branches_errored: float | None = None
 
-def _session_group_id(metadata: dict[str, Any]) -> str:
-    conversation_id = str(metadata.get("conversation_id") or "").strip()
-    if conversation_id:
-        return conversation_id.split("::", 1)[0]
-    # Do not use session_num or x_correlation_id as a fallback: in current
-    # AgentX exports they are per request, not stable session identifiers.
-    return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = _AIPERF_PROFILING_SENDING_COMPLETE_RE.search(line)
+        if match:
+            sessions_sent = _parse_int(match.group("sent"))
+            sessions_completed_at_send_stop = _parse_int(match.group("completed"))
+            continue
+        match = _AIPERF_PROFILING_COMPLETE_RE.search(line)
+        if match:
+            sessions_completed = _parse_int(match.group("completed"))
+            sessions_cancelled = _parse_int(match.group("cancelled"))
+            continue
+        match = _AIPERF_BRANCH_STATS_RE.search(line)
+        if match:
+            branches_spawned = _parse_int(match.group("spawned"))
+            branches_completed = _parse_int(match.group("completed"))
+            branches_errored = _parse_int(match.group("errored"))
+
+    session_metrics: dict[str, Any] = {}
+    if sessions_sent is not None:
+        session_metrics["session_definition"] = (
+            "AIPerf orchestrator session counts from aiperf.log Phase profiling "
+            "summary lines."
+        )
+        session_metrics["sessions_sent"] = {"unit": "sessions", "avg": sessions_sent}
+    if sessions_completed is not None:
+        session_metrics["sessions_completed"] = {
+            "unit": "sessions",
+            "avg": sessions_completed,
+        }
+    if sessions_cancelled is not None:
+        session_metrics["sessions_cancelled"] = {
+            "unit": "sessions",
+            "avg": sessions_cancelled,
+        }
+    if (
+        sessions_sent is not None
+        and sessions_completed is not None
+        and sessions_sent > 0
+    ):
+        session_metrics["session_completion_ratio"] = {
+            "unit": "ratio",
+            "avg": sessions_completed / sessions_sent,
+        }
+    if sessions_completed_at_send_stop is not None:
+        session_metrics["sessions_completed_at_send_stop"] = {
+            "unit": "sessions",
+            "avg": sessions_completed_at_send_stop,
+        }
+    if branches_spawned is not None:
+        session_metrics["branches_spawned"] = {
+            "unit": "branches",
+            "avg": branches_spawned,
+        }
+    if branches_completed is not None:
+        session_metrics["branches_completed"] = {
+            "unit": "branches",
+            "avg": branches_completed,
+        }
+    if branches_errored is not None:
+        session_metrics["branches_errored"] = {
+            "unit": "branches",
+            "avg": branches_errored,
+        }
+    return session_metrics
 
 
 def _load_jsonl_analysis(path: Path) -> dict[str, Any]:
@@ -520,104 +599,36 @@ def _load_jsonl_analysis(path: Path) -> dict[str, Any]:
         "inter_token_latency": [],
     }
     if not path.exists():
-        return {"distributions": distributions, "session_metrics": {}}
+        return {"distributions": distributions}
 
-    sessions: dict[str, list[dict[str, Any]]] = {}
-    total_records = 0
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue
-            total_records += 1
             payload = json.loads(line)
             metrics = payload.get("metrics") or {}
             for name in list(distributions):
                 value = (metrics.get(name) or {}).get("value")
                 if isinstance(value, (int, float)):
                     distributions[name].append(float(value))
+    return {"distributions": distributions}
 
-            metadata = payload.get("metadata") or {}
-            if not isinstance(metadata, dict):
-                continue
-            session_id = _session_group_id(metadata)
-            if not session_id:
-                continue
-            sessions.setdefault(session_id, []).append(
-                {
-                    "start_ns": _as_float(metadata.get("request_start_ns")),
-                    "end_ns": _as_float(metadata.get("request_end_ns")),
-                    "agent_depth": _as_float(metadata.get("agent_depth")) or 0.0,
-                    "turn_index": metadata.get("turn_index"),
-                    "request_latency_ms": _as_float(
-                        (metrics.get("request_latency") or {}).get("value")
-                    ),
-                    "failed": bool(payload.get("error")),
-                }
-            )
 
-    session_durations: list[float] = []
-    request_counts: list[float] = []
-    turn_counts: list[float] = []
-    max_agent_depths: list[float] = []
-    active_request_seconds: list[float] = []
-    failed_sessions = 0
-    agentic_sessions = 0
-    for records in sessions.values():
-        starts = [
-            record["start_ns"]
-            for record in records
-            if isinstance(record.get("start_ns"), (int, float))
-        ]
-        ends = [
-            record["end_ns"]
-            for record in records
-            if isinstance(record.get("end_ns"), (int, float))
-        ]
-        if starts and ends:
-            session_durations.append((max(ends) - min(starts)) / 1_000_000_000)
-        request_counts.append(float(len(records)))
-        turns = {record.get("turn_index") for record in records}
-        turn_counts.append(float(len(turns)))
-        max_depth = max(float(record.get("agent_depth") or 0.0) for record in records)
-        max_agent_depths.append(max_depth)
-        if max_depth > 0:
-            agentic_sessions += 1
-        if any(record.get("failed") for record in records):
-            failed_sessions += 1
-        request_seconds = [
-            float(record["request_latency_ms"]) / 1000.0
-            for record in records
-            if isinstance(record.get("request_latency_ms"), (int, float))
-        ]
-        if request_seconds:
-            active_request_seconds.append(sum(request_seconds))
-
-    session_metrics: dict[str, Any] = {}
-    if sessions and session_durations:
-        session_metrics = {
-            "session_definition": (
-                "Root conversation_id; AgentX sub-agent suffixes after '::' "
-                "are folded into the parent session."
-            ),
-            "record_count": {"unit": "requests", "avg": float(total_records)},
-            "session_count": {"unit": "sessions", "avg": float(len(sessions))},
-            "failed_session_count": {
-                "unit": "sessions",
-                "avg": float(failed_sessions),
-            },
-            "agentic_session_count": {
-                "unit": "sessions",
-                "avg": float(agentic_sessions),
-            },
-            "session_duration_seconds": _value_stats(session_durations, unit="sec"),
-            "requests_per_session": _value_stats(request_counts, unit="requests"),
-            "turns_per_session": _value_stats(turn_counts, unit="turns"),
-            "max_agent_depth": _value_stats(max_agent_depths, unit="depth"),
-            "active_request_seconds": _value_stats(active_request_seconds, unit="sec"),
-            "session_duration_values": session_durations,
-            "requests_per_session_values": request_counts,
-        }
-    return {"distributions": distributions, "session_metrics": session_metrics}
+def _load_aiperf_session_analysis(
+    *, jsonl_path: Path | None = None, log_path: Path | None = None
+) -> dict[str, Any]:
+    jsonl_analysis = (
+        _load_jsonl_analysis(jsonl_path)
+        if jsonl_path is not None
+        else {"distributions": {}}
+    )
+    session_metrics = (
+        _load_aiperf_log_session_metrics(log_path) if log_path is not None else {}
+    )
+    return {
+        "distributions": jsonl_analysis.get("distributions") or {},
+        "session_metrics": session_metrics,
+    }
 
 
 def _resolve_output_path(
@@ -852,7 +863,10 @@ def _has_session_metrics(run_data: dict[str, Any]) -> bool:
     session_metrics = run_data.get("session_metrics")
     return bool(
         isinstance(session_metrics, dict)
-        and session_metrics.get("session_duration_seconds")
+        and (
+            session_metrics.get("sessions_sent")
+            or session_metrics.get("sessions_completed")
+        )
     )
 
 
@@ -1108,16 +1122,14 @@ def _render_session_profile_table(runs_data: list[dict[str, Any]]) -> str:
         return ""
     headers = [
         "Run",
-        "Sessions",
-        "Failed",
-        "Agentic",
-        "Duration p50",
-        "Duration p95",
-        "Duration max",
-        "Req/session p50",
-        "Req/session p95",
-        "Req/session max",
-        "Max depth p95",
+        "Sent",
+        "Completed",
+        "Completion %",
+        "Branches",
+        "Completed @ Send Stop",
+        "Cancelled",
+        "Branches Completed",
+        "Branches Errored",
     ]
     metric_column_width = (100 - 30) / (len(headers) - 1)
     colgroup = (
@@ -1132,58 +1144,58 @@ def _render_session_profile_table(runs_data: list[dict[str, Any]]) -> str:
     table_rows: list[str] = []
     for run_data in runs_data:
         session_metrics = run_data.get("session_metrics") or {}
-        duration = "session_duration_seconds"
-        requests = "requests_per_session"
         values = [
             _full_label_for_run(run_data),
-            _format_number(_session_metric_value(session_metrics, "session_count")),
+            _format_number(_session_metric_value(session_metrics, "sessions_sent")),
             _format_number(
-                _session_metric_value(session_metrics, "failed_session_count")
+                _session_metric_value(session_metrics, "sessions_completed")
             ),
             _format_number(
-                _session_metric_value(session_metrics, "agentic_session_count")
-            ),
-            _format_number(
-                _session_metric_value(session_metrics, duration, "p50"),
+                (
+                    (
+                        _session_metric_value(
+                            session_metrics, "session_completion_ratio"
+                        )
+                        or 0.0
+                    )
+                    * 100.0
+                    if _session_metric_value(
+                        session_metrics, "session_completion_ratio"
+                    )
+                    is not None
+                    else None
+                ),
                 precision=1,
             ),
+            _format_number(_session_metric_value(session_metrics, "branches_spawned")),
             _format_number(
-                _session_metric_value(session_metrics, duration, "p95"),
-                precision=1,
+                _session_metric_value(
+                    session_metrics, "sessions_completed_at_send_stop"
+                )
             ),
             _format_number(
-                _session_metric_value(session_metrics, duration, "max"),
-                precision=1,
+                _session_metric_value(session_metrics, "sessions_cancelled")
             ),
             _format_number(
-                _session_metric_value(session_metrics, requests, "p50"),
-                precision=1,
+                _session_metric_value(session_metrics, "branches_completed")
             ),
-            _format_number(
-                _session_metric_value(session_metrics, requests, "p95"),
-                precision=1,
-            ),
-            _format_number(
-                _session_metric_value(session_metrics, requests, "max"),
-                precision=1,
-            ),
-            _format_number(
-                _session_metric_value(session_metrics, "max_agent_depth", "p95"),
-                precision=1,
-            ),
+            _format_number(_session_metric_value(session_metrics, "branches_errored")),
         ]
         value_cells = "".join(f"<td>{html.escape(value)}</td>" for value in values[1:])
         table_rows.append(f"<tr><td>{html.escape(values[0])}</td>{value_cells}</tr>")
 
     first_session_metrics = available_runs[0].get("session_metrics") or {}
     definition = html.escape(
-        str(first_session_metrics.get("session_definition") or "Root conversation_id.")
+        str(
+            first_session_metrics.get("session_definition")
+            or "AIPerf orchestrator session counts from aiperf.log."
+        )
     )
     return f"""
 <section class="benchflow-report-table-section">
   <details class="benchflow-report-table-details" open>
     <summary>AIPerf Session Profile</summary>
-    <p>{definition} Durations are wall-clock seconds from first request start to last response end inside each session.</p>
+    <p>{definition}</p>
     <div class="benchflow-report-table-shell">
       <table class="benchflow-report-table">
         {colgroup}
@@ -1880,14 +1892,32 @@ def generate_report(
                 run.info.artifact_uri,
                 _AIPERF_RECORD_CANDIDATES,
             )
-            session_metrics: dict[str, Any] = {}
-            if record_artifact:
-                record_path = _download_run_file(
+            log_artifact = _resolve_artifact_file(
+                run.info.artifact_uri,
+                _AIPERF_LOG_CANDIDATES,
+            )
+            record_path = (
+                _download_run_file(
                     run.info.artifact_uri,
                     record_artifact,
                     cache_dir,
                 )
-                session_metrics = _load_jsonl_analysis(record_path)["session_metrics"]
+                if record_artifact
+                else None
+            )
+            log_path = (
+                _download_run_file(
+                    run.info.artifact_uri,
+                    log_artifact,
+                    cache_dir,
+                )
+                if log_artifact
+                else None
+            )
+            session_metrics = _load_aiperf_session_analysis(
+                jsonl_path=record_path,
+                log_path=log_path,
+            )["session_metrics"]
             runs_data.append(
                 {
                     "run_id": resolved_run_id,
@@ -2061,97 +2091,103 @@ def generate_report(
         comparison_metrics.extend(
             [
                 (
-                    "Session Count",
+                    "Sessions Sent",
                     "sessions",
                     [
                         _session_metric_value(
-                            item.get("session_metrics") or {}, "session_count"
+                            item.get("session_metrics") or {}, "sessions_sent"
                         )
                         for item in runs_data
                     ],
                 ),
                 (
-                    "Failed Session Count",
+                    "Sessions Completed",
                     "sessions",
                     [
                         _session_metric_value(
                             item.get("session_metrics") or {},
-                            "failed_session_count",
+                            "sessions_completed",
                         )
                         for item in runs_data
                     ],
                 ),
                 (
-                    "Agentic Session Count<br>"
+                    "Session Completion Ratio<br>"
                     "<span style='font-size:11px;color:#6f6f6f'>"
-                    "Sessions with at least one sub-agent turn "
-                    "(agent_depth &gt; 0)"
+                    "Completed ÷ sent from AIPerf profiling phase"
                     "</span>",
+                    "ratio",
+                    [
+                        (
+                            (
+                                _session_metric_value(
+                                    item.get("session_metrics") or {},
+                                    "session_completion_ratio",
+                                )
+                                or 0.0
+                            )
+                            * 100.0
+                            if _session_metric_value(
+                                item.get("session_metrics") or {},
+                                "session_completion_ratio",
+                            )
+                            is not None
+                            else None
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Branches Spawned",
+                    "branches",
+                    [
+                        _session_metric_value(
+                            item.get("session_metrics") or {},
+                            "branches_spawned",
+                        )
+                        for item in runs_data
+                    ],
+                ),
+                (
+                    "Sessions Completed At Send Stop",
                     "sessions",
                     [
                         _session_metric_value(
                             item.get("session_metrics") or {},
-                            "agentic_session_count",
+                            "sessions_completed_at_send_stop",
                         )
                         for item in runs_data
                     ],
                 ),
                 (
-                    "Session Duration P50",
-                    "seconds",
+                    "Sessions Cancelled",
+                    "sessions",
                     [
                         _session_metric_value(
                             item.get("session_metrics") or {},
-                            "session_duration_seconds",
-                            "p50",
+                            "sessions_cancelled",
                         )
                         for item in runs_data
                     ],
                 ),
                 (
-                    "Session Duration P95",
-                    "seconds",
+                    "Branches Completed",
+                    "branches",
                     [
                         _session_metric_value(
                             item.get("session_metrics") or {},
-                            "session_duration_seconds",
-                            "p95",
+                            "branches_completed",
                         )
                         for item in runs_data
                     ],
                 ),
                 (
-                    "Requests Per Session P50",
-                    "requests",
+                    "Branches Errored",
+                    "branches",
                     [
                         _session_metric_value(
                             item.get("session_metrics") or {},
-                            "requests_per_session",
-                            "p50",
-                        )
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Requests Per Session P95",
-                    "requests",
-                    [
-                        _session_metric_value(
-                            item.get("session_metrics") or {},
-                            "requests_per_session",
-                            "p95",
-                        )
-                        for item in runs_data
-                    ],
-                ),
-                (
-                    "Max Agent Depth P95",
-                    "depth",
-                    [
-                        _session_metric_value(
-                            item.get("session_metrics") or {},
-                            "max_agent_depth",
-                            "p95",
+                            "branches_errored",
                         )
                         for item in runs_data
                     ],
@@ -2237,14 +2273,26 @@ def generate_run_report(
         ),
         None,
     )
-    summary = _load_json(summary_path)
-    jsonl_analysis = (
-        _load_jsonl_analysis(jsonl_path)
-        if jsonl_path
-        else {"distributions": {}, "session_metrics": {}}
+    log_path = next(
+        (
+            candidate
+            for candidate in (
+                artifacts_dir / "benchmark" / "logs" / "aiperf.log",
+                artifacts_dir / "results" / "logs" / "aiperf.log",
+                artifacts_dir / "logs" / "aiperf.log",
+                artifacts_dir / "aiperf.log",
+            )
+            if candidate.exists()
+        ),
+        None,
     )
-    distributions = jsonl_analysis["distributions"]
-    session_metrics = jsonl_analysis["session_metrics"]
+    summary = _load_json(summary_path)
+    session_analysis = _load_aiperf_session_analysis(
+        jsonl_path=jsonl_path,
+        log_path=log_path,
+    )
+    distributions = session_analysis["distributions"]
+    session_metrics = session_analysis["session_metrics"]
     report_metrics_yaml_path = _resolved_run_report_metrics_yaml_path(metrics_yaml_path)
     metric_panels = [
         panel
@@ -2288,46 +2336,6 @@ def generate_run_report(
         )
         _apply_axis_style(figure)
         figures.append(figure)
-
-    if session_metrics:
-        for values, title, axis_title in (
-            (
-                session_metrics.get("session_duration_values") or [],
-                "Session Duration Distribution",
-                "seconds",
-            ),
-            (
-                session_metrics.get("requests_per_session_values") or [],
-                "Requests Per Session Distribution",
-                "requests",
-            ),
-        ):
-            if not values:
-                continue
-            figure = go.Figure(
-                data=[
-                    go.Histogram(
-                        x=list(values),
-                        marker_color=_COLORS["green"],
-                        marker_line={"color": _COLORS["green"], "width": 1},
-                    )
-                ]
-            )
-            figure.update_layout(
-                title=title,
-                width=_HEADER_WIDTH,
-                height=460,
-                paper_bgcolor=_COLORS["paper"],
-                plot_bgcolor=_COLORS["paper"],
-                font={"family": _REPORT_FONT, "size": 12, "color": _COLORS["black"]},
-                margin=dict(l=75, r=35, t=80, b=60),
-                xaxis=dict(title=axis_title),
-                yaxis=dict(title="sessions"),
-                bargap=0.08,
-                showlegend=False,
-            )
-            _apply_axis_style(figure)
-            figures.append(figure)
 
     output_path = _resolve_output_path(
         default_filename="full_run_artifacts_report.html",
