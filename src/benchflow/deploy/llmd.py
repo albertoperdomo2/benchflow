@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -512,6 +513,53 @@ def _pvc_volume(pvc_mount: Any) -> dict[str, Any]:
     }
 
 
+def _openshift_range_start(raw: str) -> int | None:
+    value = str(raw or "").strip().split("/", 1)[0]
+    if not value:
+        return None
+    try:
+        resolved = int(value)
+    except ValueError:
+        return None
+    return resolved if resolved >= 0 else None
+
+
+@lru_cache(maxsize=32)
+def _openshift_namespace_annotations(namespace: str) -> dict[str, str]:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    payload = run_json_command(
+        [kubectl_cmd, "get", "namespace", namespace, "-o", "json"]
+    )
+    annotations = payload.get("metadata", {}).get("annotations") or {}
+    if not isinstance(annotations, dict):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in annotations.items()
+        if isinstance(key, str) and value is not None
+    }
+
+
+def _openshift_runtime_security_context(plan: ResolvedRunPlan) -> dict[str, Any]:
+    annotations = _openshift_namespace_annotations(plan.deployment.namespace)
+    if not annotations:
+        return {}
+
+    security_context: dict[str, Any] = {}
+    uid_range_start = _openshift_range_start(
+        annotations.get("openshift.io/sa.scc.uid-range", "")
+    )
+    if uid_range_start is not None:
+        security_context["runAsNonRoot"] = True
+        security_context["runAsUser"] = uid_range_start
+
+    mcs_level = str(annotations.get("openshift.io/sa.scc.mcs", "") or "").strip()
+    if mcs_level:
+        security_context["seLinuxOptions"] = {"level": mcs_level}
+
+    return security_context
+
+
 def _apply_runtime_pod_customizations(
     container: dict[str, Any], pod_spec: dict[str, Any], plan: ResolvedRunPlan
 ) -> None:
@@ -527,12 +575,16 @@ def _apply_runtime_pod_customizations(
 
     if runtime.service_account_name:
         pod_spec["serviceAccountName"] = runtime.service_account_name
+    security_context = dict(pod_spec.get("securityContext") or {})
+    if runtime.service_account_name:
+        for key, value in _openshift_runtime_security_context(plan).items():
+            security_context.setdefault(key, value)
     if runtime.fs_group is not None or runtime.supplemental_groups:
-        security_context = dict(pod_spec.get("securityContext") or {})
         if runtime.fs_group is not None:
             security_context["fsGroup"] = runtime.fs_group
         if runtime.supplemental_groups:
             security_context["supplementalGroups"] = list(runtime.supplemental_groups)
+    if security_context:
         pod_spec["securityContext"] = security_context
     if runtime.image_pull_secrets:
         pod_spec["imagePullSecrets"] = list(runtime.image_pull_secrets)

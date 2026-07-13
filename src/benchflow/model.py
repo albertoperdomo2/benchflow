@@ -39,6 +39,32 @@ def _has_model_weights(target_dir: Path) -> bool:
     return False
 
 
+def _has_tokenizer_files(target_dir: Path) -> bool:
+    if not target_dir.is_dir():
+        return False
+    if not (target_dir / "tokenizer_config.json").is_file():
+        return False
+    if (target_dir / "tokenizer.json").is_file():
+        return True
+    if (target_dir / "tokenizer.model").is_file():
+        return True
+    return (target_dir / "vocab.json").is_file() and (
+        target_dir / "merges.txt"
+    ).is_file()
+
+
+def _is_complete_model_cache(target_dir: Path) -> bool:
+    if not target_dir.is_dir():
+        return False
+    if not (target_dir / "config.json").is_file():
+        return False
+    if not _has_model_weights(target_dir):
+        return False
+    if not _has_tokenizer_files(target_dir):
+        return False
+    return True
+
+
 def download_model(
     plan: ResolvedRunPlan,
     *,
@@ -52,9 +78,9 @@ def download_model(
     )
     step(f"Preparing model cache for {plan.model.name}")
     detail(f"Target directory: {target_dir}")
-    if skip_if_exists and _has_model_weights(target_dir):
+    if skip_if_exists and _is_complete_model_cache(target_dir):
         success(
-            f"Skipping download; cached model weights already exist at {target_dir}"
+            f"Skipping download; complete cached model already exists at {target_dir}"
         )
         return target_dir
     if target_dir.exists():
@@ -91,6 +117,10 @@ def download_model(
     if not _has_model_weights(target_dir):
         raise CommandError(
             f"download completed but no model weights were found in {target_dir}"
+        )
+    if not _has_tokenizer_files(target_dir):
+        raise CommandError(
+            f"download completed but tokenizer assets were not found in {target_dir}"
         )
     success(f"Downloaded model weights to {target_dir}")
 

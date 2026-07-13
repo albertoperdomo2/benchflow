@@ -627,7 +627,10 @@ If the runtime also mounts a shared model PVC whose directories are group-owned,
 set `spec.runtime.fs_group` (and optionally `spec.runtime.supplemental_groups`)
 so the runtime pod keeps traversal access to those model-cache paths after
 switching to a hostPath-capable SCC. BenchFlow renders those fields on the
-runtime pod `securityContext`.
+runtime pod `securityContext`. On OpenShift, when `spec.runtime.service_account_name`
+is set, BenchFlow also aligns the runtime pod with the namespace-assigned UID
+range and MCS label so that the hostPath-capable runtime pod keeps the same PVC
+access shape as the default BenchFlow download job path.
 
 Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
 storage offloading with `spec.options.storage_offloading`. When present,
