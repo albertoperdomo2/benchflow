@@ -1386,6 +1386,63 @@ def _append_render_arg_if_missing(args: list[str], flag: str, value: str) -> Non
         args.append(f"{flag}={value}")
 
 
+def _vllm_render_wrapper_script() -> str:
+    # vLLM 0.23 `vllm launch render` builds VllmConfig without carrying the
+    # parsed CacheConfig. Construct the same render server explicitly so CPU
+    # render works for linear-attention/Mamba models whose cache config is
+    # adjusted by the CPU platform.
+    return r"""
+import signal
+import sys
+
+import uvloop
+
+from vllm import envs
+from vllm.config import CacheConfig, VllmConfig
+from vllm.engine.arg_utils import AsyncEngineArgs
+from vllm.entrypoints.openai.api_server import build_and_serve_renderer, setup_server
+from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
+from vllm.utils.argparse_utils import FlexibleArgumentParser
+
+
+async def main():
+    parser = FlexibleArgumentParser()
+    make_arg_parser(parser)
+    args = parser.parse_args(sys.argv[1:])
+    if getattr(args, "model_tag", None) is not None:
+        args.model = args.model_tag
+    validate_parsed_serve_args(args)
+
+    def _interrupt_init(*_):
+        raise KeyboardInterrupt("terminated")
+
+    signal.signal(signal.SIGTERM, _interrupt_init)
+    listen_address, sock = setup_server(args)
+
+    engine_args = AsyncEngineArgs.from_cli_args(args)
+    model_config = engine_args.create_model_config()
+    model_config.quantization = None
+
+    envs.VLLM_CPU_KVCACHE_SPACE = 0
+    cache_config = CacheConfig(
+        enable_prefix_caching=False,
+        mamba_block_size=model_config.max_model_len,
+    )
+    vllm_config = VllmConfig(model_config=model_config, cache_config=cache_config)
+
+    shutdown_task = await build_and_serve_renderer(
+        vllm_config, listen_address, sock, args
+    )
+    try:
+        await shutdown_task
+    finally:
+        sock.close()
+
+
+uvloop.run(main())
+""".strip()
+
+
 def _upsert_env_value(env: list[Any], name: str, value: str) -> None:
     for entry in env:
         if isinstance(entry, dict) and str(entry.get("name") or "") == name:
@@ -1460,11 +1517,7 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
             args = [plan.model.name, "--port=8000"]
         render_max_model_len = _runtime_vllm_arg_value(plan, "--max-model-len")
         _append_render_arg_if_missing(args, "--max-model-len", render_max_model_len)
-        # vLLM 0.23 CPU render disables prefix caching for linear-attention
-        # models on AMX after Mamba config has initialized mamba_block_size.
-        # Keeping mamba_block_size equal to max_model_len makes validation treat
-        # it as unset while preserving render-only tokenization behavior.
-        _append_render_arg_if_missing(args, "--mamba-block-size", render_max_model_len)
+        container["command"] = ["python", "-c", _vllm_render_wrapper_script()]
         container["args"] = args
         env = container.setdefault("env", [])
         if isinstance(env, list):

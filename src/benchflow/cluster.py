@@ -173,11 +173,19 @@ def _service_port(payload: dict[str, Any]) -> int:
     ports = payload.get("spec", {}).get("ports") or []
     if not isinstance(ports, list) or not ports:
         return 80
-    preferred_names = {"http", "http2", "http-80", "web"}
+    preferred_names = {"default", "http", "http2", "http-80", "web"}
     for port in ports:
         if not isinstance(port, dict):
             continue
-        if str(port.get("name") or "") in preferred_names:
+        name = str(port.get("name") or "").lower()
+        app_protocol = str(port.get("appProtocol") or "").lower()
+        if name in preferred_names or app_protocol in {"http", "http2"}:
+            return int(port.get("port") or 80)
+    skipped_names = {"admin", "metrics", "status", "status-port"}
+    for port in ports:
+        if not isinstance(port, dict):
+            continue
+        if str(port.get("name") or "").lower() not in skipped_names:
             return int(port.get("port") or 80)
     first = ports[0] if isinstance(ports[0], dict) else {}
     return int(first.get("port") or 80)

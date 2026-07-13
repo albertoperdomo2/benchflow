@@ -143,7 +143,10 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
             "affinity": plan.deployment.runtime.affinity,
             "tolerations": plan.deployment.runtime.tolerations,
             "imagePullSecrets": plan.deployment.runtime.image_pull_secrets,
-            "resources": plan.deployment.runtime.resources,
+            "resources": {
+                "limits": dict(plan.deployment.runtime.resources.limits),
+                "requests": dict(plan.deployment.runtime.resources.requests),
+            },
         },
         "options": plan.deployment.options,
     }
