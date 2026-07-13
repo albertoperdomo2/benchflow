@@ -185,6 +185,20 @@ def _optional_nonnegative_int(raw: Any, field_name: str) -> int | None:
     return parsed
 
 
+def _nonnegative_int_list(raw: Any, field_name: str) -> list[int] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValidationError(f"{field_name} must be a list of non-negative integers")
+    values: list[int] = []
+    for index, item in enumerate(raw):
+        parsed = _optional_nonnegative_int(item, f"{field_name}[{index}]")
+        if parsed is None:
+            raise ValidationError(f"{field_name}[{index}] must not be empty")
+        values.append(parsed)
+    return values
+
+
 def _raw_value(raw: Any) -> Any | None:
     if raw is None:
         return None
@@ -546,6 +560,22 @@ def _overrides_from_dict(
                 if "service_account_name" in runtime
                 else None
             ),
+            fs_group=(
+                _optional_nonnegative_int(
+                    runtime.get("fs_group"),
+                    f"{field_name}.runtime.fs_group",
+                )
+                if "fs_group" in runtime
+                else None
+            ),
+            supplemental_groups=(
+                _nonnegative_int_list(
+                    runtime.get("supplemental_groups"),
+                    f"{field_name}.runtime.supplemental_groups",
+                )
+                if "supplemental_groups" in runtime
+                else None
+            ),
             node_selector=(
                 _string_mapping(
                     runtime.get("node_selector"),
@@ -731,6 +761,16 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
             raw.get("pvc_mounts"), "spec.runtime.pvc_mounts"
         ),
         service_account_name=str(raw.get("service_account_name", "") or "").strip(),
+        fs_group=_optional_nonnegative_int(
+            raw.get("fs_group"), "spec.runtime.fs_group"
+        ),
+        supplemental_groups=(
+            _nonnegative_int_list(
+                raw.get("supplemental_groups"),
+                "spec.runtime.supplemental_groups",
+            )
+            or []
+        ),
         node_selector=_string_mapping(
             raw.get("node_selector"), "spec.runtime.node_selector"
         ),

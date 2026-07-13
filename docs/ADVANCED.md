@@ -521,6 +521,8 @@ spec:
       VLLM_LOGGING_LEVEL: INFO # merged with spec.overrides.runtime.env or --env
     shared_memory_size: 200Gi # optional /dev/shm memory-backed emptyDir size for llm-d/rhoai/rhaiis
     service_account_name: benchflow-hostpath-runtime # optional runtime pod service account for llm-d/rhoai/rhaiis
+    fs_group: 1000730000 # optional pod fsGroup for shared PVC traversal under hostPath-capable SCCs
+    supplemental_groups: [1000730000] # optional extra pod groups
     host_paths: # llm-d/rhoai/rhaiis only
       - name: nvme-kv-cache # Kubernetes volume name; must not conflict with BenchFlow-owned volumes
         host_path: /mnt/local-nvme/kv-cache # node-local path
@@ -621,6 +623,11 @@ seccomp. On Poseidon, `openshift-ai-llminferenceservice-multi-node-scc` matches
 that requirement.
 Do not grant hostPath SCC access to the namespace `default` service account
 unless the whole namespace is intentionally trusted for host filesystem access.
+If the runtime also mounts a shared model PVC whose directories are group-owned,
+set `spec.runtime.fs_group` (and optionally `spec.runtime.supplemental_groups`)
+so the runtime pod keeps traversal access to those model-cache paths after
+switching to a hostPath-capable SCC. BenchFlow renders those fields on the
+runtime pod `securityContext`.
 
 Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
 storage offloading with `spec.options.storage_offloading`. When present,

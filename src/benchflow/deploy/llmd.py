@@ -527,6 +527,13 @@ def _apply_runtime_pod_customizations(
 
     if runtime.service_account_name:
         pod_spec["serviceAccountName"] = runtime.service_account_name
+    if runtime.fs_group is not None or runtime.supplemental_groups:
+        security_context = dict(pod_spec.get("securityContext") or {})
+        if runtime.fs_group is not None:
+            security_context["fsGroup"] = runtime.fs_group
+        if runtime.supplemental_groups:
+            security_context["supplementalGroups"] = list(runtime.supplemental_groups)
+        pod_spec["securityContext"] = security_context
     if runtime.image_pull_secrets:
         pod_spec["imagePullSecrets"] = list(runtime.image_pull_secrets)
 

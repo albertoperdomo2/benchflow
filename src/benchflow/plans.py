@@ -420,6 +420,14 @@ def _merge_model_override(
                 model_override.runtime.service_account_name,
                 base.runtime.service_account_name,
             ),
+            fs_group=_scalar_model_override(
+                model_override.runtime.fs_group,
+                base.runtime.fs_group,
+            ),
+            supplemental_groups=_scalar_model_override(
+                model_override.runtime.supplemental_groups,
+                base.runtime.supplemental_groups,
+            ),
             node_selector=_scalar_model_override(
                 model_override.runtime.node_selector,
                 base.runtime.node_selector,
@@ -592,6 +600,16 @@ def resolve_run_plan(
             overrides.runtime.service_account_name
             or deployment_profile.spec.runtime.service_account_name
         ).strip(),
+        fs_group=(
+            overrides.runtime.fs_group
+            if overrides.runtime.fs_group is not None
+            else deployment_profile.spec.runtime.fs_group
+        ),
+        supplemental_groups=(
+            list(overrides.runtime.supplemental_groups)
+            if overrides.runtime.supplemental_groups is not None
+            else list(deployment_profile.spec.runtime.supplemental_groups)
+        ),
         node_selector=(
             dict(overrides.runtime.node_selector)
             if overrides.runtime.node_selector is not None
