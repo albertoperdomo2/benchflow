@@ -405,6 +405,8 @@ spec:
           cpu: "16" # --runtime-cpu-request
         limits:
           cpu: "32" # --runtime-cpu-limit
+        remove_limits:
+          - memory # remove an inherited guide/runtime memory limit
       node_selector:
         kubernetes.io/hostname: worker-0
       affinity:
@@ -448,6 +450,7 @@ Override semantics:
 - `runtime.host_paths` replaces the deployment profile's hostPath mounts when set; it is currently rendered only for `rhoai` and `rhaiis` runtime pods
 - `runtime.env` merges by key and override values win on collisions
 - `runtime.resources.requests` and `runtime.resources.limits` merge by resource name and override values win; CPU request and limit can also be set with `--runtime-cpu-request` and `--runtime-cpu-limit`
+- `runtime.resources.remove_requests` and `runtime.resources.remove_limits` remove named resource keys from the rendered runtime container; use this when a guide or deployment profile has a default resource that should not apply, for example `remove_limits: [memory]`
 - `runtime.node_selector`, `runtime.affinity`, and `runtime.tolerations` replace the profile value when set in `spec.overrides.runtime`
 - `runtime.image_pull_secrets` is profile-owned and currently rendered for RHOAI runtime pods
 - `benchmark.env` merges by key and override values win on collisions
@@ -529,6 +532,8 @@ spec:
         cpu: "16" # overridden by spec.overrides.runtime.resources.requests.cpu or --runtime-cpu-request
       limits:
         cpu: "32" # overridden by spec.overrides.runtime.resources.limits.cpu or --runtime-cpu-limit
+      remove_limits:
+        - memory # remove an inherited guide/runtime memory limit
     node_selector:
       nvidia.com/gpu.product: NVIDIA-H200 # profile-owned node selector for runtime pods
     affinity:

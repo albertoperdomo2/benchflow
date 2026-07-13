@@ -451,14 +451,29 @@ def _ensure_container(values: dict[str, Any]) -> dict[str, Any]:
 
 def _apply_runtime_resources(container: dict[str, Any], plan: ResolvedRunPlan) -> None:
     runtime_resources = plan.deployment.runtime.resources
-    if not runtime_resources.requests and not runtime_resources.limits:
+    if (
+        not runtime_resources.requests
+        and not runtime_resources.limits
+        and not runtime_resources.remove_requests
+        and not runtime_resources.remove_limits
+    ):
         return
 
     resources = container.setdefault("resources", {})
     requests = resources.setdefault("requests", {})
     limits = resources.setdefault("limits", {})
-    requests.update(runtime_resources.requests)
-    limits.update(runtime_resources.limits)
+    for key in runtime_resources.remove_requests:
+        requests.pop(key, None)
+    for key in runtime_resources.remove_limits:
+        limits.pop(key, None)
+    if not requests:
+        resources.pop("requests", None)
+    if not limits:
+        resources.pop("limits", None)
+    if runtime_resources.requests:
+        resources.setdefault("requests", {}).update(runtime_resources.requests)
+    if runtime_resources.limits:
+        resources.setdefault("limits", {}).update(runtime_resources.limits)
 
 
 def _release_match_labels(release_name: str) -> dict[str, str]:

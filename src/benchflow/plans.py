@@ -483,9 +483,23 @@ def _resolve_runtime_resources(
 ) -> RuntimeResourcesSpec:
     if override is None:
         return deepcopy(profile)
+    requests = dict(profile.requests)
+    limits = dict(profile.limits)
+    for key in override.remove_requests:
+        requests.pop(key, None)
+    for key in override.remove_limits:
+        limits.pop(key, None)
+    requests.update(override.requests)
+    limits.update(override.limits)
     return RuntimeResourcesSpec(
-        requests={**profile.requests, **override.requests},
-        limits={**profile.limits, **override.limits},
+        requests=requests,
+        limits=limits,
+        remove_requests=list(
+            dict.fromkeys([*profile.remove_requests, *override.remove_requests])
+        ),
+        remove_limits=list(
+            dict.fromkeys([*profile.remove_limits, *override.remove_limits])
+        ),
     )
 
 

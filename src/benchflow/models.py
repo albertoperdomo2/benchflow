@@ -360,6 +360,8 @@ class Experiment:
 class RuntimeResourcesSpec:
     requests: dict[str, str] = field(default_factory=dict)
     limits: dict[str, str] = field(default_factory=dict)
+    remove_requests: list[str] = field(default_factory=list)
+    remove_limits: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

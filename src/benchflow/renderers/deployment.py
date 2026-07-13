@@ -146,6 +146,10 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
             "resources": {
                 "limits": dict(plan.deployment.runtime.resources.limits),
                 "requests": dict(plan.deployment.runtime.resources.requests),
+                "removeLimits": list(plan.deployment.runtime.resources.remove_limits),
+                "removeRequests": list(
+                    plan.deployment.runtime.resources.remove_requests
+                ),
             },
         },
         "options": plan.deployment.options,

@@ -235,6 +235,16 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
             limits=(
                 dict(runtime_resources.limits) if runtime_resources is not None else {}
             ),
+            remove_requests=(
+                list(runtime_resources.remove_requests)
+                if runtime_resources is not None
+                else []
+            ),
+            remove_limits=(
+                list(runtime_resources.remove_limits)
+                if runtime_resources is not None
+                else []
+            ),
         )
         if runtime_cpu_request is not None:
             cpu_request = str(runtime_cpu_request).strip()

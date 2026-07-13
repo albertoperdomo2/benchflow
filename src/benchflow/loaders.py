@@ -256,15 +256,44 @@ def _resource_mapping(raw: Any, field_name: str) -> dict[str, str]:
     return values
 
 
+def _resource_key_list(raw: Any, field_name: str) -> list[str]:
+    values = _string_list(raw, field_name)
+    if values is None:
+        return []
+    return list(dict.fromkeys(values))
+
+
 def _runtime_resources_from_dict(
     raw: dict[str, Any] | None, field_name: str
 ) -> RuntimeResourcesSpec:
     raw = raw or {}
     if not isinstance(raw, dict):
         raise ValidationError(f"{field_name} must be a mapping")
+    requests = _resource_mapping(raw.get("requests"), f"{field_name}.requests")
+    limits = _resource_mapping(raw.get("limits"), f"{field_name}.limits")
+    remove_requests = _resource_key_list(
+        raw.get("remove_requests"), f"{field_name}.remove_requests"
+    )
+    remove_limits = _resource_key_list(
+        raw.get("remove_limits"), f"{field_name}.remove_limits"
+    )
+    request_conflicts = sorted(set(requests).intersection(remove_requests))
+    limit_conflicts = sorted(set(limits).intersection(remove_limits))
+    if request_conflicts:
+        conflicts = ", ".join(request_conflicts)
+        raise ValidationError(
+            f"{field_name} cannot set and remove request resources: {conflicts}"
+        )
+    if limit_conflicts:
+        conflicts = ", ".join(limit_conflicts)
+        raise ValidationError(
+            f"{field_name} cannot set and remove limit resources: {conflicts}"
+        )
     return RuntimeResourcesSpec(
-        requests=_resource_mapping(raw.get("requests"), f"{field_name}.requests"),
-        limits=_resource_mapping(raw.get("limits"), f"{field_name}.limits"),
+        requests=requests,
+        limits=limits,
+        remove_requests=remove_requests,
+        remove_limits=remove_limits,
     )
 
 
