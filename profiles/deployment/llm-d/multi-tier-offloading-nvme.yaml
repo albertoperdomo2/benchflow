@@ -21,14 +21,9 @@ spec:
     # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
     # larger than cpu_bytes_to_use below, plus some headroom.
     shared_memory_size: 200Gi
-    # Required for hostPath volumes on OpenShift. Bind this service account to an
-    # SCC that allows hostPath volumes before using this profile.
-    service_account_name: benchflow-hostpath-runtime
     host_paths:
-      # Keep secondary_tiers[].root_dir in sync with this mount_path. The host
-      # directory must already exist and be writable by random non-root
-      # OpenShift UIDs; kubelet-created hostPath directories are usually
-      # root-owned and not writable by the vLLM container.
+      # BenchFlow creates, labels, and validates this directory with a short-lived
+      # init container before the non-root vLLM container starts.
       #
       # The filesystem tier does not enforce byte capacity in vLLM config. Size
       # it by provisioning/quotaing this host directory, and wipe it between
@@ -36,7 +31,7 @@ spec:
       - name: nvme-kv-cache
         host_path: /var/mnt/modelcache/benchflow-kv-cache
         mount_path: /mnt/nvme-kv-cache
-        type: Directory
+        type: DirectoryOrCreate
         read_only: false
     vllm_args:
       - --gpu-memory-utilization=0.7

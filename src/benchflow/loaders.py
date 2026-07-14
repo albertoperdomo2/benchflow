@@ -171,32 +171,16 @@ def _optional_positive_int(raw: Any, field_name: str) -> int | None:
     return _positive_int(raw, field_name)
 
 
-def _optional_nonnegative_int(raw: Any, field_name: str) -> int | None:
-    if raw is None or str(raw).strip() == "":
-        return None
-    if isinstance(raw, bool):
-        raise ValidationError(f"{field_name} must be a non-negative integer")
-    try:
-        parsed = int(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValidationError(f"{field_name} must be a non-negative integer") from exc
-    if parsed < 0:
-        raise ValidationError(f"{field_name} must be a non-negative integer")
-    return parsed
-
-
-def _nonnegative_int_list(raw: Any, field_name: str) -> list[int] | None:
-    if raw is None:
-        return None
-    if not isinstance(raw, list):
-        raise ValidationError(f"{field_name} must be a list of non-negative integers")
-    values: list[int] = []
-    for index, item in enumerate(raw):
-        parsed = _optional_nonnegative_int(item, f"{field_name}[{index}]")
-        if parsed is None:
-            raise ValidationError(f"{field_name}[{index}] must not be empty")
-        values.append(parsed)
-    return values
+def _reject_removed_runtime_security_fields(raw: Any, field_name: str) -> None:
+    if not isinstance(raw, dict):
+        return
+    removed = [field for field in ("fs_group", "supplemental_groups") if field in raw]
+    if removed:
+        fields = ", ".join(f"{field_name}.{field}" for field in removed)
+        raise ValidationError(
+            f"{fields} are no longer supported; BenchFlow derives OpenShift "
+            "runtime UID, groups, and MCS labels automatically"
+        )
 
 
 def _raw_value(raw: Any) -> Any | None:
@@ -504,6 +488,7 @@ def _overrides_from_dict(
     images = raw.get("images") or {}
     scale = raw.get("scale") or {}
     runtime = raw.get("runtime") or {}
+    _reject_removed_runtime_security_fields(runtime, f"{field_name}.runtime")
     benchmark = raw.get("benchmark") or {}
     llm_d = raw.get("llm_d") or {}
     rhoai = raw.get("rhoai") or {}
@@ -558,22 +543,6 @@ def _overrides_from_dict(
                     f"{field_name}.runtime.service_account_name",
                 )
                 if "service_account_name" in runtime
-                else None
-            ),
-            fs_group=(
-                _optional_nonnegative_int(
-                    runtime.get("fs_group"),
-                    f"{field_name}.runtime.fs_group",
-                )
-                if "fs_group" in runtime
-                else None
-            ),
-            supplemental_groups=(
-                _nonnegative_int_list(
-                    runtime.get("supplemental_groups"),
-                    f"{field_name}.runtime.supplemental_groups",
-                )
-                if "supplemental_groups" in runtime
                 else None
             ),
             node_selector=(
@@ -743,6 +712,7 @@ def load_yaml_file(path: Path) -> dict[str, Any]:
 
 def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
     raw = raw or {}
+    _reject_removed_runtime_security_fields(raw, "spec.runtime")
     env = {str(key): str(value) for key, value in (raw.get("env") or {}).items()}
     image_pull_secrets = raw.get("image_pull_secrets")
     if image_pull_secrets is None:
@@ -761,16 +731,6 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
             raw.get("pvc_mounts"), "spec.runtime.pvc_mounts"
         ),
         service_account_name=str(raw.get("service_account_name", "") or "").strip(),
-        fs_group=_optional_nonnegative_int(
-            raw.get("fs_group"), "spec.runtime.fs_group"
-        ),
-        supplemental_groups=(
-            _nonnegative_int_list(
-                raw.get("supplemental_groups"),
-                "spec.runtime.supplemental_groups",
-            )
-            or []
-        ),
         node_selector=_string_mapping(
             raw.get("node_selector"), "spec.runtime.node_selector"
         ),

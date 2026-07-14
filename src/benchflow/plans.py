@@ -420,14 +420,6 @@ def _merge_model_override(
                 model_override.runtime.service_account_name,
                 base.runtime.service_account_name,
             ),
-            fs_group=_scalar_model_override(
-                model_override.runtime.fs_group,
-                base.runtime.fs_group,
-            ),
-            supplemental_groups=_scalar_model_override(
-                model_override.runtime.supplemental_groups,
-                base.runtime.supplemental_groups,
-            ),
             node_selector=_scalar_model_override(
                 model_override.runtime.node_selector,
                 base.runtime.node_selector,
@@ -600,16 +592,6 @@ def resolve_run_plan(
             overrides.runtime.service_account_name
             or deployment_profile.spec.runtime.service_account_name
         ).strip(),
-        fs_group=(
-            overrides.runtime.fs_group
-            if overrides.runtime.fs_group is not None
-            else deployment_profile.spec.runtime.fs_group
-        ),
-        supplemental_groups=(
-            list(overrides.runtime.supplemental_groups)
-            if overrides.runtime.supplemental_groups is not None
-            else list(deployment_profile.spec.runtime.supplemental_groups)
-        ),
         node_selector=(
             dict(overrides.runtime.node_selector)
             if overrides.runtime.node_selector is not None
@@ -654,6 +636,25 @@ def resolve_run_plan(
         raise ValidationError(
             "runtime.host_paths is currently supported only for llm-d, rhoai, and rhaiis deployments"
         )
+    if deployment_profile.spec.platform == "llm-d" and runtime.host_paths:
+        if (
+            runtime.service_account_name
+            and runtime.service_account_name != "benchflow-hostpath-runtime"
+        ):
+            raise ValidationError(
+                "llm-d hostPath deployments use BenchFlow-managed service account "
+                "benchflow-hostpath-runtime; remove runtime.service_account_name"
+            )
+        unsupported_host_paths = [
+            host_path.name
+            for host_path in runtime.host_paths
+            if host_path.read_only or host_path.type != "DirectoryOrCreate"
+        ]
+        if unsupported_host_paths:
+            raise ValidationError(
+                "llm-d writable host paths must use type DirectoryOrCreate; "
+                f"unsupported entries: {', '.join(unsupported_host_paths)}"
+            )
     if runtime.pvc_mounts and deployment_profile.spec.platform not in {
         "llm-d",
         "rhoai",

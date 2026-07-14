@@ -329,6 +329,16 @@ def apply_runner_rbac(installer: Any) -> None:
     )
 
 
+def apply_hostpath_runtime_security(installer: Any) -> None:
+    step("Applying managed hostPath runtime security")
+    installer._apply_asset_documents(
+        "rbac/hostpath-runtime.yaml",
+        namespace=None,
+        description="applying managed hostPath runtime security",
+        variables=installer._base_asset_variables(),
+    )
+
+
 def apply_namespaced_resources(installer: Any) -> None:
     step("Applying namespace RBAC")
     installer._apply_asset_documents(
@@ -337,6 +347,7 @@ def apply_namespaced_resources(installer: Any) -> None:
         description="applying namespace service account",
         variables=installer._base_asset_variables(),
     )
+    apply_hostpath_runtime_security(installer)
     apply_runner_rbac(installer)
     apply_cluster_monitoring_rbac(installer)
     apply_cluster_monitoring_config(installer)

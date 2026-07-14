@@ -21,22 +21,9 @@ spec:
     # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
     # larger than cpu_bytes_to_use below, plus some headroom.
     shared_memory_size: 200Gi
-    # Required for hostPath volumes on OpenShift. For RHOAI LLMInferenceService,
-    # bind this service account to an SCC that allows both hostPath and
-    # runtime/default seccomp; on Poseidon, use:
-    # openshift-ai-llminferenceservice-multi-node-scc.
-    service_account_name: benchflow-hostpath-runtime
-    # The shared model-cache PVC contents in the benchflow namespace are
-    # group-owned by the namespace's supplemental group range. Set fsGroup so
-    # hostPath-capable runtime pods keep group traversal access to
-    # /model-cache/models when switching away from the default SCC path.
-    fs_group: 1000730000
     host_paths:
-      # diadochos H100 nodes mount local NVMe at /var/mnt/modelcache. This
-      # subdirectory is pre-created on each node with mode 1777 so random
-      # non-root OpenShift UIDs can write to it. Do not rely on DirectoryOrCreate
-      # here: kubelet-created hostPath directories are root-owned and may not be
-      # writable by the vLLM container.
+      # BenchFlow creates, labels, and validates this directory with a short-lived
+      # init container before the non-root vLLM container starts.
       #
       # The filesystem tier does not enforce byte capacity in vLLM config. Size
       # it by provisioning/quotaing this host directory, and wipe it between
@@ -44,7 +31,7 @@ spec:
       - name: nvme-kv-cache
         host_path: /var/mnt/modelcache/benchflow-kv-cache
         mount_path: /mnt/nvme-kv-cache
-        type: Directory
+        type: DirectoryOrCreate
         read_only: false
     vllm_args:
       - --gpu-memory-utilization=0.7

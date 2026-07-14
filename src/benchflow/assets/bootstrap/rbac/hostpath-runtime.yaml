@@ -1,0 +1,66 @@
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: benchflow-hostpath-runtime
+  labels:
+    app.kubernetes.io/name: benchflow
+    benchflow.io/purpose: hostpath-runtime
+priority: 10
+allowPrivilegedContainer: true
+allowPrivilegeEscalation: true
+allowHostDirVolumePlugin: true
+allowHostNetwork: false
+allowHostPID: false
+allowHostIPC: false
+allowHostPorts: false
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - MKNOD
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seccompProfiles:
+  - runtime/default
+  - localhost/*
+volumes:
+  - configMap
+  - csi
+  - downwardAPI
+  - emptyDir
+  - ephemeral
+  - hostPath
+  - image
+  - persistentVolumeClaim
+  - projected
+  - secret
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: benchflow-hostpath-runtime
+  namespace: "{{ BENCHFLOW_NAMESPACE }}"
+  labels:
+    app.kubernetes.io/name: benchflow
+    benchflow.io/purpose: hostpath-runtime
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: benchflow-hostpath-runtime-scc
+  namespace: "{{ BENCHFLOW_NAMESPACE }}"
+  labels:
+    app.kubernetes.io/name: benchflow
+    benchflow.io/purpose: hostpath-runtime
+subjects:
+  - kind: ServiceAccount
+    name: benchflow-hostpath-runtime
+    namespace: "{{ BENCHFLOW_NAMESPACE }}"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:benchflow-hostpath-runtime

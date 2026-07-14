@@ -520,9 +520,7 @@ spec:
     env:
       VLLM_LOGGING_LEVEL: INFO # merged with spec.overrides.runtime.env or --env
     shared_memory_size: 200Gi # optional /dev/shm memory-backed emptyDir size for llm-d/rhoai/rhaiis
-    service_account_name: benchflow-hostpath-runtime # optional runtime pod service account for llm-d/rhoai/rhaiis
-    fs_group: 1000730000 # optional pod fsGroup for shared PVC traversal under hostPath-capable SCCs
-    supplemental_groups: [1000730000] # optional extra pod groups
+    service_account_name: custom-runtime-sa # optional runtime pod service account for rhoai/rhaiis or llm-d without hostPaths
     host_paths: # llm-d/rhoai/rhaiis only
       - name: nvme-kv-cache # Kubernetes volume name; must not conflict with BenchFlow-owned volumes
         host_path: /mnt/local-nvme/kv-cache # node-local path
@@ -615,7 +613,7 @@ The value is a Kubernetes quantity such as `200Gi`; it does not reserve that
 memory upfront, but actual use consumes node RAM.
 
 OpenShift hostPath volumes require a service account that can use a
-hostPath-capable SCC. For llm-d, RHOAI, and RHAIIS raw vLLM profiles, set
+hostPath-capable SCC. For RHOAI and RHAIIS raw vLLM profiles, set
 `spec.runtime.service_account_name` to that dedicated runtime service account.
 For RHOAI `LLMInferenceService`, the controller may inject `RuntimeDefault`
 seccomp, so the SCC must allow both `hostPath` volumes and `runtime/default`
@@ -623,14 +621,14 @@ seccomp. On Poseidon, `openshift-ai-llminferenceservice-multi-node-scc` matches
 that requirement.
 Do not grant hostPath SCC access to the namespace `default` service account
 unless the whole namespace is intentionally trusted for host filesystem access.
-If the runtime also mounts a shared model PVC whose directories are group-owned,
-set `spec.runtime.fs_group` (and optionally `spec.runtime.supplemental_groups`)
-so the runtime pod keeps traversal access to those model-cache paths after
-switching to a hostPath-capable SCC. BenchFlow renders those fields on the
-runtime pod `securityContext`. On OpenShift, when `spec.runtime.service_account_name`
-is set, BenchFlow also aligns the runtime pod with the namespace-assigned UID
-range and MCS label so that the hostPath-capable runtime pod keeps the same PVC
-access shape as the default BenchFlow download job path.
+
+For llm-d writable hostPaths on OpenShift, BenchFlow owns the complete path.
+Rerun `bflow bootstrap` to create the dedicated runtime ServiceAccount and SCC.
+The llm-d profile must use `type: DirectoryOrCreate`; before vLLM starts,
+BenchFlow runs a short-lived privileged init container that creates the directory,
+sets mode `1777`, labels it with the namespace MCS level, and verifies it is
+writable. The vLLM container itself remains non-root and confined. Do not set
+`service_account_name`, `fs_group`, or `supplemental_groups` for this path.
 
 Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
 storage offloading with `spec.options.storage_offloading`. When present,

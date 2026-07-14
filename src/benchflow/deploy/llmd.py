@@ -44,6 +44,10 @@ _BENCHFLOW_EPP_CONFIG_FILE = "benchflow-epp-config.yaml"
 _STORAGE_OFFLOADING_VOLUME_NAME = "storage-offloading"
 _STORAGE_OFFLOADING_SERVICE_FILE = "benchflow-storage-events-service.yaml"
 _MODELSERVER_PODMONITOR_FILE = "benchflow-modelserver-podmonitor.yaml"
+_MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT = "benchflow-hostpath-runtime"
+_MANAGED_HOSTPATH_RUNTIME_SCC = "benchflow-hostpath-runtime"
+_HOSTPATH_PROVISIONER_NAME = "benchflow-hostpath-provisioner"
+_HOSTPATH_PROVISIONER_IMAGE = "registry.access.redhat.com/ubi9/ubi:9.6"
 
 
 def _llmd_guide_layout(plan: ResolvedRunPlan) -> dict[str, str]:
@@ -553,11 +557,159 @@ def _openshift_runtime_security_context(plan: ResolvedRunPlan) -> dict[str, Any]
         security_context["runAsNonRoot"] = True
         security_context["runAsUser"] = uid_range_start
 
+    supplemental_group_start = _openshift_range_start(
+        annotations.get("openshift.io/sa.scc.supplemental-groups", "")
+    )
+    if supplemental_group_start is not None:
+        security_context["fsGroup"] = supplemental_group_start
+
     mcs_level = str(annotations.get("openshift.io/sa.scc.mcs", "") or "").strip()
     if mcs_level:
         security_context["seLinuxOptions"] = {"level": mcs_level}
 
     return security_context
+
+
+def _is_openshift_namespace(plan: ResolvedRunPlan) -> bool:
+    annotations = _openshift_namespace_annotations(plan.deployment.namespace)
+    return any(key.startswith("openshift.io/sa.scc.") for key in annotations)
+
+
+def _uses_managed_hostpath_runtime(plan: ResolvedRunPlan) -> bool:
+    return bool(plan.deployment.runtime.host_paths) and _is_openshift_namespace(plan)
+
+
+def _validate_managed_hostpath_runtime(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    if not _uses_managed_hostpath_runtime(plan):
+        return
+
+    annotations = _openshift_namespace_annotations(plan.deployment.namespace)
+    required_annotations = (
+        "openshift.io/sa.scc.uid-range",
+        "openshift.io/sa.scc.supplemental-groups",
+        "openshift.io/sa.scc.mcs",
+    )
+    missing_annotations = [
+        key
+        for key in required_annotations
+        if not str(annotations.get(key) or "").strip()
+    ]
+    if missing_annotations:
+        raise CommandError(
+            "OpenShift namespace is missing required SCC annotations for managed "
+            f"llm-d hostPath runtime: {', '.join(missing_annotations)}"
+        )
+
+    namespace = plan.deployment.namespace
+    required_resources = (
+        (
+            [
+                "get",
+                "serviceaccount",
+                _MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT,
+                "-n",
+                namespace,
+            ],
+            f"serviceaccount/{_MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT}",
+        ),
+        (
+            ["get", "scc", _MANAGED_HOSTPATH_RUNTIME_SCC],
+            f"scc/{_MANAGED_HOSTPATH_RUNTIME_SCC}",
+        ),
+        (
+            [
+                "get",
+                "rolebinding",
+                f"{_MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT}-scc",
+                "-n",
+                namespace,
+            ],
+            f"rolebinding/{_MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT}-scc",
+        ),
+    )
+    for args, resource in required_resources:
+        result = run_command([kubectl_cmd, *args], capture_output=True, check=False)
+        if result.returncode != 0:
+            raise CommandError(
+                f"managed llm-d hostPath runtime requires {resource}; rerun "
+                "`bflow bootstrap` for this cluster"
+            )
+
+    binding = run_json_command(
+        [
+            kubectl_cmd,
+            "get",
+            "rolebinding",
+            f"{_MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT}-scc",
+            "-n",
+            namespace,
+            "-o",
+            "json",
+        ]
+    )
+    role_ref = binding.get("roleRef") or {}
+    subjects = binding.get("subjects") or []
+    expected_role = f"system:openshift:scc:{_MANAGED_HOSTPATH_RUNTIME_SCC}"
+    has_expected_subject = any(
+        isinstance(subject, dict)
+        and subject.get("kind") == "ServiceAccount"
+        and subject.get("name") == _MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT
+        and subject.get("namespace") == namespace
+        for subject in subjects
+    )
+    if str(role_ref.get("name") or "") != expected_role or not has_expected_subject:
+        raise CommandError(
+            "managed llm-d hostPath runtime RoleBinding is invalid; rerun "
+            "`bflow bootstrap` for this cluster"
+        )
+
+
+def _managed_hostpath_provisioner(plan: ResolvedRunPlan) -> dict[str, Any]:
+    mounts = [
+        {
+            "name": host_path.name,
+            "mountPath": f"/benchflow-hostpaths/{host_path.name}",
+            "readOnly": False,
+        }
+        for host_path in plan.deployment.runtime.host_paths
+    ]
+    return {
+        "name": _HOSTPATH_PROVISIONER_NAME,
+        "image": _HOSTPATH_PROVISIONER_IMAGE,
+        "imagePullPolicy": "IfNotPresent",
+        "command": ["/bin/sh", "-ec"],
+        "args": [
+            """command -v chcon >/dev/null
+for directory in /benchflow-hostpaths/*; do
+  test -d \"${directory}\"
+  chmod 1777 \"${directory}\"
+  chcon -R -t container_file_t -l \"${MCS_LEVEL}\" \"${directory}\"
+  probe=\"${directory}/.benchflow-write-test\"
+  : > \"${probe}\"
+  rm -f \"${probe}\"
+  ls -ldZ \"${directory}\"
+done"""
+        ],
+        "env": [
+            {
+                "name": "MCS_LEVEL",
+                "value": str(
+                    _openshift_namespace_annotations(plan.deployment.namespace).get(
+                        "openshift.io/sa.scc.mcs", ""
+                    )
+                ),
+            }
+        ],
+        "securityContext": {
+            "privileged": True,
+            "allowPrivilegeEscalation": True,
+            "runAsUser": 0,
+            "runAsNonRoot": False,
+            "seLinuxOptions": {"type": "spc_t"},
+        },
+        "volumeMounts": mounts,
+        "terminationMessagePolicy": "FallbackToLogsOnError",
+    }
 
 
 def _apply_runtime_pod_customizations(
@@ -573,17 +725,20 @@ def _apply_runtime_pod_customizations(
         volumes = []
         pod_spec["volumes"] = volumes
 
-    if runtime.service_account_name:
+    managed_hostpath = _uses_managed_hostpath_runtime(plan)
+    if managed_hostpath:
+        pod_spec["serviceAccountName"] = _MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT
+    elif runtime.service_account_name:
         pod_spec["serviceAccountName"] = runtime.service_account_name
     security_context = dict(pod_spec.get("securityContext") or {})
-    if runtime.service_account_name:
+    if managed_hostpath:
         for key, value in _openshift_runtime_security_context(plan).items():
+            if key == "seLinuxOptions":
+                se_linux_options = dict(security_context.get(key) or {})
+                se_linux_options.setdefault("level", value["level"])
+                security_context[key] = se_linux_options
+                continue
             security_context.setdefault(key, value)
-    if runtime.fs_group is not None or runtime.supplemental_groups:
-        if runtime.fs_group is not None:
-            security_context["fsGroup"] = runtime.fs_group
-        if runtime.supplemental_groups:
-            security_context["supplementalGroups"] = list(runtime.supplemental_groups)
     if security_context:
         pod_spec["securityContext"] = security_context
     if runtime.image_pull_secrets:
@@ -615,6 +770,13 @@ def _apply_runtime_pod_customizations(
             },
         )
         _upsert_named_item(volumes, _host_path_volume(host_path))
+
+    if managed_hostpath:
+        init_containers = pod_spec.setdefault("initContainers", [])
+        if not isinstance(init_containers, list):
+            init_containers = []
+            pod_spec["initContainers"] = init_containers
+        _upsert_named_item(init_containers, _managed_hostpath_provisioner(plan))
 
     for pvc_mount in runtime.pvc_mounts:
         _upsert_named_item(
@@ -2004,6 +2166,47 @@ def _pods_ready_any(
     return False, 0, 0
 
 
+def _raise_if_hostpath_provisioner_failed(
+    namespace: str, selector: str, kubectl_cmd: str
+) -> None:
+    payload = run_json_command(
+        [kubectl_cmd, "get", "pods", "-n", namespace, "-l", selector, "-o", "json"]
+    )
+    for pod in payload.get("items", []):
+        metadata = pod.get("metadata") or {}
+        status = pod.get("status") or {}
+        for init_status in status.get("initContainerStatuses") or []:
+            if init_status.get("name") != _HOSTPATH_PROVISIONER_NAME:
+                continue
+            terminated = init_status.get("state", {}).get("terminated") or {}
+            if not terminated or int(terminated.get("exitCode") or 0) == 0:
+                continue
+            pod_name = str(metadata.get("name") or "")
+            node_name = str(pod.get("spec", {}).get("nodeName") or "")
+            result = run_command(
+                [
+                    kubectl_cmd,
+                    "logs",
+                    pod_name,
+                    "-n",
+                    namespace,
+                    "-c",
+                    _HOSTPATH_PROVISIONER_NAME,
+                    "--tail=100",
+                ],
+                capture_output=True,
+                check=False,
+            )
+            logs = str(result.stdout or result.stderr or "").strip()
+            message = str(terminated.get("message") or "").strip()
+            reason = str(terminated.get("reason") or "Error").strip()
+            raise CommandError(
+                "llm-d hostPath provisioner failed "
+                f"for pod {pod_name} on node {node_name}: {reason}. "
+                f"{message}\n{logs}"
+            )
+
+
 def _gateway_exists(
     namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
 ) -> bool:
@@ -2119,6 +2322,10 @@ def _verify_deployment(
                 f"{_LLMD_INFERENCE_SERVING_LABEL}=true,"
                 f"{_LLMD_MODEL_LABEL}={release_name}"
             )
+        if _uses_managed_hostpath_runtime(plan):
+            _raise_if_hostpath_provisioner_failed(
+                namespace, model_selector, kubectl_cmd
+            )
         ms_ready, ms_ready_count, ms_total = _pods_ready(
             namespace,
             model_selector,
@@ -2226,6 +2433,8 @@ def deploy_llmd(
             f"{plan.deployment.release_name}"
         )
         return workspace_dir.resolve() if workspace_dir else Path.cwd()
+
+    _validate_managed_hostpath_runtime(plan, kubectl_cmd)
 
     created_tempdir = workspace_dir is None
     checkout_root = (
