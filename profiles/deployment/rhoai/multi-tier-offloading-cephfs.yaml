@@ -32,13 +32,14 @@ spec:
         mount_path: /mnt/kv_cache
         create: true
         storage_class_name: rook-cephfs
-        size: 5Ti
+        size: 3Ti
         access_modes:
           - ReadWriteMany
     vllm_args:
       - --max-model-len=8192
       # Keep secondary_tiers[].root_dir in sync with runtime.pvc_mounts[].mount_path.
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":107374182400,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/kv_cache","n_read_threads":32,"n_write_threads":16}]}}
+      # - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":68719476736,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/kv_cache","n_read_threads":32,"n_write_threads":16}]}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":68719476736,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/kv_cache"}]}}
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching
