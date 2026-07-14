@@ -617,6 +617,10 @@ def _validate_managed_hostpath_runtime(plan: ResolvedRunPlan, kubectl_cmd: str) 
             f"scc/{_MANAGED_HOSTPATH_RUNTIME_SCC}",
         ),
         (
+            ["get", "clusterrole", _MANAGED_HOSTPATH_RUNTIME_SCC],
+            f"clusterrole/{_MANAGED_HOSTPATH_RUNTIME_SCC}",
+        ),
+        (
             [
                 "get",
                 "rolebinding",
@@ -649,7 +653,7 @@ def _validate_managed_hostpath_runtime(plan: ResolvedRunPlan, kubectl_cmd: str) 
     )
     role_ref = binding.get("roleRef") or {}
     subjects = binding.get("subjects") or []
-    expected_role = f"system:openshift:scc:{_MANAGED_HOSTPATH_RUNTIME_SCC}"
+    expected_role = _MANAGED_HOSTPATH_RUNTIME_SCC
     has_expected_subject = any(
         isinstance(subject, dict)
         and subject.get("kind") == "ServiceAccount"
