@@ -66,20 +66,24 @@ metrics:
   - title: GPU utilization
     description: DCGM GPU utilization for pods participating in the benchmark release.
     query: 'DCGM_FI_DEV_GPU_UTIL{exported_namespace="$namespace", exported_pod=~".*$release.*"}'
+    series: '{{Hostname}} gpu-{{gpu}}'
 
   - title: GPU memory used
     description: DCGM framebuffer memory used by GPUs participating in the benchmark release.
     query: 'DCGM_FI_DEV_FB_USED{exported_namespace="$namespace", exported_pod=~".*$release.*"}'
+    series: '{{Hostname}} gpu-{{gpu}}'
     scale: 0.001
     yaxis: GB
 
   - title: GPU PCIe transmit throughput
     description: DCGM PCIe transmit traffic by model-server GPU.
     query: 'rate({__name__=~"DCGM_FI_PROF_PCIE_TX_BYTES", exported_namespace="$namespace", exported_pod=~"$modelserver_pod_regex"}[5m])'
+    series: '{{Hostname}} gpu-{{gpu}}'
 
   - title: GPU PCIe receive throughput
     description: DCGM PCIe receive traffic by model-server GPU; spikes can indicate KV blocks returning from CPU offload.
     query: 'rate({__name__=~"DCGM_FI_PROF_PCIE_RX_BYTES", exported_namespace="$namespace", exported_pod=~"$modelserver_pod_regex"}[5m])'
+    series: '{{Hostname}} gpu-{{gpu}}'
 
   - title: Node NVMe throughput
     description: Node-exporter read/write byte rate for the hostPath-backed NVMe filesystem on nodes running model-server pods.

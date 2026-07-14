@@ -772,7 +772,7 @@ def build_comparison_metric_panels(
     if metrics_yaml_path is None:
         return []
     spec = load_report_metrics_spec(metrics_yaml_path)
-    return [
+    panels = [
         _build_metric_panel(
             spec=metric,
             runs_data=runs_data,
@@ -780,6 +780,7 @@ def build_comparison_metric_panels(
         )
         for metric in spec.metrics
     ]
+    return [panel for panel in panels if panel.traces]
 
 
 def find_metrics_artifacts_dir(root: Path) -> Path | None:
@@ -802,7 +803,8 @@ def build_run_metric_panels(
     if metrics_yaml_path is None or metrics_dir is None:
         return []
     spec = load_report_metrics_spec(metrics_yaml_path)
-    return [
+    panels = [
         _build_run_metric_panel(spec=metric, metrics_dir=metrics_dir)
         for metric in spec.metrics
     ]
+    return [panel for panel in panels if panel.traces]
