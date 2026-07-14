@@ -5,13 +5,13 @@ metadata:
 spec:
   model:
     name:
-      - deepseek-ai/DeepSeek-V4-Flash
+      # - deepseek-ai/DeepSeek-V4-Flash
       # - openai/gpt-oss-120b  # completions?? lower gmu to 0.6 or 0.5
       # - nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
       # - google/gemma-4-31B
-      # - Qwen/Qwen3.6-35B-A3B  # --gpu-memory-utilization=0.7
+      - Qwen/Qwen3.6-35B-A3B  # --gpu-memory-utilization=0.7
   deployment_profile: 
-    - cpu-kv-offload-distributed-default
+    # - cpu-kv-offload-distributed-default
     # - rhoai-cpu-kv-offload-160g
     # - rhoai-cpu-kv-offload-64g
     # - rhoai-cpu-kv-offload-96g
