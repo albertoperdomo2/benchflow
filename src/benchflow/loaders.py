@@ -366,6 +366,7 @@ def _runtime_host_paths_from_dict(
                 mount_path=mount_path,
                 type=host_path_type,
                 read_only=_as_bool(item.get("read_only"), False),
+                cleanup=_as_bool(item.get("cleanup"), False),
             )
         )
         names.add(name)

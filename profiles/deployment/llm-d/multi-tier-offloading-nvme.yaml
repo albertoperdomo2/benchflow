@@ -33,6 +33,7 @@ spec:
         mount_path: /mnt/nvme-kv-cache
         type: DirectoryOrCreate
         read_only: false
+        cleanup: true
     vllm_args:
       - --gpu-memory-utilization=0.7
       - --max-model-len=8192

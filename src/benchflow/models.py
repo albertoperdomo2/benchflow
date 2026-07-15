@@ -377,6 +377,7 @@ class RuntimeHostPathSpec:
     mount_path: str
     type: str = ""
     read_only: bool = False
+    cleanup: bool = False
 
 
 @dataclass(slots=True)

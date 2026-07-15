@@ -222,6 +222,86 @@ def _delete_storage_offloading_host_path_contents(
     return deleted
 
 
+def _delete_runtime_host_path_contents(
+    plan: ResolvedRunPlan,
+    kubectl_cmd: str,
+    release_label: str,
+) -> None:
+    host_paths = [
+        host_path
+        for host_path in plan.deployment.runtime.host_paths
+        if host_path.cleanup and not host_path.read_only
+    ]
+    if not host_paths:
+        return
+
+    namespace = plan.deployment.namespace
+    pods_by_node: dict[str, tuple[str, str]] = {}
+    for pod in _release_pods(kubectl_cmd, namespace, release_label):
+        metadata = pod.get("metadata", {})
+        pod_name = str(metadata.get("name") or "").strip()
+        if not pod_name.startswith(f"ms-{plan.deployment.release_name}"):
+            continue
+        if str(pod.get("status", {}).get("phase") or "") != "Running":
+            continue
+        node_name = str(pod.get("spec", {}).get("nodeName") or "").strip()
+        container = _pod_container_name(pod)
+        if node_name and container and node_name not in pods_by_node:
+            pods_by_node[node_name] = (pod_name, container)
+
+    if not pods_by_node:
+        raise CommandError(
+            "cannot clean llm-d runtime hostPath contents: no running model pod "
+            f"was found for release {plan.deployment.release_name}"
+        )
+
+    failures: list[str] = []
+    cleaned_nodes: set[str] = set()
+    for node_name, (pod_name, container) in sorted(pods_by_node.items()):
+        for host_path in host_paths:
+            target = shlex.quote(host_path.mount_path.rstrip("/"))
+            script = (
+                "set -eu; "
+                f"if [ -d {target} ]; then "
+                f"find {target} -mindepth 1 -maxdepth 1 -exec rm -rf -- {{}} +; "
+                "fi"
+            )
+            result = run_command(
+                [
+                    kubectl_cmd,
+                    "exec",
+                    pod_name,
+                    "-c",
+                    container,
+                    "-n",
+                    namespace,
+                    "--",
+                    "sh",
+                    "-lc",
+                    script,
+                ],
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                failures.append(
+                    f"{pod_name} ({host_path.mount_path}): "
+                    f"{str(result.stderr or result.stdout or '').strip()}"
+                )
+                continue
+            cleaned_nodes.add(node_name)
+
+    if failures:
+        raise CommandError(
+            "failed to clean llm-d runtime hostPath contents: " + "; ".join(failures)
+        )
+    if cleaned_nodes:
+        detail(
+            "Deleted llm-d runtime hostPath contents on node(s): "
+            + ", ".join(sorted(cleaned_nodes))
+        )
+
+
 def _shared_gateway_has_routes(kubectl_cmd: str, namespace: str) -> bool:
     result = run_command(
         [kubectl_cmd, "get", "httproute", "-n", namespace, "-o", "json"],
@@ -429,6 +509,7 @@ def cleanup_llmd(
         ],
     )
 
+    _delete_runtime_host_path_contents(plan, kubectl_cmd, release_label)
     _delete_storage_offloading_host_path_contents(plan, kubectl_cmd, release_label)
 
     if recipe_layout:
