@@ -177,6 +177,38 @@ def _llmd_recipe_render_service_name(release_name: str) -> str:
     return f"{release_name}-render"
 
 
+def _llmd_router_chart_settings(
+    checkout_dir: Path, gateway_mode: str
+) -> tuple[str, str]:
+    env_path = checkout_dir / "guides" / "env.sh"
+    if not env_path.exists():
+        raise CommandError(f"llm-d router environment file not found: {env_path}")
+
+    values: dict[str, str] = {}
+    assignment = re.compile(r"^export\s+(ROUTER_[A-Z_]+)=(.+?)\s*$")
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        match = assignment.match(line.strip())
+        if match is None:
+            continue
+        value = match.group(2).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[match.group(1)] = value
+
+    chart_key = (
+        "ROUTER_STANDALONE_CHART"
+        if gateway_mode == "standalone"
+        else "ROUTER_GATEWAY_CHART"
+    )
+    chart_ref = values.get(chart_key, "").strip()
+    chart_version = values.get("ROUTER_CHART_VERSION", "").strip()
+    if not chart_ref or not chart_version:
+        raise CommandError(
+            f"{env_path} must define {chart_key} and ROUTER_CHART_VERSION"
+        )
+    return chart_ref, chart_version
+
+
 def _llmd_recipe_gateway_dir(checkout_dir: Path) -> Path:
     return checkout_dir / "guides" / "recipes" / "gateway" / "istio"
 
@@ -1869,6 +1901,16 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
                 secret_ref = value_from.get("secretKeyRef")
                 if isinstance(secret_ref, dict):
                     secret_ref["name"] = "huggingface-token"
+        resources = container.setdefault("resources", {})
+        if isinstance(resources, dict):
+            limits = resources.get("limits")
+            if isinstance(limits, dict):
+                # Long-context tokenization is bursty; leave the renderer unconstrained
+                # so high-concurrency precise routing does not turn into timeouts.
+                limits.pop("cpu", None)
+                limits.pop("memory", None)
+                if not limits:
+                    resources.pop("limits", None)
     _rewrite_huggingface_secret_refs(deployment)
 
     service = yaml.safe_load(service_path.read_text(encoding="utf-8")) or {}
@@ -2533,10 +2575,8 @@ def deploy_llmd(
             "RELEASE_NAME_POSTFIX": plan.deployment.release_name,
         }
         if router_chart:
-            chart_ref = (
-                "oci://ghcr.io/llm-d/charts/llm-d-router-standalone-dev"
-                if gateway_mode == "standalone"
-                else "oci://ghcr.io/llm-d/charts/llm-d-router-gateway-dev"
+            chart_ref, chart_version = _llmd_router_chart_settings(
+                checkout_dir, gateway_mode
             )
             helm_args = [
                 "helm",
@@ -2563,7 +2603,7 @@ def deploy_llmd(
                 "-n",
                 plan.deployment.namespace,
                 "--version",
-                "v0",
+                chart_version,
             ]
             if gateway_mode != "standalone":
                 helm_args.extend(
