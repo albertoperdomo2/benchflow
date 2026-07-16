@@ -22,8 +22,9 @@ spec:
     # larger than cpu_bytes_to_use below, plus some headroom.
     shared_memory_size: 200Gi
     host_paths:
-      # BenchFlow creates, labels, and validates this directory with a short-lived
-      # init container before the non-root vLLM container starts.
+      # The node setup must mount local NVMe here and pre-create this directory with
+      # mode 1777 and SELinux label container_file_t:s0. A shared cache directory
+      # must not be relabeled per pod because replicas run concurrently.
       #
       # The filesystem tier does not enforce byte capacity in vLLM config. Size
       # it by provisioning/quotaing this host directory, and wipe it between

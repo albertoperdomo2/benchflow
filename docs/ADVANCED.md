@@ -622,13 +622,14 @@ that requirement.
 Do not grant hostPath SCC access to the namespace `default` service account
 unless the whole namespace is intentionally trusted for host filesystem access.
 
-For llm-d writable hostPaths on OpenShift, BenchFlow owns the complete path.
-Rerun `bflow bootstrap` to create the dedicated runtime ServiceAccount and SCC.
-The llm-d profile must use `type: DirectoryOrCreate`; before vLLM starts,
-BenchFlow runs a short-lived privileged init container that creates the directory,
-sets mode `1777`, labels it with the namespace MCS level, and verifies it is
-writable. The vLLM container itself remains non-root and confined. Do not set
-`service_account_name`, `fs_group`, or `supplemental_groups` for this path.
+For llm-d writable hostPaths on OpenShift, rerun `bflow bootstrap` to create the
+dedicated runtime ServiceAccount and SCC. The node configuration owns the complete
+host path: it must mount the filesystem, create the directory with mode `1777`, and
+label it `container_file_t:s0` before deployment. BenchFlow mounts that directory
+once in the non-root vLLM container and does not relabel it per pod; relabeling a
+shared path races between replicas and triggers `MultipleSELinuxLabels` warnings.
+The service account is used only for SCC admission and its API token is not mounted.
+Do not set `service_account_name`, `fs_group`, or `supplemental_groups` for this path.
 
 Upstream recipe-layout `llm-d` profiles can opt into BenchFlow-managed shared
 storage offloading with `spec.options.storage_offloading`. When present,

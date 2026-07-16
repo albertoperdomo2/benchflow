@@ -46,8 +46,6 @@ _STORAGE_OFFLOADING_SERVICE_FILE = "benchflow-storage-events-service.yaml"
 _MODELSERVER_PODMONITOR_FILE = "benchflow-modelserver-podmonitor.yaml"
 _MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT = "benchflow-hostpath-runtime"
 _MANAGED_HOSTPATH_RUNTIME_SCC = "benchflow-hostpath-runtime"
-_HOSTPATH_PROVISIONER_NAME = "benchflow-hostpath-provisioner"
-_HOSTPATH_PROVISIONER_IMAGE = "registry.access.redhat.com/ubi9/ubi:9.6"
 
 
 def _llmd_guide_layout(plan: ResolvedRunPlan) -> dict[str, str]:
@@ -700,54 +698,6 @@ def _validate_managed_hostpath_runtime(plan: ResolvedRunPlan, kubectl_cmd: str) 
         )
 
 
-def _managed_hostpath_provisioner(plan: ResolvedRunPlan) -> dict[str, Any]:
-    mounts = [
-        {
-            "name": host_path.name,
-            "mountPath": f"/benchflow-hostpaths/{host_path.name}",
-            "readOnly": False,
-        }
-        for host_path in plan.deployment.runtime.host_paths
-    ]
-    return {
-        "name": _HOSTPATH_PROVISIONER_NAME,
-        "image": _HOSTPATH_PROVISIONER_IMAGE,
-        "imagePullPolicy": "IfNotPresent",
-        "command": ["/bin/sh", "-ec"],
-        "args": [
-            """command -v chcon >/dev/null
-for directory in /benchflow-hostpaths/*; do
-  test -d \"${directory}\"
-  chmod 1777 \"${directory}\"
-  chcon -R -t container_file_t -l \"${MCS_LEVEL}\" \"${directory}\"
-  probe=\"${directory}/.benchflow-write-test\"
-  : > \"${probe}\"
-  rm -f \"${probe}\"
-  ls -ldZ \"${directory}\"
-done"""
-        ],
-        "env": [
-            {
-                "name": "MCS_LEVEL",
-                "value": str(
-                    _openshift_namespace_annotations(plan.deployment.namespace).get(
-                        "openshift.io/sa.scc.mcs", ""
-                    )
-                ),
-            }
-        ],
-        "securityContext": {
-            "privileged": True,
-            "allowPrivilegeEscalation": True,
-            "runAsUser": 0,
-            "runAsNonRoot": False,
-            "seLinuxOptions": {"type": "spc_t"},
-        },
-        "volumeMounts": mounts,
-        "terminationMessagePolicy": "FallbackToLogsOnError",
-    }
-
-
 def _apply_runtime_pod_customizations(
     container: dict[str, Any], pod_spec: dict[str, Any], plan: ResolvedRunPlan
 ) -> None:
@@ -764,6 +714,9 @@ def _apply_runtime_pod_customizations(
     managed_hostpath = _uses_managed_hostpath_runtime(plan)
     if managed_hostpath:
         pod_spec["serviceAccountName"] = _MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT
+        # The service account selects the SCC at admission time only. Neither vLLM
+        # nor the runtime mount needs in-cluster API credentials.
+        pod_spec["automountServiceAccountToken"] = False
     elif runtime.service_account_name:
         pod_spec["serviceAccountName"] = runtime.service_account_name
     security_context = dict(pod_spec.get("securityContext") or {})
@@ -806,13 +759,6 @@ def _apply_runtime_pod_customizations(
             },
         )
         _upsert_named_item(volumes, _host_path_volume(host_path))
-
-    if managed_hostpath:
-        init_containers = pod_spec.setdefault("initContainers", [])
-        if not isinstance(init_containers, list):
-            init_containers = []
-            pod_spec["initContainers"] = init_containers
-        _upsert_named_item(init_containers, _managed_hostpath_provisioner(plan))
 
     for pvc_mount in runtime.pvc_mounts:
         _upsert_named_item(
@@ -2236,47 +2182,6 @@ def _pods_ready_any(
     return False, 0, 0
 
 
-def _raise_if_hostpath_provisioner_failed(
-    namespace: str, selector: str, kubectl_cmd: str
-) -> None:
-    payload = run_json_command(
-        [kubectl_cmd, "get", "pods", "-n", namespace, "-l", selector, "-o", "json"]
-    )
-    for pod in payload.get("items", []):
-        metadata = pod.get("metadata") or {}
-        status = pod.get("status") or {}
-        for init_status in status.get("initContainerStatuses") or []:
-            if init_status.get("name") != _HOSTPATH_PROVISIONER_NAME:
-                continue
-            terminated = init_status.get("state", {}).get("terminated") or {}
-            if not terminated or int(terminated.get("exitCode") or 0) == 0:
-                continue
-            pod_name = str(metadata.get("name") or "")
-            node_name = str(pod.get("spec", {}).get("nodeName") or "")
-            result = run_command(
-                [
-                    kubectl_cmd,
-                    "logs",
-                    pod_name,
-                    "-n",
-                    namespace,
-                    "-c",
-                    _HOSTPATH_PROVISIONER_NAME,
-                    "--tail=100",
-                ],
-                capture_output=True,
-                check=False,
-            )
-            logs = str(result.stdout or result.stderr or "").strip()
-            message = str(terminated.get("message") or "").strip()
-            reason = str(terminated.get("reason") or "Error").strip()
-            raise CommandError(
-                "llm-d hostPath provisioner failed "
-                f"for pod {pod_name} on node {node_name}: {reason}. "
-                f"{message}\n{logs}"
-            )
-
-
 def _gateway_exists(
     namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
 ) -> bool:
@@ -2391,10 +2296,6 @@ def _verify_deployment(
             model_selector = (
                 f"{_LLMD_INFERENCE_SERVING_LABEL}=true,"
                 f"{_LLMD_MODEL_LABEL}={release_name}"
-            )
-        if _uses_managed_hostpath_runtime(plan):
-            _raise_if_hostpath_provisioner_failed(
-                namespace, model_selector, kubectl_cmd
             )
         ms_ready, ms_ready_count, ms_total = _pods_ready(
             namespace,
