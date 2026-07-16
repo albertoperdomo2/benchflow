@@ -123,6 +123,75 @@ def _delete_runtime_pvcs(
         )
 
 
+def _stale_helm_release_names(
+    kubectl_cmd: str, namespace: str, release_names: set[str]
+) -> set[str]:
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "secret",
+            "-n",
+            namespace,
+            "-l",
+            "owner=helm",
+            "-o",
+            "json",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return set()
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return set()
+
+    stale: set[str] = set()
+    for item in payload.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        labels = item.get("metadata", {}).get("labels", {})
+        if not isinstance(labels, dict):
+            continue
+        name = str(labels.get("name") or "")
+        status = str(labels.get("status") or "")
+        if name in release_names and status == "uninstalling":
+            stale.add(name)
+    return stale
+
+
+def _delete_stale_helm_release_secrets(
+    kubectl_cmd: str, namespace: str, release_names: set[str]
+) -> None:
+    for release_name in sorted(
+        _stale_helm_release_names(kubectl_cmd, namespace, release_names)
+    ):
+        result = run_command(
+            [
+                kubectl_cmd,
+                "delete",
+                "secret",
+                "-n",
+                namespace,
+                "-l",
+                f"owner=helm,name={release_name}",
+                "--ignore-not-found=true",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise CommandError(
+                "failed to delete stale Helm release metadata for "
+                f"{release_name}: "
+                f"{str(result.stderr or result.stdout or '').strip()}"
+            )
+        detail(f"Deleted stale Helm release metadata: {release_name}")
+
+
 def _pod_container_name(pod: dict) -> str:
     containers = pod.get("spec", {}).get("containers", [])
     if not isinstance(containers, list):
@@ -397,6 +466,9 @@ def cleanup_llmd(
     existing = {entry.get("name") for entry in helm_releases}
     recipe_layout = _llmd_recipe_layout_from_repo_ref(plan.deployment.repo_ref)
     release_label = f"benchflow.io/release={plan.deployment.release_name}"
+    # `helm list` hides releases left in the uninstalling state. Include them
+    # so cleanup can finish deleting resources and release metadata.
+    existing.update(_stale_helm_release_names(kubectl_cmd, namespace, set(releases)))
 
     if not existing.intersection(releases):
         if recipe_layout:
@@ -557,7 +629,18 @@ def cleanup_llmd(
     for release_name in releases:
         if release_name not in existing:
             continue
-        run_command(["helm", "uninstall", release_name, "-n", namespace])
+        result = run_command(
+            ["helm", "uninstall", release_name, "-n", namespace],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail(
+                f"Helm uninstall did not complete for {release_name}; "
+                "continuing resource cleanup: "
+                f"{str(result.stderr or result.stdout or '').strip()}"
+            )
+            continue
         if not wait_for_deletion:
             continue
         while time.time() < deadline:
@@ -577,6 +660,7 @@ def cleanup_llmd(
         timeout_seconds=timeout_seconds,
     )
     _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
+    _delete_stale_helm_release_secrets(kubectl_cmd, namespace, set(releases))
     if recipe_layout:
         _delete_shared_gateway_if_unused(
             kubectl_cmd,
