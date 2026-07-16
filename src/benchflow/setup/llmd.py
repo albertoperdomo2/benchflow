@@ -297,13 +297,37 @@ def _gateway_dependencies_present(kubectl_cmd: str, repo_ref: str) -> bool:
     )
     for crd_name in required_crds:
         result = run_command(
-            [kubectl_cmd, "get", "crd", crd_name, "-o", "name"],
+            [kubectl_cmd, "get", "crd", crd_name, "-o", "json"],
             capture_output=True,
             check=False,
         )
         if result.returncode != 0:
             return False
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return False
+        conditions = payload.get("status", {}).get("conditions", [])
+        if not any(
+            condition.get("type") == "Established" and condition.get("status") == "True"
+            for condition in conditions
+            if isinstance(condition, dict)
+        ):
+            return False
     return True
+
+
+def _wait_for_gateway_dependencies(
+    kubectl_cmd: str, repo_ref: str, *, timeout_seconds: int = 120
+) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if _gateway_dependencies_present(kubectl_cmd, repo_ref):
+            return
+        time.sleep(2)
+    raise CommandError(
+        "timed out waiting for Gateway API and InferencePool CRDs to become Established"
+    )
 
 
 def llmd_platform_present(kubectl_cmd: str) -> bool:
@@ -686,6 +710,7 @@ def setup_llmd(
                 _run_legacy_gateway_provider_script(gateway_provider_dir, "apply")
             else:
                 _run_gateway_provider_script(gateway_provider_dir, "apply")
+            _wait_for_gateway_dependencies(kubectl_cmd, plan.deployment.repo_ref)
             state["gateway_dependencies_managed"] = True
             _persist_state(state, state_path)
 
