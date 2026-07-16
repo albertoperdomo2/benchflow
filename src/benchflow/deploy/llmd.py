@@ -1833,6 +1833,10 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
             args[0] = model_mount_path
         else:
             args = [model_mount_path, "--port=8000"]
+        # EPP identifies requests by the configured Hugging Face model name,
+        # while the renderer loads the same model from its PVC-local path.
+        # Preserve the public model name so those requests resolve correctly.
+        _append_render_arg_if_missing(args, "--served-model-name", plan.model.name)
         render_max_model_len = _runtime_vllm_arg_value(plan, "--max-model-len")
         _append_render_arg_if_missing(args, "--max-model-len", render_max_model_len)
         container["command"] = ["python", "-c", _vllm_render_wrapper_script()]
