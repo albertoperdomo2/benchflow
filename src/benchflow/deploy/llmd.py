@@ -1841,6 +1841,8 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
 
     release_name = plan.deployment.release_name
     service_name = _llmd_recipe_render_service_name(release_name)
+    storage = plan.deployment.model_storage
+    model_mount_path = _model_mount_path(plan)
     render_labels = {
         "app.kubernetes.io/component": "vllm-render",
         "app.kubernetes.io/part-of": service_name,
@@ -1880,9 +1882,11 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
             continue
         args = list(container.get("args") or [])
         if args:
-            args[0] = plan.model.name
+            # Use the model already downloaded to the shared PVC instead of
+            # making every renderer resolve and download it from Hugging Face.
+            args[0] = model_mount_path
         else:
-            args = [plan.model.name, "--port=8000"]
+            args = [model_mount_path, "--port=8000"]
         render_max_model_len = _runtime_vllm_arg_value(plan, "--max-model-len")
         _append_render_arg_if_missing(args, "--max-model-len", render_max_model_len)
         container["command"] = ["python", "-c", _vllm_render_wrapper_script()]
@@ -1911,6 +1915,26 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
                 limits.pop("memory", None)
                 if not limits:
                     resources.pop("limits", None)
+        volume_mounts = container.setdefault("volumeMounts", [])
+        if not any(
+            str(volume_mount.get("name") or "") == "models-storage"
+            for volume_mount in volume_mounts
+        ):
+            volume_mounts.append(
+                {
+                    "name": "models-storage",
+                    "mountPath": storage.mount_path,
+                    "readOnly": True,
+                }
+            )
+    volumes = pod_spec.setdefault("volumes", [])
+    if not any(str(volume.get("name") or "") == "models-storage" for volume in volumes):
+        volumes.append(
+            {
+                "name": "models-storage",
+                "persistentVolumeClaim": {"claimName": storage.pvc_name},
+            }
+        )
     _rewrite_huggingface_secret_refs(deployment)
 
     service = yaml.safe_load(service_path.read_text(encoding="utf-8")) or {}
