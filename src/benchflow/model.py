@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from .cluster import CommandError
-from .models import ResolvedRunPlan
+from .models import ResolvedRunPlan, model_storage_relative_path
 from .ui import detail, step, success, warning
 
 
@@ -71,10 +71,8 @@ def download_model(
     models_storage_path: Path,
     skip_if_exists: bool = True,
 ) -> Path:
-    target_dir = (
-        models_storage_path
-        / plan.deployment.model_storage.cache_dir.lstrip("/")
-        / plan.model.pvc_directory_name
+    target_dir = models_storage_path / model_storage_relative_path(
+        plan.deployment.model_storage, plan.model
     )
     step(f"Preparing model cache for {plan.model.name}")
     detail(f"Target directory: {target_dir}")

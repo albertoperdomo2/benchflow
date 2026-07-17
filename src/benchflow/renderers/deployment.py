@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 from ..assets import asset_text, render_jinja_text, render_jinja_yaml_document
-from ..models import ResolvedRunPlan, ValidationError
+from ..models import ResolvedRunPlan, ValidationError, model_storage_relative_path
 
 RHOAI_PROFILER_CONFIGMAP_SUFFIX = "vllm-profiler"
 RHOAI_PROFILER_MOUNT_PATH = "/home/vllm/profiler"
@@ -114,7 +114,7 @@ def _validate_rhoai_profiling(plan: ResolvedRunPlan) -> None:
 
 
 def _model_path(plan: ResolvedRunPlan) -> str:
-    return f"{plan.deployment.model_storage.cache_dir}/{plan.model.pvc_directory_name}"
+    return f"/{model_storage_relative_path(plan.deployment.model_storage, plan.model)}"
 
 
 def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
@@ -282,8 +282,7 @@ def _rhoai_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
 
 def _rhoai_basic_model_path(plan: ResolvedRunPlan) -> str:
     mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
-    cache_dir = plan.deployment.model_storage.cache_dir.rstrip("/")
-    return f"{mount_root}{cache_dir}/{plan.model.pvc_directory_name}"
+    return f"{mount_root}/{model_storage_relative_path(plan.deployment.model_storage, plan.model)}"
 
 
 def _rhoai_basic_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
@@ -596,8 +595,7 @@ def _rhaiis_raw_vllm_selector_labels(plan: ResolvedRunPlan) -> dict[str, str]:
 
 def _rhaiis_raw_vllm_model_path(plan: ResolvedRunPlan) -> str:
     mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
-    cache_dir = plan.deployment.model_storage.cache_dir.rstrip("/")
-    return f"{mount_root}{cache_dir}/{plan.model.pvc_directory_name}"
+    return f"{mount_root}/{model_storage_relative_path(plan.deployment.model_storage, plan.model)}"
 
 
 def _rhaiis_raw_vllm_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:

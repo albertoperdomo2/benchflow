@@ -554,6 +554,7 @@ spec:
     pvc_name: models-storage # no CLI override
     cache_dir: /models # no CLI override
     mount_path: /model-cache # no CLI override
+    model_subpath: "" # optional relative model directory; defaults to the normalized model name
   namespace: benchflow # overridden by Experiment spec.namespace or --namespace
   repo_url: https://github.com/llm-d/llm-d.git # no CLI override
   repo_ref: v0.4.0 # overridden by spec.overrides.llm_d.repo_ref or --llmd-repo-ref

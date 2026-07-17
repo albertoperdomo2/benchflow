@@ -751,10 +751,19 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
 
 def _storage_from_dict(raw: dict[str, Any] | None) -> ModelStorageSpec:
     raw = raw or {}
+    model_subpath = _optional_string(raw.get("model_subpath"))
+    if model_subpath and (
+        model_subpath.startswith("/")
+        or any(part in {"", ".", ".."} for part in model_subpath.split("/"))
+    ):
+        raise ValidationError(
+            "spec.model_storage.model_subpath must be a relative path without '.' or '..'"
+        )
     return ModelStorageSpec(
         pvc_name=str(raw.get("pvc_name", "models-storage")),
         cache_dir=str(raw.get("cache_dir", "/models")),
         mount_path=str(raw.get("mount_path", "/model-cache")),
+        model_subpath=model_subpath,
     )
 
 

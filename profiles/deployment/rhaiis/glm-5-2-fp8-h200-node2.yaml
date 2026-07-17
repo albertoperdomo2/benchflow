@@ -8,8 +8,9 @@ spec:
   endpoint_path: /v1/models
   model_storage:
     pvc_name: glm52-fp8-model-node2
-    cache_dir: /models
+    cache_dir: /
     mount_path: /mnt
+    model_subpath: GLM-5.2-FP8
   runtime:
     image: vllm/vllm-openai:v0.23.0
     replicas: 1

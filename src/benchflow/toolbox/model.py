@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
 from ..model import download_model
+from ..models import model_storage_relative_path
 from ..remote_jobs import remote_run_plan_json, run_remote_job
 
 
@@ -38,10 +39,8 @@ def download_cached_model(
                 }
             ],
         )
-        return (
-            Path("/models-storage")
-            / plan.deployment.model_storage.cache_dir.lstrip("/")
-            / plan.model.pvc_directory_name
+        return Path("/models-storage") / model_storage_relative_path(
+            plan.deployment.model_storage, plan.model
         )
     if context.models_storage_path is None:
         raise ValidationError("model download requires a models storage path")

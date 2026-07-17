@@ -21,7 +21,7 @@ from ..cluster import (
     run_command,
     run_json_command,
 )
-from ..models import ResolvedRunPlan, sanitize_name
+from ..models import ResolvedRunPlan, model_storage_relative_path, sanitize_name
 from ..renderers.deployment import render_runtime_pvc_manifests
 from ..platform_state import (
     load_cluster_platform_state,
@@ -318,13 +318,13 @@ def _environment_name(plan: ResolvedRunPlan) -> str:
 def _model_uri(plan: ResolvedRunPlan) -> str:
     storage = plan.deployment.model_storage
     return (
-        f"pvc://{storage.pvc_name}{storage.cache_dir}/{plan.model.pvc_directory_name}"
+        f"pvc://{storage.pvc_name}/{model_storage_relative_path(storage, plan.model)}"
     )
 
 
 def _model_mount_path(plan: ResolvedRunPlan) -> str:
     storage = plan.deployment.model_storage
-    return f"{storage.mount_path}{storage.cache_dir}/{plan.model.pvc_directory_name}"
+    return f"{storage.mount_path.rstrip('/')}/{model_storage_relative_path(storage, plan.model)}"
 
 
 def _cuda_visible_devices(tp: int) -> str:

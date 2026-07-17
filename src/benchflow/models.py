@@ -416,6 +416,14 @@ class ModelStorageSpec:
     pvc_name: str = "models-storage"
     cache_dir: str = "/models"
     mount_path: str = "/model-cache"
+    model_subpath: str = ""
+
+
+def model_storage_relative_path(storage: ModelStorageSpec, model: ModelSpec) -> str:
+    """Return the model path relative to the root of its storage volume."""
+    cache_dir = storage.cache_dir.strip("/")
+    model_subpath = storage.model_subpath or model.pvc_directory_name
+    return "/".join(part for part in (cache_dir, model_subpath) if part)
 
 
 @dataclass(slots=True)
