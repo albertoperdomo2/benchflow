@@ -1,0 +1,28 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhaiis-glm-5-2-fp8-h200-node2
+spec:
+  platform: rhaiis
+  mode: raw-vllm
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: glm52-fp8-model-node2
+    cache_dir: /models
+    mount_path: /mnt
+  runtime:
+    image: vllm/vllm-openai:v0.23.0
+    replicas: 1
+    tensor_parallelism: 8
+    # The local RWO PVC is provisioned on this H200 node.
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: In
+                  values:
+                    - psap-de-h200-cluster-6mgmp-gpu-h200-8xngg
+    env:
+      USER: benchflow

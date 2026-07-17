@@ -1,0 +1,32 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: glm-5-2-fp8-janus-h200-node2
+spec:
+  model:
+    name:
+      - zai-org/GLM-5.2-FP8
+  deployment_profile: rhaiis-glm-5-2-fp8-h200-node2
+  benchmark_profile: guidellm-smoke
+  metrics_profile: detailed
+  overrides:
+    runtime:
+      vllm_args:
+        - --gpu-memory-utilization=0.8
+        - --trust-remote-code
+        - --no-enable-log-requests
+        - --enable-prefix-caching
+        - --max-model-len=131072
+  mlflow:
+    tags:
+      accelerator: H200
+  namespace: glm-5-pp
+  stages:
+    # The model is already cached on glm52-fp8-model-node2.
+    download: false
+    deploy: true
+    benchmark: false
+    collect: false
+    cleanup: false
+  execution:
+    timeout: 8h
