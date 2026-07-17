@@ -38,6 +38,8 @@ DEFAULT_RESOURCE_FLAVOR = "default-flavor"
 LOCAL_CLUSTER_QUEUE = "local"
 DEFAULT_CONTROLLER_IMAGE = "ghcr.io/albertoperdomo2/benchflow:latest"
 KUEUE_SKIP_RESERVATION_LABEL = "benchflow.io/kueue-skip-reservation"
+_NVIDIA_GPU_RESOURCE = "nvidia.com/gpu"
+_NVIDIA_DRA_GPU_DEVICE_CLASS = "gpu.nvidia.com"
 REQUESTED_GPUS_LABEL = "benchflow.io/requested-gpus"
 CLUSTER_QUEUE_LABEL = "benchflow.io/cluster-name"
 TARGET_KUBECONFIG_SECRET_LABEL = "benchflow.io/target-kubeconfig-secret"
@@ -590,10 +592,25 @@ def summarize_reservation_workload(workload: dict[str, Any]) -> ExecutionSummary
     )
 
 
-def discover_cluster_gpu_capacity(kubeconfig: str | Path | None = None) -> int:
-    kubectl_cmd = require_any_command("oc", "kubectl")
-    with use_kubeconfig(kubeconfig):
-        payload = run_json_command([kubectl_cmd, "get", "nodes", "-o", "json"])
+def _ready_schedulable_node_names(payload: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for item in payload.get("items", []) or []:
+        spec = item.get("spec", {}) or {}
+        if spec.get("unschedulable"):
+            continue
+        ready = any(
+            condition.get("type") == "Ready"
+            and str(condition.get("status") or "") == "True"
+            for condition in item.get("status", {}).get("conditions", []) or []
+        )
+        if ready:
+            name = str((item.get("metadata", {}) or {}).get("name") or "").strip()
+            if name:
+                names.add(name)
+    return names
+
+
+def _legacy_gpu_capacity(payload: dict[str, Any]) -> int:
     total = 0
     for item in payload.get("items", []) or []:
         spec = item.get("spec", {}) or {}
@@ -611,15 +628,84 @@ def discover_cluster_gpu_capacity(kubeconfig: str | Path | None = None) -> int:
             continue
         allocatable = item.get("status", {}).get("allocatable", {}) or {}
         try:
-            total += int(str(allocatable.get("nvidia.com/gpu") or "0"))
+            total += int(str(allocatable.get(_NVIDIA_GPU_RESOURCE) or "0"))
         except ValueError:
             continue
     return total
 
 
+def _optional_json_command(command: list[str]) -> dict[str, Any]:
+    result = run_command(command, capture_output=True, check=False)
+    if result.returncode != 0:
+        return {}
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _dra_gpu_capacity(kubectl_cmd: str, ready_node_names: set[str]) -> int:
+    device_class = _optional_json_command(
+        [kubectl_cmd, "get", "deviceclass", _NVIDIA_DRA_GPU_DEVICE_CLASS, "-o", "json"]
+    )
+    spec = device_class.get("spec", {}) or {}
+    if spec.get("extendedResourceName") != _NVIDIA_GPU_RESOURCE:
+        return 0
+
+    payload = _optional_json_command(
+        [kubectl_cmd, "get", "resourceslice", "-o", "json"]
+    )
+    devices: set[tuple[str, str, str]] = set()
+    for item in payload.get("items", []) or []:
+        slice_spec = item.get("spec", {}) or {}
+        if str(slice_spec.get("driver") or "") != _NVIDIA_DRA_GPU_DEVICE_CLASS:
+            continue
+        node_name = str(slice_spec.get("nodeName") or "")
+        if node_name not in ready_node_names:
+            continue
+        pool = slice_spec.get("pool", {}) or {}
+        pool_name = str(pool.get("name") or "")
+        if not pool_name:
+            continue
+        for device in slice_spec.get("devices", []) or []:
+            device_name = str(device.get("name") or "")
+            if device_name:
+                devices.add((_NVIDIA_DRA_GPU_DEVICE_CLASS, pool_name, device_name))
+    return len(devices)
+
+
+def discover_cluster_gpu_capacity(kubeconfig: str | Path | None = None) -> int:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    with use_kubeconfig(kubeconfig):
+        payload = run_json_command([kubectl_cmd, "get", "nodes", "-o", "json"])
+        legacy_capacity = _legacy_gpu_capacity(payload)
+        if legacy_capacity:
+            return legacy_capacity
+        return _dra_gpu_capacity(kubectl_cmd, _ready_schedulable_node_names(payload))
+
+
 def discover_live_gpu_usage(kubeconfig: str | Path | None = None) -> int:
     kubectl_cmd = require_any_command("oc", "kubectl")
     with use_kubeconfig(kubeconfig):
+        nodes = run_json_command([kubectl_cmd, "get", "nodes", "-o", "json"])
+        if not _legacy_gpu_capacity(nodes):
+            claims = _optional_json_command(
+                [kubectl_cmd, "get", "resourceclaim", "-A", "-o", "json"]
+            )
+            devices: set[tuple[str, str, str]] = set()
+            for claim in claims.get("items", []) or []:
+                allocation = (claim.get("status", {}) or {}).get("allocation", {}) or {}
+                allocation_devices = allocation.get("devices", {}) or {}
+                for result in allocation_devices.get("results", []) or []:
+                    if str(result.get("driver") or "") != _NVIDIA_DRA_GPU_DEVICE_CLASS:
+                        continue
+                    pool = str(result.get("pool") or "")
+                    device = str(result.get("device") or "")
+                    if pool and device:
+                        devices.add((_NVIDIA_DRA_GPU_DEVICE_CLASS, pool, device))
+            return len(devices)
+
         payload = run_json_command([kubectl_cmd, "get", "pods", "-A", "-o", "json"])
     total = 0
     for item in payload.get("items", []) or []:
@@ -634,7 +720,9 @@ def discover_live_gpu_usage(kubeconfig: str | Path | None = None) -> int:
             resources = container.get("resources", {}) or {}
             requests = resources.get("requests", {}) or {}
             limits = resources.get("limits", {}) or {}
-            raw_value = requests.get("nvidia.com/gpu", limits.get("nvidia.com/gpu", 0))
+            raw_value = requests.get(
+                _NVIDIA_GPU_RESOURCE, limits.get(_NVIDIA_GPU_RESOURCE, 0)
+            )
             try:
                 total += int(str(raw_value or "0"))
             except ValueError:
