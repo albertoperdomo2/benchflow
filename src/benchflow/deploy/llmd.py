@@ -1417,13 +1417,6 @@ def _patch_recipe_modelserver_overlay(
             f"expected llm-d modelserver kustomization not found: {kustomization_path}"
         )
     kustomization["namePrefix"] = f"ms-{plan.deployment.release_name}-"
-    images = kustomization.setdefault("images", [])
-    if images:
-        image = images[0]
-        if plan.deployment.runtime.image:
-            hub, name, tag = _split_image_reference(plan.deployment.runtime.image)
-            image["newName"] = f"{hub}/{name}"
-            image["newTag"] = tag
     labels = kustomization.setdefault("labels", [])
     if labels:
         label_entry = labels[0]
@@ -1568,6 +1561,10 @@ def _patch_recipe_modelserver_overlay(
     container["command"] = ["vllm", "serve"]
     container["args"] = args + list(runtime.vllm_args)
     container["env"] = existing_env
+    if runtime.image:
+        # Apply the image in the final modelserver patch: the guide's gpu-vllm
+        # component otherwise overwrites Kustomize image replacements.
+        container["image"] = runtime.image
     _apply_runtime_resources(container, plan)
 
     volume_mounts = container.setdefault("volumeMounts", [])
