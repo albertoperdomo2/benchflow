@@ -21,7 +21,10 @@ runAsUser:
   # inject the namespace's allocated UID rather than defaulting to image root.
   type: MustRunAsRange
 seLinuxContext:
-  type: RunAsAny
+  # Use the namespace MCS level for every hostPath pod. RunAsAny assigns a
+  # different level per pod, which makes a shared local NVMe directory
+  # unreadable to subsequent replicas on SELinux-enforcing OpenShift nodes.
+  type: MustRunAs
 fsGroup:
   type: RunAsAny
 supplementalGroups:
