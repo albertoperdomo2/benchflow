@@ -17,7 +17,9 @@ readOnlyRootFilesystem: false
 requiredDropCapabilities:
   - MKNOD
 runAsUser:
-  type: RunAsAny
+  # RHOAI v3.5.0-ea.2 requires a non-root model-server process. Let OpenShift
+  # inject the namespace's allocated UID rather than defaulting to image root.
+  type: MustRunAsRange
 seLinuxContext:
   type: RunAsAny
 fsGroup:
