@@ -46,7 +46,8 @@ spec:
         replicas: 1
       runtime:
         vllm_extra_args:
-          - --gpu-memory-utilization=0.7
+          - --gpu-memory-utilization=0.55
+          - --max-num-seqs=480
     google/gemma-4-31B:
       # benchmark:
         # request_type: /v1/completions

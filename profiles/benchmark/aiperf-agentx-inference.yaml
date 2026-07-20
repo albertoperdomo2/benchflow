@@ -12,7 +12,9 @@ spec:
     # Source: AIPerf InferenceX AgentX MVP scenario recipe.
     # https://github.com/ai-dynamo/aiperf/blob/a75c4612b6f8cf7e3bc88e6cd560fbf9be7c1a69/docs/tutorials/agentx-mvp.md
     scenario: inferencex-agentx-mvp
-    public_dataset: semianalysis_cc_traces_weka_with_subagents
+    # Pin the exact Weka corpus instead of relying on AIPerf's moving alias.
+    public_dataset: weka_hf
+    hf_weka_repo: semianalysisai/cc-traces-weka-with-subagents-060826
     endpoint_type: chat
     endpoint_path: /v1/chat/completions
     streaming: true
@@ -21,3 +23,4 @@ spec:
     concurrency: 32
     benchmark_duration: 1800
     max_seconds: 7200
+    random_seed: 42
