@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: llm-d-multi-tier-offloading-nvme
+  name: llm-d-precise-prefix-cache-routing-gateway-cpu-offloading
 spec:
   platform: llm-d
   mode: precise-prefix-cache
@@ -18,28 +18,10 @@ spec:
     tensor_parallelism: 2
     env:
       USER: benchflow
-      PYTHONHASHSEED: "0"
-    # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
-    # larger than cpu_bytes_to_use below, plus some headroom.
-    shared_memory_size: 250Gi
-    host_paths:
-      # The node setup must mount local NVMe here and pre-create this directory with
-      # mode 1777 and SELinux label container_file_t:s0. A shared cache directory
-      # must not be relabeled per pod because replicas run concurrently.
-      #
-      # The filesystem tier does not enforce byte capacity in vLLM config. Size
-      # it by provisioning/quotaing this host directory, and wipe it between
-      # benchmark runs because old tier files are not reused by later engines.
-      - name: nvme-kv-cache
-        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
-        mount_path: /mnt/nvme-kv-cache
-        type: DirectoryOrCreate
-        read_only: false
-        cleanup: true
     vllm_args:
       - --gpu-memory-utilization=0.64
       - --enable-prefix-caching
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":34359738368,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":34359738368}}
   options:
     epp_config: |
       apiVersion: llm-d.ai/v1alpha1

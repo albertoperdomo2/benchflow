@@ -5,7 +5,7 @@ metadata:
 spec:
   platform: rhoai
   mode: precise-prefix-cache
-  platform_version: RHOAI-3.5.0-ea.1
+  platform_version: RHOAI-3.5.0-ea.2
   platform_channel: beta
   endpoint_path: /v1/models
   model_storage:

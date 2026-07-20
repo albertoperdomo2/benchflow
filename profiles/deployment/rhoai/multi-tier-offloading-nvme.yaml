@@ -5,7 +5,7 @@ metadata:
 spec:
   platform: rhoai
   mode: distributed-default
-  platform_version: RHOAI-3.5.0-ea.1
+  platform_version: RHOAI-3.5.0-ea.2
   platform_channel: beta
   endpoint_path: /v1/models
   model_storage:
@@ -35,7 +35,7 @@ spec:
       # it by provisioning/quotaing this host directory, and wipe it between
       # benchmark runs because old tier files are not reused by later engines.
       - name: nvme-kv-cache
-        host_path: /var/mnt/modelcache/benchflow-kv-cache
+        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
         mount_path: /mnt/nvme-kv-cache
         type: Directory
         read_only: false

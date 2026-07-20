@@ -1,0 +1,49 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: kv-cache-wins
+spec:
+  model:
+    name:
+      - Qwen/Qwen3.6-35B-A3B
+  deployment_profile: 
+    - llm-d-optimized-baseline-gateway
+    - llm-d-precise-prefix-cache-routing-gateway
+    - llm-d-precise-prefix-cache-routing-gateway-cpu-offloading
+    - llm-d-multi-tier-offloading-nvme
+    # - official-raw-vllm
+  benchmark_profile:
+    - aiperf-agentx-inference
+  overrides:
+    images:
+      runtime: vllm/vllm-openai:v0.24.0
+      scheduler: ghcr.io/llm-d/llm-d-router-endpoint-picker:main
+    runtime:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - diadochos-hqxzk-gpu-h100-6kl5z
+                      - diadochos-hqxzk-gpu-h100-fx7c8
+  model_overrides:
+    Qwen/Qwen3.6-35B-A3B:
+      runtime:
+        resources:
+          remove_limits:
+            - memory
+          remove_requests:
+            - memory
+  metrics_profile: detailed
+  target:
+    endpoint_scope: internal
+  mlflow:
+    tags:
+      accelerator: H100
+      blog: kv-cache-wins
+  namespace: benchflow
+  execution:
+    timeout: 8h
