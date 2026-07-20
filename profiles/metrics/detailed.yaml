@@ -146,13 +146,21 @@ spec:
     storage_runtime_pvc_usage_percent_by_claim: 100 * kubelet_volume_stats_used_bytes{namespace="$namespace", persistentvolumeclaim=~"$runtime_pvc_regex"} / clamp_min(kubelet_volume_stats_capacity_bytes{namespace="$namespace", persistentvolumeclaim=~"$runtime_pvc_regex"}, 1)
     storage_ceph_pool_bytes_per_second_by_pool: >-
       sum by (pool, direction) (
-        label_replace(rate(ceph_pool_rd_bytes{pool=~"$ceph_pool_regex"}[5m]), "direction", "read", "__name__", ".*")
-        or label_replace(rate(ceph_pool_wr_bytes{pool=~"$ceph_pool_regex"}[5m]), "direction", "write", "__name__", ".*")
+        (
+          label_replace(rate(ceph_pool_rd_bytes[5m]), "direction", "read", "__name__", ".*")
+          or label_replace(rate(ceph_pool_wr_bytes[5m]), "direction", "write", "__name__", ".*")
+        )
+        * on (pool_id) group_left(pool)
+          label_replace(ceph_pool_metadata{name=~"$ceph_pool_regex"}, "pool", "$1", "name", "(.*)")
       )
     storage_ceph_pool_iops_by_pool: >-
       sum by (pool, direction) (
-        label_replace(rate(ceph_pool_rd{pool=~"$ceph_pool_regex"}[5m]), "direction", "read", "__name__", ".*")
-        or label_replace(rate(ceph_pool_wr{pool=~"$ceph_pool_regex"}[5m]), "direction", "write", "__name__", ".*")
+        (
+          label_replace(rate(ceph_pool_rd[5m]), "direction", "read", "__name__", ".*")
+          or label_replace(rate(ceph_pool_wr[5m]), "direction", "write", "__name__", ".*")
+        )
+        * on (pool_id) group_left(pool)
+          label_replace(ceph_pool_metadata{name=~"$ceph_pool_regex"}, "pool", "$1", "name", "(.*)")
       )
     storage_ceph_osd_op_latency_seconds_by_daemon: >-
       (
