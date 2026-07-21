@@ -22,6 +22,12 @@ spec:
     - name: MLFLOW_RUN_ID
       type: string
       default: ""
+    - name: BENCHMARK_START_TIME
+      type: string
+      default: ""
+    - name: BENCHMARK_END_TIME
+      type: string
+      default: ""
   workspaces:
     - name: artifacts
       description: Workspace to save collected artifacts
@@ -92,5 +98,9 @@ spec:
         - $(workspaces.artifacts.path)
         - --execution-name
         - $(params.PIPELINE_RUN_NAME)
+        - --benchmark-start-time
+        - $(params.BENCHMARK_START_TIME)
+        - --benchmark-end-time
+        - $(params.BENCHMARK_END_TIME)
         - --mlflow-run-id
         - $(params.MLFLOW_RUN_ID)

@@ -652,6 +652,14 @@ When artifact collection runs, BenchFlow also captures per-pod storage
 offloading directory size logs under `logs/storage-offloading/` so you can
 confirm the offload directory is actually being populated.
 
+For a runtime PVC using a `*cephfs*` storage class, BenchFlow additionally
+captures benchmark-window diagnostics under `logs/cephfs/`: Rook MDS and OSD
+logs, CephFS CSI node-plugin logs on model-server nodes, plus CephCluster,
+CephFilesystem, and event snapshots under `platform-state/cephfs/`. This path
+requires `bflow bootstrap` to apply its read-only `rook-ceph` diagnostics RBAC.
+Host kernel and kubelet logs are intentionally not collected because they
+require privileged node access.
+
 `hostPath` is only appropriate for single-node or otherwise deliberately
 node-local experiments. If replicas land on different nodes, each node gets its
 own isolated hostPath contents.

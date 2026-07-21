@@ -13,6 +13,35 @@ from .storage_offloading import storage_offloading_config
 from .ui import detail, step, success
 
 RHOAI_PROFILER_OUTPUT_DIR = "/tmp/benchflow-profiler"
+ROOK_CEPH_NAMESPACE = "rook-ceph"
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _uses_cephfs_runtime(plan: ResolvedRunPlan) -> bool:
+    return any(
+        "cephfs" in str(pvc_mount.storage_class_name or "").lower()
+        for pvc_mount in plan.deployment.runtime.pvc_mounts
+    )
+
+
+def _filter_timestamped_logs(logs: str, end_time: datetime) -> str:
+    lines: list[str] = []
+    include_line = True
+    for line in logs.splitlines(keepends=True):
+        timestamp = _parse_timestamp(line.split(maxsplit=1)[0])
+        if timestamp is not None:
+            include_line = timestamp <= end_time
+        if include_line:
+            lines.append(line)
+    return "".join(lines)
 
 
 def _release_token_matches(candidate: str, release_name: str) -> bool:
@@ -118,6 +147,7 @@ def _ensure_artifact_layout(artifacts_dir: Path) -> None:
         "logs/gaie",
         "logs/infra",
         "logs/storage-offloading",
+        "logs/cephfs",
         "manifests",
         "platform-state",
         "profiling",
@@ -217,6 +247,192 @@ def _collect_platform_state(
         ):
             snapshot_count += 1
     return snapshot_count
+
+
+def _collect_cephfs_pod_logs(
+    kubectl_cmd: str,
+    pod: dict[str, object],
+    log_dir: Path,
+    *,
+    benchmark_start_time: str,
+    benchmark_end_time: datetime,
+) -> tuple[int, list[str]]:
+    metadata = pod.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return 0, []
+    pod_name = str(metadata.get("name") or "")
+    if not pod_name:
+        return 0, []
+
+    collected = 0
+    failures: list[str] = []
+    for container in _pod_container_names(pod):
+        result = run_command(
+            [
+                kubectl_cmd,
+                "logs",
+                pod_name,
+                "-c",
+                container,
+                "-n",
+                ROOK_CEPH_NAMESPACE,
+                "--since-time",
+                benchmark_start_time,
+                "--timestamps=true",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        output = result.stdout or result.stderr or ""
+        if result.returncode != 0:
+            failures.append(
+                f"{pod_name}/{container}: {output.strip() or 'log request failed'}"
+            )
+            continue
+        output = _filter_timestamped_logs(output, benchmark_end_time)
+        if not output.strip():
+            continue
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / f"{pod_name}_{container}.log").write_text(
+            output,
+            encoding="utf-8",
+        )
+        collected += 1
+    return collected, failures
+
+
+def _collect_cephfs_diagnostics(
+    kubectl_cmd: str,
+    plan: ResolvedRunPlan,
+    artifacts_dir: Path,
+    *,
+    benchmark_start_time: str,
+    benchmark_end_time: str,
+    workload_nodes: set[str],
+) -> dict[str, object]:
+    start_time = _parse_timestamp(benchmark_start_time)
+    end_time = _parse_timestamp(benchmark_end_time)
+    result: dict[str, object] = {
+        "enabled": _uses_cephfs_runtime(plan),
+        "namespace": ROOK_CEPH_NAMESPACE,
+        "benchmark_start_time": benchmark_start_time,
+        "benchmark_end_time": benchmark_end_time,
+        "workload_nodes": sorted(workload_nodes),
+        "log_files": 0,
+        "state_files": 0,
+        "failures": [],
+    }
+    if not result["enabled"]:
+        return result
+    if start_time is None or end_time is None or end_time < start_time:
+        result["failures"] = [
+            "CephFS diagnostics require valid benchmark start and end timestamps"
+        ]
+        return result
+
+    state_dir = artifacts_dir / "platform-state" / "cephfs"
+    state_files = 0
+    for name, command in (
+        (
+            "cephclusters",
+            [
+                "get",
+                "cephclusters.ceph.rook.io",
+                "-n",
+                ROOK_CEPH_NAMESPACE,
+                "-o",
+                "yaml",
+            ],
+        ),
+        (
+            "cephfilesystems",
+            [
+                "get",
+                "cephfilesystems.ceph.rook.io",
+                "-n",
+                ROOK_CEPH_NAMESPACE,
+                "-o",
+                "yaml",
+            ],
+        ),
+        (
+            "events",
+            ["get", "events", "-n", ROOK_CEPH_NAMESPACE, "--sort-by=.lastTimestamp"],
+        ),
+    ):
+        if _write_command_snapshot(kubectl_cmd, state_dir, name, command):
+            state_files += 1
+    result["state_files"] = state_files
+
+    pods_result = run_command(
+        [kubectl_cmd, "get", "pods", "-n", ROOK_CEPH_NAMESPACE, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if pods_result.returncode != 0 or not pods_result.stdout.strip():
+        result["failures"] = [
+            str(
+                pods_result.stderr
+                or pods_result.stdout
+                or "unable to list Rook Ceph pods"
+            ).strip()
+        ]
+        return result
+    try:
+        pods = json.loads(pods_result.stdout).get("items") or []
+    except json.JSONDecodeError:
+        result["failures"] = ["Rook Ceph pod list was not valid JSON"]
+        return result
+
+    selected: dict[str, list[dict[str, object]]] = {"mds": [], "osd": [], "csi": []}
+    for pod in pods:
+        if not isinstance(pod, dict):
+            continue
+        metadata = pod.get("metadata") or {}
+        spec = pod.get("spec") or {}
+        if not isinstance(metadata, dict) or not isinstance(spec, dict):
+            continue
+        name = str(metadata.get("name") or "")
+        node_name = str(spec.get("nodeName") or "")
+        if name.startswith("rook-ceph-mds-"):
+            selected["mds"].append(pod)
+        elif name.startswith("rook-ceph-osd-") and "-prepare-" not in name:
+            selected["osd"].append(pod)
+        elif (
+            name.startswith("rook-ceph.cephfs.csi.ceph.com-nodeplugin-")
+            and node_name in workload_nodes
+        ):
+            selected["csi"].append(pod)
+
+    failures: list[str] = []
+    log_files = 0
+    for component, component_pods in selected.items():
+        for pod in component_pods:
+            collected, pod_failures = _collect_cephfs_pod_logs(
+                kubectl_cmd,
+                pod,
+                artifacts_dir / "logs" / "cephfs" / component,
+                benchmark_start_time=benchmark_start_time,
+                benchmark_end_time=end_time,
+            )
+            log_files += collected
+            failures.extend(pod_failures)
+    result["log_files"] = log_files
+    result["failures"] = failures
+    result["pods"] = {
+        component: sorted(
+            str((pod.get("metadata") or {}).get("name") or "") for pod in component_pods
+        )
+        for component, component_pods in selected.items()
+    }
+    diagnostics_path = artifacts_dir / "logs" / "cephfs" / "diagnostics.json"
+    diagnostics_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    detail(
+        f"Collected {log_files} CephFS diagnostic log file(s) from "
+        f"{len(selected['mds'])} MDS, {len(selected['osd'])} OSD, and "
+        f"{len(selected['csi'])} CSI pod(s)"
+    )
+    return result
 
 
 def _collect_storage_offloading_dir_size(
@@ -381,6 +597,8 @@ def collect_artifacts(
     *,
     artifacts_dir: Path,
     execution_name: str = "",
+    benchmark_start_time: str = "",
+    benchmark_end_time: str = "",
     include_execution_logs: bool = True,
     include_workload: bool = True,
     include_manifests: bool = True,
@@ -440,7 +658,9 @@ def collect_artifacts(
     gaie_count = 0
     infra_count = 0
     model_pod_names: list[str] = []
+    model_pod_nodes: set[str] = set()
     storage_offloading_log_count = 0
+    cephfs_diagnostics: dict[str, object] = {"enabled": False}
     storage_offloading = storage_offloading_config(plan)
     if include_workload:
         payload = run_json_command(
@@ -458,6 +678,11 @@ def collect_artifacts(
             pod_type = _pod_type(pod_name)
             if pod_type == "model":
                 model_pod_names.append(pod_name)
+                spec = item.get("spec") or {}
+                if isinstance(spec, dict):
+                    node_name = str(spec.get("nodeName") or "").strip()
+                    if node_name:
+                        model_pod_nodes.add(node_name)
             if _collect_pod_logs(
                 kubectl_cmd, namespace, pod_name, artifacts_dir / "logs" / pod_type
             ):
@@ -488,6 +713,14 @@ def collect_artifacts(
                 "Collected storage offloading directory size logs from "
                 f"{storage_offloading_log_count} model pod(s)"
             )
+        cephfs_diagnostics = _collect_cephfs_diagnostics(
+            kubectl_cmd,
+            plan,
+            artifacts_dir,
+            benchmark_start_time=benchmark_start_time,
+            benchmark_end_time=benchmark_end_time,
+            workload_nodes=model_pod_nodes,
+        )
 
     profiling_pods: list[str] = []
     profiling_file_count = 0
@@ -622,6 +855,7 @@ def collect_artifacts(
         "profiling_pods": profiling_pods,
         "profiling_files": profiling_file_count,
         "storage_offloading_logs": storage_offloading_log_count,
+        "cephfs_diagnostics": cephfs_diagnostics,
         "manifest_files": manifest_count,
         "platform_state_files": platform_state_count,
         "timestamp": datetime.now(timezone.utc)

@@ -820,6 +820,8 @@ def cmd_artifacts_collect(args: argparse.Namespace) -> int:
             artifacts_dir=args.artifacts_dir,
         ),
         mlflow_run_id=args.mlflow_run_id or "",
+        benchmark_start_time=args.benchmark_start_time or "",
+        benchmark_end_time=args.benchmark_end_time or "",
     )
     if args.upload_direct_to_mlflow and args.mlflow_run_id:
         upload_artifact_directory(
@@ -910,6 +912,8 @@ def cmd_mlflow_init(args: argparse.Namespace) -> int:
 def cmd_mlflow_finalize(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
     artifacts_dir = Path(args.artifacts_dir).resolve()
+    benchmark_start_time = args.benchmark_start_time or args.run_start_time or ""
+    benchmark_end_time = args.benchmark_end_time or args.run_end_time or _utc_now()
     if args.collect_artifacts:
         collect_plan_artifacts(
             plan,
@@ -918,12 +922,14 @@ def cmd_mlflow_finalize(args: argparse.Namespace) -> int:
                 artifacts_dir=artifacts_dir,
             ),
             mlflow_run_id=args.mlflow_run_id or "",
+            benchmark_start_time=benchmark_start_time,
+            benchmark_end_time=benchmark_end_time,
         )
     upload_plan_results(
         plan,
         mlflow_run_id=args.mlflow_run_id,
-        benchmark_start_time=args.benchmark_start_time or args.run_start_time or "",
-        benchmark_end_time=args.benchmark_end_time or args.run_end_time or _utc_now(),
+        benchmark_start_time=benchmark_start_time,
+        benchmark_end_time=benchmark_end_time,
         context=_execution_context(artifacts_dir=artifacts_dir),
         grafana_url=args.grafana_url or "",
     )
@@ -1915,6 +1921,14 @@ def artifacts_group() -> None:
 @click.option(
     "--execution-name",
     help="Execution name to collect artifacts from.",
+)
+@click.option(
+    "--benchmark-start-time",
+    help="Benchmark start time in ISO-8601 format for windowed diagnostics.",
+)
+@click.option(
+    "--benchmark-end-time",
+    help="Benchmark end time in ISO-8601 format for windowed diagnostics.",
 )
 @click.option(
     "--mlflow-run-id",

@@ -198,6 +198,10 @@ spec:
           value: "$(context.pipelineRun.name)"
         - name: MLFLOW_RUN_ID
           value: "$(tasks.init-mlflow-run.results.mlflow-run-id)"
+        - name: BENCHMARK_START_TIME
+          value: "$(tasks.benchmark.results.benchmark-start-time)"
+        - name: BENCHMARK_END_TIME
+          value: "$(tasks.benchmark.results.benchmark-end-time)"
       workspaces:
         - name: artifacts
           workspace: results

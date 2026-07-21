@@ -321,6 +321,17 @@ def apply_runner_rbac(installer: Any) -> None:
         detail(
             "Skipping istio-system runner RBAC because namespace istio-system does not exist"
         )
+    if installer._resource_exists("get", "namespace", "rook-ceph"):
+        installer._apply_asset_documents(
+            "rbac/runner-rook-ceph-diagnostics.yaml",
+            namespace=None,
+            description="applying rook-ceph diagnostics RBAC",
+            variables=installer._base_asset_variables(),
+        )
+    else:
+        detail(
+            "Skipping rook-ceph diagnostics RBAC because namespace rook-ceph does not exist"
+        )
     installer._apply_asset_documents(
         "rbac/runner-cluster.yaml",
         namespace=None,

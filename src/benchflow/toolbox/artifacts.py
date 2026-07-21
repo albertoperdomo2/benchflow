@@ -38,6 +38,8 @@ def collect_plan_artifacts(
     *,
     context: ExecutionContext,
     mlflow_run_id: str = "",
+    benchmark_start_time: str = "",
+    benchmark_end_time: str = "",
 ) -> Path:
     if context.artifacts_dir is None:
         raise ValidationError("artifacts collection requires an artifacts directory")
@@ -57,6 +59,16 @@ def collect_plan_artifacts(
                 "collect",
                 "--run-plan-json",
                 remote_run_plan_json(plan),
+                *(
+                    ["--benchmark-start-time", benchmark_start_time]
+                    if benchmark_start_time
+                    else []
+                ),
+                *(
+                    ["--benchmark-end-time", benchmark_end_time]
+                    if benchmark_end_time
+                    else []
+                ),
                 "--artifacts-dir",
                 remote_job_artifacts_dir(job_name),
             ],
@@ -86,9 +98,13 @@ def collect_plan_artifacts(
             include_execution_logs=True,
             include_workload=False,
             include_manifests=False,
+            benchmark_start_time=benchmark_start_time,
+            benchmark_end_time=benchmark_end_time,
         )
     return collect_artifacts(
         plan,
         artifacts_dir=context.artifacts_dir,
         execution_name=context.execution_name,
+        benchmark_start_time=benchmark_start_time,
+        benchmark_end_time=benchmark_end_time,
     )
