@@ -58,7 +58,9 @@ def _append_affinity_terms(
 def _runtime_affinity(plan: ResolvedRunPlan) -> dict[str, Any]:
     affinity = deepcopy(plan.deployment.runtime.affinity)
     placement = plan.deployment.runtime.placement
-    if placement.mode not in {"same-node", "sequential"}:
+    # Sequential controls matrix submission order in the orchestration layer.
+    # It must not constrain unrelated matrices at pod scheduling time.
+    if placement.mode != "same-node":
         return affinity
 
     # LLMInferenceService exposes only a PodSpec template, not PodTemplate metadata,
@@ -89,11 +91,7 @@ def _runtime_affinity(plan: ResolvedRunPlan) -> dict[str, Any]:
         "requiredDuringSchedulingIgnoredDuringExecution",
         [
             {
-                "topologyKey": (
-                    "kubernetes.io/os"
-                    if placement.mode == "sequential"
-                    else "kubernetes.io/hostname"
-                ),
+                "topologyKey": "kubernetes.io/hostname",
                 "labelSelector": {
                     "matchLabels": workload_selector,
                 },
