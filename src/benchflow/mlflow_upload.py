@@ -47,8 +47,8 @@ def _initial_run_tags(
         {
             "benchmark_tool": plan.benchmark.tool,
             "benchflow.run_initialized": "true",
-            "deployment_profile": plan.deployment.profile,
-            "deployment_type": plan.deployment.type,
+            "deployment_profile": plan.profiles.deployment,
+            "deployment_type": f"{plan.deployment.platform}-{plan.deployment.mode}",
             "model": plan.model.name,
             "version": plan.mlflow.version,
         }
