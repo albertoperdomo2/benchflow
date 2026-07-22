@@ -51,6 +51,10 @@ def _initial_run_tags(
             "deployment_type": f"{plan.deployment.platform}-{plan.deployment.mode}",
             "model": plan.model.name,
             "version": plan.mlflow.version,
+            # MlflowClient.create_run does not add these system tags like
+            # mlflow.start_run does, leaving the UI Source column empty.
+            "mlflow.source.name": "bflow",
+            "mlflow.source.type": "LOCAL",
         }
     )
     if execution_name:
