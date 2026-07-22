@@ -464,6 +464,7 @@ Override semantics:
 - matrix children are submitted as independent child executions
 - `rhoai` and `llm-d` child executions can be admitted in parallel when target-cluster GPU capacity allows it
 - `runtime.placement.mode: sequential` makes the matrix supervisor wait for each child execution before submitting the next; it does not add pod affinity, so separate matrices can use different available nodes concurrently
+- a failed or rejected child does not stop later matrix children; after every child has been attempted, the parent reports an aggregate failure if any child did not submit or complete successfully
 - use `runtime.affinity`, `runtime.node_selector`, and `runtime.tolerations` when a matrix child needs a particular node or hardware class
 
 Target-cluster semantics:

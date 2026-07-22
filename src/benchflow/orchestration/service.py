@@ -507,7 +507,13 @@ def run_matrix_supervisor(
                     }
                 )
                 spec["params"] = params
-            name = submit_execution_manifest(manifest, plan.deployment.namespace)
+            try:
+                name = submit_execution_manifest(manifest, plan.deployment.namespace)
+            except Exception as exc:  # noqa: BLE001 - one failed child must not abort a matrix.
+                failure = f"[{index}/{total}] {descriptor}: submission failed ({exc})"
+                failures.append(failure)
+                warning(failure)
+                continue
             submitted[name] = descriptor
             detail(f"Queued execution {name} in namespace {plan.deployment.namespace}")
             if not submit_children_in_parallel:
@@ -527,9 +533,7 @@ def run_matrix_supervisor(
         )
 
     if failures:
-        raise ValidationError(
-            f"{len(failures)} matrix child run(s) failed: {', '.join(failures)}"
-        )
+        raise ValidationError("matrix child execution failures: " + "; ".join(failures))
 
     success(f"Matrix supervisor completed {total} child execution(s)")
     return failures
