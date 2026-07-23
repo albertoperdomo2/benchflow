@@ -42,7 +42,7 @@ spec:
     vllm_args:
       - --max-model-len=8192
       # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":103079215104,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":68719476736,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching

@@ -16,6 +16,7 @@ spec:
     tensor_parallelism: 2
     env:
       USER: benchflow
+    shared_memory_size: 200Gi
     vllm_args:
       - --max-model-len=8192
       - --trust-remote-code

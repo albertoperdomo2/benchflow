@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: rhoai-cpu-kv-offload-64g
+  name: rhoai-cpu-kv-offload-32g
 spec:
   platform: rhoai
   mode: distributed-default
@@ -16,10 +16,9 @@ spec:
     tensor_parallelism: 2
     env:
       USER: benchflow
-    shared_memory_size: 200Gi
     vllm_args:
       - --max-model-len=8192
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":68719476736}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":34359738368}}
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching

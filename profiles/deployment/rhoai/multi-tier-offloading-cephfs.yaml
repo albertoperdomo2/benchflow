@@ -22,7 +22,7 @@ spec:
       PYTHONHASHSEED: "0"
     # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
     # larger than cpu_bytes_to_use below, plus some headroom.
-    shared_memory_size: 128Gi
+    shared_memory_size: 200Gi
     pvc_mounts:
       # BenchFlow creates this RWX CephFS PVC before deploying the model server
       # and deletes it during cleanup because filesystem-tier cache files persist
