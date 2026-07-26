@@ -302,6 +302,36 @@ def apply_gpu_metrics_monitoring(installer: Any) -> None:
     )
 
 
+def apply_rook_ceph_metrics_monitoring(installer: Any) -> None:
+    if not installer._resource_exists(
+        "get", "crd", "servicemonitors.monitoring.coreos.com"
+    ):
+        detail(
+            "Skipping Rook-Ceph ServiceMonitor because ServiceMonitor CRD is unavailable"
+        )
+        return
+    if not installer._resource_exists("get", "namespace", "rook-ceph"):
+        detail(
+            "Skipping Rook-Ceph ServiceMonitor because namespace rook-ceph does not exist"
+        )
+        return
+    if not installer._resource_exists(
+        "get", "service", "rook-ceph-mgr", "-n", "rook-ceph"
+    ):
+        detail(
+            "Skipping Rook-Ceph ServiceMonitor because service/rook-ceph-mgr does not exist"
+        )
+        return
+
+    step("Applying Rook-Ceph metrics ServiceMonitor")
+    installer._apply_asset_documents(
+        "monitoring/rook-ceph-mgr-servicemonitor.yaml",
+        namespace=None,
+        description="applying Rook-Ceph metrics ServiceMonitor",
+        variables=installer._base_asset_variables(),
+    )
+
+
 def apply_runner_rbac(installer: Any) -> None:
     step("Applying runner RBAC")
     installer._apply_asset_documents(
@@ -363,6 +393,7 @@ def apply_namespaced_resources(installer: Any) -> None:
     apply_cluster_monitoring_rbac(installer)
     apply_cluster_monitoring_config(installer)
     apply_gpu_metrics_monitoring(installer)
+    apply_rook_ceph_metrics_monitoring(installer)
     apply_workspace_pvcs(installer)
     if installer.options.install_tekton:
         apply_manifest_tree(

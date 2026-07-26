@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: benchflow-rook-ceph-mgr
+  namespace: rook-ceph
+  labels:
+    app.kubernetes.io/name: benchflow
+    benchflow.io/purpose: cephfs-metrics
+spec:
+  endpoints:
+    - path: /metrics
+      port: http-metrics
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - rook-ceph
+  selector:
+    matchLabels:
+      app: rook-ceph-mgr
