@@ -893,6 +893,12 @@ def _pipeline_run_finished(payload: dict[str, Any] | None) -> bool:
     return False
 
 
+def _workload_has_quota_reservation(workload: dict[str, Any]) -> bool:
+    """Return whether Kueue has reserved quota for a workload."""
+    status = workload.get("status", {}) or {}
+    return bool(status.get("admission"))
+
+
 def _create_execution_from_workload(namespace: str, workload: dict[str, Any]) -> None:
     execution_name = _workload_execution_name(workload)
     if not execution_name:
@@ -1073,26 +1079,24 @@ def _workload_creation_key(workload: dict[str, Any]) -> tuple[str, str]:
 
 
 def _cluster_active_setup_key(workloads: list[dict[str, Any]]) -> tuple[str, str]:
-    admitted_workloads = [
-        workload
-        for workload in workloads
-        if (workload.get("status", {}) or {}).get("admission")
+    reserved_workloads = [
+        workload for workload in workloads if _workload_has_quota_reservation(workload)
     ]
-    if not admitted_workloads:
+    if not reserved_workloads:
         return "", ""
-    active_keys = {_workload_setup_key(workload) for workload in admitted_workloads}
+    active_keys = {_workload_setup_key(workload) for workload in reserved_workloads}
     non_empty_keys = {key for key in active_keys if key}
     if not non_empty_keys:
         return "<unspecified>", ""
     if "" in active_keys:
         return (
             "",
-            "cluster has admitted workloads with mixed known and unknown setup keys",
+            "cluster has quota-reserved workloads with mixed known and unknown setup keys",
         )
     if len(non_empty_keys) == 1:
         return next(iter(non_empty_keys)), ""
     keys = ", ".join(sorted(non_empty_keys))
-    return "", f"cluster has mixed admitted setup keys: {keys}"
+    return "", f"cluster has mixed quota-reserved setup keys: {keys}"
 
 
 def _kubeconfig_path_for_secret(namespace: str, secret_name: str) -> Path:
@@ -1143,8 +1147,22 @@ def run_remote_capacity_controller(
                         delete_reservation_workload(namespace, workload_name)
                         continue
 
-                status = workload.get("status", {}) or {}
-                if status.get("admission"):
+                    if payload is None:
+                        configmap_name = _workload_submission_configmap_name(workload)
+                        if (
+                            not configmap_name
+                            or _submission_configmap_payload(namespace, configmap_name)
+                            is None
+                        ):
+                            warning(
+                                "Releasing orphaned Kueue reservation "
+                                f"{workload_name}: PipelineRun {execution_name} and its "
+                                "submission ConfigMap are both absent"
+                            )
+                            delete_reservation_workload(namespace, workload_name)
+                            continue
+
+                if _workload_has_quota_reservation(workload):
                     if execution_name and payload is None:
                         try:
                             _create_execution_from_workload(namespace, workload)
@@ -1167,7 +1185,7 @@ def run_remote_capacity_controller(
                     for workload in sorted(
                         cluster_workloads, key=_workload_creation_key
                     )
-                    if not (workload.get("status", {}) or {}).get("admission")
+                    if not _workload_has_quota_reservation(workload)
                 ]
                 if not pending:
                     continue
