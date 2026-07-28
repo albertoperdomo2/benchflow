@@ -1820,6 +1820,16 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
     template_labels.update(render_labels)
 
     pod_spec = template.setdefault("spec", {})
+    runtime = plan.deployment.runtime
+    # The renderer mounts the same model PVC as the model servers. Keep it on
+    # the selected runtime nodes so it does not land on an unrelated worker
+    # with a different storage-plugin state.
+    if runtime.node_selector:
+        pod_spec["nodeSelector"] = dict(runtime.node_selector)
+    if runtime.affinity:
+        pod_spec["affinity"] = dict(runtime.affinity)
+    if runtime.tolerations:
+        pod_spec["tolerations"] = list(runtime.tolerations)
     for container in pod_spec.get("containers", []) or []:
         if str(container.get("name") or "") != "vllm-render":
             continue
