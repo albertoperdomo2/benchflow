@@ -24,6 +24,7 @@ spec:
       refs:
         - name: {{ rhoai_gateway_ref.name | tojson }}
           namespace: {{ rhoai_gateway_ref.namespace | tojson }}
+          sectionName: {{ rhoai_gateway_ref.sectionName | tojson }}
 {% if not custom_scheduler_enabled %}
     scheduler: {}
 {% else %}
