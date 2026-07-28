@@ -951,22 +951,20 @@ def setup_rhoai(
         timeout_seconds=900,
         label=f"GatewayClass {RHOAI_GATEWAYCLASS_NAME}",
     )
+    gateway_document = render_yaml_documents(
+        "setup/rhoai/gateway.yaml",
+        {
+            "HOSTNAME": _infer_rhoai_gateway_hostname(kubectl_cmd),
+            "TLS_SECRET_NAME": _rhoai_gateway_tls_secret_name(kubectl_cmd),
+        },
+    )[0]
     if _gateway_exists(kubectl_cmd):
-        # Release-scoped listeners are appended atomically during deployment.
-        # Applying the bootstrap manifest here would erase active releases.
-        step("Reusing the RHOAI Gateway")
+        step("Reconciling the RHOAI Gateway")
     else:
         step("Creating the RHOAI Gateway")
         state["gateway_managed"] = True
         _persist_state(state, state_path)
-        gateway_document = render_yaml_documents(
-            "setup/rhoai/gateway.yaml",
-            {
-                "HOSTNAME": _infer_rhoai_gateway_hostname(kubectl_cmd),
-                "TLS_SECRET_NAME": _rhoai_gateway_tls_secret_name(kubectl_cmd),
-            },
-        )[0]
-        _apply_documents(kubectl_cmd, [gateway_document])
+    _apply_documents(kubectl_cmd, [gateway_document])
 
     step("Waiting for the RHOAI Gateway to become ready")
     _wait_for_gateway_ready(

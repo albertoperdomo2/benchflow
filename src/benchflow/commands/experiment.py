@@ -29,7 +29,7 @@ from ..orchestration import (
 from ..renderers.deployment import write_deployment_assets
 from ..rhoai_gateway import (
     load_rhoai_gateway_configuration,
-    render_rhoai_release_gateway_listener_patch,
+    render_rhoai_release_gateway,
 )
 from ..ui import detail, step, success
 from .shared import (
@@ -154,7 +154,7 @@ def cmd_render_pipelinerun(args: argparse.Namespace) -> int:
 def cmd_render_deployment(args: argparse.Namespace) -> int:
     plan = load_plan(args)
     output_dir = Path(args.output_dir).resolve()
-    rhoai_gateway_listener_patch = None
+    rhoai_release_gateway = None
     if (
         plan.deployment.platform == "rhoai"
         and plan.deployment.target.resource_kind != "InferenceService"
@@ -163,18 +163,16 @@ def cmd_render_deployment(args: argparse.Namespace) -> int:
             raise CommandError(
                 "render-deployment for a remote RHOAI LLMInferenceService requires "
                 "--target-kubeconfig so BenchFlow can render and validate its "
-                "release-scoped Gateway listener patch."
+                "release-scoped Gateway."
             )
         with use_kubeconfig(plan.target_cluster.kubeconfig):
             kubectl_cmd = require_any_command("oc", "kubectl")
             config = load_rhoai_gateway_configuration(kubectl_cmd)
-            rhoai_gateway_listener_patch = render_rhoai_release_gateway_listener_patch(
-                plan, config
-            )
+            rhoai_release_gateway = render_rhoai_release_gateway(plan, config)
     written = write_deployment_assets(
         plan,
         output_dir,
-        rhoai_gateway_listener_patch=rhoai_gateway_listener_patch,
+        rhoai_release_gateway=rhoai_release_gateway,
     )
     for path in written:
         print(path)

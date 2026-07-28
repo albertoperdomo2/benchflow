@@ -20,32 +20,28 @@ another user can submit an independent experiment at the same time.
 ## Design
 
 Every BenchFlow RHOAI `LLMInferenceService` release creates and owns one
-listener section on the bootstrap-managed `openshift-ai-inference` Gateway in
-`openshift-ingress`:
+Gateway in `openshift-ingress`:
 
-- The listener name is deterministic from the deployment namespace and release
-  name, with a hash to avoid collisions between namespaces.
-- It copies the working HTTPS listener's TLS and route policy but omits its
-  hostname. Gateway API rejects two listeners with the same hostname, port,
-  and protocol, while a hostname-less listener is a valid distinct section.
-- The `LLMInferenceService` explicitly sets
-  `spec.router.gateway.refs[0].sectionName` to that listener. It never relies
-  on an empty `router.gateway` default.
-- Listener creation uses an atomic JSON Patch append. Cleanup performs a JSON
-  Patch name test before removing the indexed listener, so concurrent releases
-  cannot replace or remove each other's sections.
-- Bootstrap reuses an existing Gateway rather than applying its single-listener
-  manifest again, which preserves active BenchFlow listener sections.
+- The Gateway name is a compact deterministic hash of the deployment namespace
+  and release name, avoiding collisions and keeping Istio-derived Deployment
+  labels below Kubernetes' 63-character label limit.
+- Its GatewayClass, Istio revision label, HTTPS listener, hostname, TLS
+  reference, and allowed-routes policy are copied from the bootstrap-managed
+  `openshift-ai-inference` Gateway.
+- The `LLMInferenceService` explicitly uses
+  `spec.router.gateway.refs[0]` for this Gateway. It never relies on an empty
+  `router.gateway` default.
 
-Diadochos cannot use a separate Gateway object for this purpose. Its OpenShift
-GatewayClass accepts the object but does not provision the required load
-balancer Service, leaving it `Programmed=False` with `ServiceNotFound` and
-`AddressNotUsable`. A listener section on the existing programmed Gateway was
-accepted and programmed immediately, while continuing to use its working load
-balancer, DNS, and TLS configuration.
+The isolation boundary is the release-scoped Gateway object and its listener,
+not the external hostname. This follows the documented RHOAI workaround for
+INFERENG-6962 while preserving the existing endpoint, DNS, and TLS path.
 
-The isolation boundary is the release-scoped listener section, not the external
-hostname. It introduces no new DNS or TLS infrastructure.
+Diadochos initially made this look unsupported because the first generated
+Gateway names were too long. Istio derives a Deployment label from
+`<gateway>-<class>`; the derived label exceeded 63 characters, preventing the
+controller from creating its Deployment and Service. The resulting Gateway
+status was `Programmed=False` with `ServiceNotFound` and `AddressNotUsable`.
+Compact release Gateway names correct that controller failure.
 
 This applies to all BenchFlow RHOAI `LLMInferenceService` modes, including
 default, approximate-prefix-cache, and precise-prefix-cache. It does not apply
@@ -54,16 +50,15 @@ LLMInferenceService router/EPP path.
 
 ## Lifecycle
 
-1. Bootstrap creates the shared `openshift-ai-inference` Gateway when absent;
-   otherwise it validates and reuses it without replacing active listeners.
-2. Deployment reads its working HTTPS listener, appends the release listener,
-   and waits for that listener to report `Accepted=True` and `Programmed=True`.
-3. Deployment applies the LLMInferenceService with an explicit Gateway ref and
-   `sectionName`. The listener patch and LLMInferenceService are captured as
-   artifacts.
-4. Cleanup deletes the LLMInferenceService first, then removes only its named
-   listener. It also removes that listener if the service is already absent,
-   covering partial failed runs.
+1. Bootstrap creates or reconciles the shared `openshift-ai-inference` Gateway.
+2. Deployment reads that Gateway as the trusted TLS and listener source,
+   applies its release Gateway, and waits for `Accepted=True` and
+   `Programmed=True`.
+3. Deployment applies the LLMInferenceService with an explicit Gateway ref.
+   The rendered Gateway and LLMInferenceService are captured as artifacts.
+4. Cleanup deletes the LLMInferenceService first, then its release Gateway. It
+   also deletes the Gateway if the service is already absent, covering partial
+   failed runs.
 
 If a release already exists but points at the shared Gateway, BenchFlow fails
 instead of silently reusing it. Clean up and redeploy that release with the
@@ -73,23 +68,23 @@ current image.
 
 - The bootstrap-managed `openshift-ai-inference` Gateway must have an HTTPS
   listener with a hostname and a local TLS Secret reference.
-- The BenchFlow runner must be allowed to get and patch the shared Gateway in
+- The BenchFlow runner must be allowed to get, create, and delete Gateways in
   `openshift-ingress`.
 
 BenchFlow fails clearly when any precondition is missing. It does not fall back
-to the shared `https` listener because that would make precise-prefix-cache
-results silently invalid.
+to the shared Gateway because that would make precise-prefix-cache results
+silently invalid.
 
 ## Verification
 
 Before accepting this path on a RHOAI/Istio combination, launch two concurrent
 precise-prefix-cache releases and verify:
 
-- each generated HTTPRoute has only its release listener parent reference;
-- the two HTTPRoutes attach to distinct listener sections;
+- each generated HTTPRoute has only its release Gateway parent reference;
+- the two HTTPRoutes attach to distinct Gateway objects and listeners;
 - Istio retains an `ExtProcPerRoute` override for each route;
 - EndpointPicker logs show per-request activity and prefix-cache scoring; and
-- cleanup removes only the corresponding release listener.
+- cleanup removes only the corresponding release Gateway.
 
 The RHOAI documentation supports explicit `spec.router.gateway.refs`.
 INFERENG-6962 documents the failure caused by multiple HTTPRoutes sharing one
