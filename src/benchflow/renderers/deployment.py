@@ -8,6 +8,7 @@ import yaml
 
 from ..assets import asset_text, render_jinja_text, render_jinja_yaml_document
 from ..models import ResolvedRunPlan, ValidationError, model_storage_relative_path
+from ..rhoai_gateway import rhoai_release_gateway_reference
 
 RHOAI_PROFILER_CONFIGMAP_SUFFIX = "vllm-profiler"
 RHOAI_PROFILER_MOUNT_PATH = "/home/vllm/profiler"
@@ -446,6 +447,7 @@ def _rhoai_llminferenceservice_template_context(
     context: dict[str, Any] = {
         "release_name": plan.deployment.release_name,
         "namespace": plan.deployment.namespace,
+        "rhoai_gateway_ref": rhoai_release_gateway_reference(plan),
         "labels": _base_labels(plan),
         "enable_auth": str(plan.deployment.options.get("enable_auth", False)).lower(),
         "model_name": plan.model.name,
@@ -755,7 +757,12 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
     return [deployment, service, servicemonitor]
 
 
-def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Path]:
+def write_deployment_assets(
+    plan: ResolvedRunPlan,
+    output_dir: Path,
+    *,
+    rhoai_release_gateway: dict[str, Any] | None = None,
+) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
@@ -775,6 +782,14 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
         return written
 
     if plan.deployment.platform == "rhoai":
+        if (
+            plan.deployment.target.resource_kind != "InferenceService"
+            and rhoai_release_gateway is None
+        ):
+            raise ValidationError(
+                "RHOAI LLMInferenceService rendering requires its release-scoped "
+                "Gateway manifest"
+            )
         for pvc_manifest in render_runtime_pvc_manifests(plan):
             pvc_name = str(pvc_manifest.get("metadata", {}).get("name") or "runtime")
             target = output_dir / f"pvc-{pvc_name}.yaml"
@@ -789,6 +804,13 @@ def write_deployment_assets(plan: ResolvedRunPlan, output_dir: Path) -> list[Pat
                 encoding="utf-8",
             )
             written.append(profiler_target)
+        if rhoai_release_gateway is not None:
+            gateway_target = output_dir / "rhoai-release-gateway.yaml"
+            gateway_target.write_text(
+                yaml.safe_dump(rhoai_release_gateway, sort_keys=False),
+                encoding="utf-8",
+            )
+            written.append(gateway_target)
         target = output_dir / "llminferenceservice.yaml"
         target.write_text(
             yaml.safe_dump(render_rhoai_manifest(plan), sort_keys=False),

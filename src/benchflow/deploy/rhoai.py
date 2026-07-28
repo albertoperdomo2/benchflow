@@ -12,6 +12,13 @@ from ..renderers.deployment import (
     render_rhoai_manifest,
     render_rhoai_profiler_configmap,
 )
+from ..rhoai_gateway import (
+    load_rhoai_gateway_configuration,
+    render_rhoai_release_gateway,
+    rhoai_release_gateway_name,
+    rhoai_release_gateway_reference,
+    wait_for_rhoai_gateway_ready,
+)
 from ..ui import detail, step, success
 
 _PUBLIC_ROUTE_AUTH_TIMEOUT_SECONDS = 900
@@ -49,6 +56,53 @@ def _deployment_exists(
         check=False,
     )
     return result.returncode == 0
+
+
+def _existing_llmisvc_uses_release_gateway(
+    plan: ResolvedRunPlan, kubectl_cmd: str
+) -> bool:
+    payload = run_json_command(
+        [
+            kubectl_cmd,
+            "get",
+            "llminferenceservice",
+            plan.deployment.release_name,
+            "-n",
+            plan.deployment.namespace,
+            "-o",
+            "json",
+        ]
+    )
+    gateway = ((payload.get("spec") or {}).get("router") or {}).get("gateway") or {}
+    refs = gateway.get("refs") or []
+    return rhoai_release_gateway_reference(plan) in refs
+
+
+def _ensure_release_gateway(
+    plan: ResolvedRunPlan,
+    *,
+    kubectl_cmd: str,
+    timeout_seconds: int,
+) -> dict[str, object]:
+    config = load_rhoai_gateway_configuration(kubectl_cmd)
+    manifest = render_rhoai_release_gateway(plan, config)
+    gateway_name = rhoai_release_gateway_name(plan)
+    step(
+        f"Applying isolated RHOAI Gateway {gateway_name} in {config.namespace} "
+        f"for release {plan.deployment.release_name}"
+    )
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text=yaml.safe_dump(manifest, sort_keys=False),
+    )
+    wait_for_rhoai_gateway_ready(
+        kubectl_cmd,
+        namespace=config.namespace,
+        name=gateway_name,
+        timeout_seconds=min(timeout_seconds, 900),
+    )
+    success(f"RHOAI Gateway {gateway_name} is ready")
+    return manifest
 
 
 def _profiling_enabled(plan: ResolvedRunPlan) -> bool:
@@ -292,11 +346,29 @@ def deploy_rhoai(
     if skip_if_exists and _deployment_exists(
         namespace, release_name, kubectl_cmd, resource
     ):
+        if (
+            resource_kind == "LLMInferenceService"
+            and not _existing_llmisvc_uses_release_gateway(plan, kubectl_cmd)
+        ):
+            raise CommandError(
+                f"existing LLMInferenceService {release_name} does not use its "
+                "BenchFlow release-scoped Gateway. Clean up and redeploy it rather "
+                "than silently bypassing EndpointPicker routing."
+            )
         success(f"Skipping deploy; {resource_kind} {release_name} already exists")
         return manifests_dir.resolve() if manifests_dir else Path.cwd()
 
     profiler_configmap = (
         render_rhoai_profiler_configmap(plan) if _profiling_enabled(plan) else None
+    )
+    release_gateway = (
+        _ensure_release_gateway(
+            plan,
+            kubectl_cmd=kubectl_cmd,
+            timeout_seconds=verify_timeout_seconds,
+        )
+        if resource_kind == "LLMInferenceService"
+        else None
     )
     manifests = [render_rhoai_manifest(plan)]
     if manifests_dir is not None:
@@ -314,6 +386,12 @@ def deploy_rhoai(
                 yaml.safe_dump(profiler_configmap, sort_keys=False), encoding="utf-8"
             )
             detail(f"Rendered profiler ConfigMap written to {profiler_target}")
+        if release_gateway is not None:
+            gateway_target = manifests_dir / "rhoai-release-gateway.yaml"
+            gateway_target.write_text(
+                yaml.safe_dump(release_gateway, sort_keys=False), encoding="utf-8"
+            )
+            detail(f"Rendered RHOAI Gateway manifest written to {gateway_target}")
         names = [_deployment_manifest_filename(plan)]
         for manifest, name in zip(manifests, names, strict=True):
             target = manifests_dir / name

@@ -6,7 +6,12 @@ from pathlib import Path
 
 import click
 
-from ..cluster import CommandError, get_current_namespace
+from ..cluster import (
+    CommandError,
+    get_current_namespace,
+    require_any_command,
+    use_kubeconfig,
+)
 from ..contracts import StageSpec
 from ..loaders import load_run_plan_data
 from ..orchestration import (
@@ -22,6 +27,10 @@ from ..orchestration import (
     get_execution,
 )
 from ..renderers.deployment import write_deployment_assets
+from ..rhoai_gateway import (
+    load_rhoai_gateway_configuration,
+    render_rhoai_release_gateway,
+)
 from ..ui import detail, step, success
 from .shared import (
     dump,
@@ -145,7 +154,26 @@ def cmd_render_pipelinerun(args: argparse.Namespace) -> int:
 def cmd_render_deployment(args: argparse.Namespace) -> int:
     plan = load_plan(args)
     output_dir = Path(args.output_dir).resolve()
-    written = write_deployment_assets(plan, output_dir)
+    rhoai_release_gateway = None
+    if (
+        plan.deployment.platform == "rhoai"
+        and plan.deployment.target.resource_kind != "InferenceService"
+    ):
+        if plan.target_cluster.kubeconfig_secret and not plan.target_cluster.kubeconfig:
+            raise CommandError(
+                "render-deployment for a remote RHOAI LLMInferenceService requires "
+                "--target-kubeconfig so BenchFlow can render and validate its "
+                "release-scoped Gateway."
+            )
+        with use_kubeconfig(plan.target_cluster.kubeconfig):
+            kubectl_cmd = require_any_command("oc", "kubectl")
+            config = load_rhoai_gateway_configuration(kubectl_cmd)
+            rhoai_release_gateway = render_rhoai_release_gateway(plan, config)
+    written = write_deployment_assets(
+        plan,
+        output_dir,
+        rhoai_release_gateway=rhoai_release_gateway,
+    )
     for path in written:
         print(path)
     return 0
