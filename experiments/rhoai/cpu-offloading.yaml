@@ -22,41 +22,38 @@ spec:
     # - cpu-offloading-long-context
   model_overrides:
     deepseek-ai/DeepSeek-V4-Flash:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
       runtime:
         vllm_extra_args:
           - --kv-cache-dtype=fp8
-          - --gpu-memory-utilization=0.7
-      scale:
-        tensor_parallelism: 8
-    openai/gpt-oss-120b:
-      # benchmark:
-        # request_type: /v1/completions
-      runtime:
-        vllm_extra_args:
-          - --gpu-memory-utilization=0.6
+          - --gpu-memory-utilization=0.85
     nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8:
       scale:
         tensor_parallelism: 4
+        replicas: 1
       runtime:
         vllm_extra_args:
-          - --gpu-memory-utilization=0.6
+          - --gpu-memory-utilization=0.85
     Qwen/Qwen3.6-35B-A3B:
       scale:
         tensor_parallelism: 2
         replicas: 1
       runtime:
         vllm_extra_args:
-          - --gpu-memory-utilization=0.55
-          - --max-num-seqs=480
+          - --gpu-memory-utilization=0.85
+          - --max-num-seqs=256
     google/gemma-4-31B:
-      # benchmark:
-        # request_type: /v1/completions
+      scale:
+        tensor_parallelism: 2
+        replicas: 1
       runtime:
         vllm_extra_args:
-          - --gpu-memory-utilization=0.6
+          - --gpu-memory-utilization=0.85
   overrides:
     images:
-      runtime: vllm/vllm-openai:v0.23.0
+      runtime: vllm/vllm-openai:v0.23.0 # v0.25.1
     runtime:
       affinity:
         nodeAffinity:
@@ -66,16 +63,7 @@ spec:
                   - key: kubernetes.io/hostname
                     operator: In
                     values:
-                      - diadochos-hqxzk-gpu-h100-6kl5z
-        # podAffinity:
-        #   requiredDuringSchedulingIgnoredDuringExecution:
-        #     - topologyKey: kubernetes.io/hostname
-        #       labelSelector:
-        #         matchLabels:
-        #           app.kubernetes.io/part-of: llminferenceservice
-        #           kserve.io/component: workload
-        #       matchLabelKeys:
-        #         - app.kubernetes.io/name
+                      - diadochos-hqxzk-gpu-h100-fx7c8
       placement:
         mode: sequential
   metrics_profile: detailed
