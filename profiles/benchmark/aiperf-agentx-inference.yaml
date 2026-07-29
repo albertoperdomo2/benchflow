@@ -19,6 +19,8 @@ spec:
     endpoint_path: /v1/chat/completions
     streaming: true
     use_server_token_count: true
+    # Some models provide a tokenizer through custom Hugging Face code.
+    tokenizer_trust_remote_code: true
     max_context_length: 131072
     concurrency: 32
     benchmark_duration: 1800
