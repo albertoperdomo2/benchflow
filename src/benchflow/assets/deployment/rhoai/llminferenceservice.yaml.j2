@@ -20,7 +20,10 @@ spec:
   replicas: {{ replicas }}
   router:
     route: {}
-    gateway: {}
+    gateway:
+      refs:
+        - name: {{ rhoai_gateway_ref.name | tojson }}
+          namespace: {{ rhoai_gateway_ref.namespace | tojson }}
 {% if not custom_scheduler_enabled %}
     scheduler: {}
 {% else %}

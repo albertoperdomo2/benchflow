@@ -951,15 +951,13 @@ def setup_rhoai(
         timeout_seconds=900,
         label=f"GatewayClass {RHOAI_GATEWAYCLASS_NAME}",
     )
-    gateway_documents = render_yaml_documents(
+    gateway_document = render_yaml_documents(
         "setup/rhoai/gateway.yaml",
         {
             "HOSTNAME": _infer_rhoai_gateway_hostname(kubectl_cmd),
             "TLS_SECRET_NAME": _rhoai_gateway_tls_secret_name(kubectl_cmd),
         },
-    )
-    gateway_document = gateway_documents[0]
-
+    )[0]
     if _gateway_exists(kubectl_cmd):
         step("Reconciling the RHOAI Gateway")
     else:
