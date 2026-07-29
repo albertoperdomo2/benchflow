@@ -12,6 +12,11 @@ from ..renderers.deployment import (
     render_rhoai_manifest,
     render_rhoai_profiler_configmap,
 )
+from ..rhoai_mooncake import (
+    mooncake_master_name,
+    render_rhoai_mooncake_manifests,
+    rhoai_mooncake_spec,
+)
 from ..rhoai_gateway import (
     load_rhoai_gateway_configuration,
     render_rhoai_release_gateway,
@@ -117,6 +122,40 @@ def _apply_runtime_pvc_manifests(plan: ResolvedRunPlan, kubectl_cmd: str) -> Non
             [kubectl_cmd, "apply", "-f", "-"],
             input_text=yaml.safe_dump(manifest, sort_keys=False),
         )
+
+
+def _apply_mooncake_manifests(
+    plan: ResolvedRunPlan, *, kubectl_cmd: str, timeout_seconds: int
+) -> None:
+    manifests = render_rhoai_mooncake_manifests(plan)
+    if not manifests:
+        return
+    for manifest in manifests:
+        kind = str(manifest.get("kind") or "resource")
+        metadata = manifest.get("metadata") or {}
+        name = str(metadata.get("name") or "")
+        step(
+            f"Applying Mooncake {kind} {name} in namespace {plan.deployment.namespace}"
+        )
+        run_command(
+            [kubectl_cmd, "apply", "-f", "-"],
+            input_text=yaml.safe_dump(manifest, sort_keys=False),
+        )
+
+    master_name = mooncake_master_name(plan)
+    step(f"Waiting for Mooncake master Deployment {master_name} to become ready")
+    run_command(
+        [
+            kubectl_cmd,
+            "rollout",
+            "status",
+            f"deployment/{master_name}",
+            "-n",
+            plan.deployment.namespace,
+            f"--timeout={min(timeout_seconds, 900)}s",
+        ]
+    )
+    success(f"Mooncake master {master_name} is ready")
 
 
 def _status_snapshot(payload: dict[str, object]) -> tuple[bool, str, str]:
@@ -361,6 +400,7 @@ def deploy_rhoai(
     profiler_configmap = (
         render_rhoai_profiler_configmap(plan) if _profiling_enabled(plan) else None
     )
+    mooncake_manifests = render_rhoai_mooncake_manifests(plan)
     release_gateway = (
         _ensure_release_gateway(
             plan,
@@ -380,6 +420,20 @@ def deploy_rhoai(
                 yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
             )
             detail(f"Rendered runtime PVC manifest written to {pvc_target}")
+        for manifest, filename in zip(
+            mooncake_manifests,
+            (
+                "mooncake-configmap.yaml",
+                "mooncake-master-service.yaml",
+                "mooncake-master-deployment.yaml",
+            ),
+            strict=True,
+        ):
+            mooncake_target = manifests_dir / filename
+            mooncake_target.write_text(
+                yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+            )
+            detail(f"Rendered Mooncake manifest written to {mooncake_target}")
         if profiler_configmap is not None:
             profiler_target = manifests_dir / "vllm-profiler-configmap.yaml"
             profiler_target.write_text(
@@ -412,6 +466,12 @@ def deploy_rhoai(
         success(f"Applied profiler ConfigMap {configmap_name} in namespace {namespace}")
 
     _apply_runtime_pvc_manifests(plan, kubectl_cmd)
+    if rhoai_mooncake_spec(plan) is not None:
+        _apply_mooncake_manifests(
+            plan,
+            kubectl_cmd=kubectl_cmd,
+            timeout_seconds=verify_timeout_seconds,
+        )
 
     step(
         f"Applying RHOAI {plan.deployment.mode} deployment {release_name} "

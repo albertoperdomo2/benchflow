@@ -200,7 +200,7 @@ spec:
           - "--block-size=64"
           - '--kv-events-config={"enable_kv_cache_events": true, "publisher": "zmq", "endpoint": "tcp://{{ release_name }}-epp-service:5557", "topic": "kv@$(POD_IP)@$(MODEL_NAME)"}'
 {% endif %}
-{% if runtime_env or precise_prefix_cache_enabled or profiling_enabled %}
+{% if runtime_env or precise_prefix_cache_enabled or profiling_enabled or mooncake_enabled %}
         env:
 {% for entry in runtime_env %}
           - name: {{ entry.name }}
@@ -235,7 +235,7 @@ spec:
             value: "42"
 {% endif %}
 {% endif %}
-{% if runtime_shared_memory_size or runtime_host_path_mounts or runtime_pvc_mounts or profiling_enabled %}
+{% if runtime_shared_memory_size or runtime_host_path_mounts or runtime_pvc_mounts or profiling_enabled or mooncake_model_volume_mount %}
         volumeMounts:
 {% if runtime_shared_memory_size %}
           - mountPath: /dev/shm
@@ -260,8 +260,24 @@ spec:
             name: vllm-profiler
             readOnly: true
 {% endif %}
+{% if mooncake_model_volume_mount %}
+          - mountPath: {{ mooncake_model_volume_mount.mountPath | tojson }}
+            name: {{ mooncake_model_volume_mount.name | tojson }}
+            readOnly: true
 {% endif %}
-{% if runtime_shared_memory_size or runtime_host_path_volumes or runtime_pvc_volumes or profiling_enabled %}
+{% endif %}
+{% if mooncake_store_sidecar %}
+      - name: {{ mooncake_store_sidecar.name | tojson }}
+        image: {{ mooncake_store_sidecar.image | tojson }}
+        command: {{ mooncake_store_sidecar.command | tojson }}
+        args: {{ mooncake_store_sidecar.args | tojson }}
+        ports: {{ mooncake_store_sidecar.ports | tojson }}
+        env: {{ mooncake_store_sidecar.env | tojson }}
+        volumeMounts: {{ mooncake_store_sidecar.volumeMounts | tojson }}
+        lifecycle: {{ mooncake_store_sidecar.lifecycle | tojson }}
+        resources: {}
+{% endif %}
+{% if runtime_shared_memory_size or runtime_host_path_volumes or runtime_pvc_volumes or profiling_enabled or mooncake_model_volume %}
     volumes:
 {% if runtime_shared_memory_size %}
       - name: dshm
@@ -286,5 +302,10 @@ spec:
       - name: vllm-profiler
         configMap:
           name: {{ profiler_configmap_name | tojson }}
+{% endif %}
+{% if mooncake_model_volume %}
+      - name: {{ mooncake_model_volume.name | tojson }}
+        configMap:
+          name: {{ mooncake_model_volume.configMap.name | tojson }}
 {% endif %}
 {% endif %}

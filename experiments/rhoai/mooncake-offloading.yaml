@@ -1,0 +1,23 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: mooncake-offloading
+spec:
+  model:
+    name:
+      - Qwen/Qwen3-32B
+  deployment_profile:
+    - mooncake-embedded-cpu
+    - mooncake-nvme
+  benchmark_profile:
+    - cpu-offloading-short-context
+  metrics_profile: detailed
+  target:
+    endpoint_scope: internal
+  mlflow:
+    tags:
+      offload_type: mooncake
+      accelerator: H100
+  namespace: benchflow
+  execution:
+    timeout: 8h

@@ -1,0 +1,44 @@
+# Mooncake embedded DRAM offload for RHOAI. Change global_segment_size only after
+# confirming that every GPU rank has that much available host RAM; use the NVMe
+# profile instead when the Mooncake store must spill cache blocks to local disk.
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: mooncake-embedded-cpu
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0-ea.2
+  platform_channel: beta
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    image: vllm/vllm-openai:v0.26.0
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+      # All ranks sharing a Mooncake store must generate identical block hashes.
+      PYTHONHASHSEED: "0"
+    vllm_args:
+      - --max-model-len=8192
+      - --kv-transfer-config={"kv_connector":"MooncakeStoreConnector","kv_role":"kv_both"}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
+    startup_probe:
+      failureThreshold: 180
+    mooncake_store:
+      # This is host DRAM contributed by each GPU rank, not a total per pod.
+      global_segment_size: 80GB
+      local_buffer_size: 4GB
+      protocol: rdma
+      # Leave empty for Mooncake NIC auto-discovery; set a device only when needed.
+      device_name: ""
+      mode: embedded

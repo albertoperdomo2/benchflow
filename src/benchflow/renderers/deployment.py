@@ -8,6 +8,15 @@ import yaml
 
 from ..assets import asset_text, render_jinja_text, render_jinja_yaml_document
 from ..models import ResolvedRunPlan, ValidationError, model_storage_relative_path
+from ..rhoai_mooncake import (
+    mooncake_configmap_name,
+    rhoai_mooncake_model_env,
+    rhoai_mooncake_model_volume,
+    rhoai_mooncake_model_volume_mount,
+    rhoai_mooncake_spec,
+    rhoai_mooncake_store_sidecar,
+    render_rhoai_mooncake_manifests,
+)
 from ..rhoai_gateway import rhoai_release_gateway_reference
 
 RHOAI_PROFILER_CONFIGMAP_SUFFIX = "vllm-profiler"
@@ -273,10 +282,11 @@ def _rhoai_uses_isvc(plan: ResolvedRunPlan) -> bool:
 
 
 def _rhoai_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
-    return [
-        {"name": key, "value": value}
-        for key, value in sorted(plan.deployment.runtime.env.items())
-    ]
+    env = {key: value for key, value in plan.deployment.runtime.env.items()}
+    env.update(
+        {entry["name"]: entry["value"] for entry in rhoai_mooncake_model_env(plan)}
+    )
+    return [{"name": key, "value": value} for key, value in sorted(env.items())]
 
 
 def _rhoai_basic_model_path(plan: ResolvedRunPlan) -> str:
@@ -468,6 +478,11 @@ def _rhoai_llminferenceservice_template_context(
         "runtime_host_path_volumes": _runtime_host_path_volumes(plan),
         "runtime_pvc_mounts": _runtime_pvc_volume_mounts(plan),
         "runtime_pvc_volumes": _runtime_pvc_volumes(plan),
+        "mooncake_enabled": rhoai_mooncake_spec(plan) is not None,
+        "mooncake_configmap_name": mooncake_configmap_name(plan),
+        "mooncake_model_volume_mount": rhoai_mooncake_model_volume_mount(plan),
+        "mooncake_model_volume": rhoai_mooncake_model_volume(plan),
+        "mooncake_store_sidecar": rhoai_mooncake_store_sidecar(plan),
         "startup_probe_lines": _yaml_lines(_rhoai_startup_probe(plan)),
         "gpu_count": str(plan.deployment.runtime.tensor_parallelism),
         "custom_scheduler_enabled": custom_scheduler_enabled,
@@ -795,6 +810,20 @@ def write_deployment_assets(
             target = output_dir / f"pvc-{pvc_name}.yaml"
             target.write_text(
                 yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
+            )
+            written.append(target)
+        for manifest, filename in zip(
+            render_rhoai_mooncake_manifests(plan),
+            (
+                "mooncake-configmap.yaml",
+                "mooncake-master-service.yaml",
+                "mooncake-master-deployment.yaml",
+            ),
+            strict=True,
+        ):
+            target = output_dir / filename
+            target.write_text(
+                yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
             )
             written.append(target)
         if plan.execution.profiling.enabled:
