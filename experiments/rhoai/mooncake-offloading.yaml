@@ -5,19 +5,36 @@ metadata:
 spec:
   model:
     name:
-      - Qwen/Qwen3-32B
+      - google/gemma-4-31B-it
   deployment_profile:
     - mooncake-embedded-cpu
-    - mooncake-nvme
   benchmark_profile:
-    - cpu-offloading-short-context
+    - aiperf-agentx-inference
   metrics_profile: detailed
+  model_overrides:
+    google/gemma-4-31B-it:
+      scale:
+        tensor_parallelism: 2
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.55
   target:
     endpoint_scope: internal
   mlflow:
     tags:
       offload_type: mooncake
-      accelerator: H100
+  overrides:
+    runtime:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - diadochos-hqxzk-gpu-h100-gjfjh
   namespace: benchflow
   execution:
     timeout: 8h
