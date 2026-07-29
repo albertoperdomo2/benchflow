@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
+import hashlib
 
 from .loaders import ProfileCatalog
 from .llmd_layout import uses_recipe_layout as _llmd_uses_recipe_layout
@@ -28,6 +30,8 @@ from .models import (
 )
 
 _MATRIX_CHILD_INDEX_LABEL = "benchflow.io/matrix-child-index"
+_MATRIX_RELEASE_SCOPE_LABEL = "benchflow.io/matrix-release-scope"
+_MATRIX_RELEASE_MAX_LENGTH = 42
 _MAX_MODEL_LEN_FLAG = "--max-model-len"
 _UNSUPPORTED_BENCHMARK_ENV = {
     "GUIDELLM_OUTPUT_PATH": (
@@ -219,6 +223,61 @@ def _release_name_for(experiment: Experiment) -> str:
         max_length=max(1, 42 - len(suffix) - 1),
     )
     return f"{prefix}-{suffix}"
+
+
+def scope_matrix_child_release(
+    plan: ResolvedRunPlan,
+    *,
+    matrix_execution_name: str,
+) -> ResolvedRunPlan:
+    """Give a matrix child a target-cluster release unique to its matrix run."""
+    scope_source = matrix_execution_name.strip()
+    if not scope_source:
+        raise ValidationError(
+            "matrix execution name is required to scope child releases"
+        )
+    scope = hashlib.sha1(scope_source.encode("utf-8")).hexdigest()[:10]
+    existing_scope = str(plan.metadata.labels.get(_MATRIX_RELEASE_SCOPE_LABEL) or "")
+    if existing_scope == scope:
+        return plan
+    if existing_scope:
+        raise ValidationError(
+            "matrix child RunPlan already belongs to a different matrix release scope"
+        )
+
+    previous_release = plan.deployment.release_name
+    suffix = f"-{scope}"
+    prefix = sanitize_name(
+        previous_release,
+        max_length=max(1, _MATRIX_RELEASE_MAX_LENGTH - len(suffix)),
+    )
+    release_name = f"{prefix}{suffix}"
+    target = plan.deployment.target
+    scoped_target = replace(
+        target,
+        base_url=target.base_url.replace(previous_release, release_name),
+        resource_name=(
+            release_name
+            if target.resource_name == previous_release
+            else target.resource_name
+        ),
+        metrics_release_name=(
+            release_name
+            if target.metrics_release_name == previous_release
+            else target.metrics_release_name
+        ),
+    )
+    labels = dict(plan.metadata.labels)
+    labels[_MATRIX_RELEASE_SCOPE_LABEL] = scope
+    return replace(
+        plan,
+        metadata=replace(plan.metadata, labels=labels),
+        deployment=replace(
+            plan.deployment,
+            release_name=release_name,
+            target=scoped_target,
+        ),
+    )
 
 
 def _target_for(

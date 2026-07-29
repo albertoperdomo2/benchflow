@@ -25,6 +25,7 @@ from ..kueue import (
 )
 from ..loaders import load_run_plan_data, load_run_plan_file
 from ..models import sanitize_name
+from ..plans import scope_matrix_child_release
 from ..platform_state import setup_key_for_plan
 from .matrix_payloads import (
     adopt_matrix_run_plans_configmap,
@@ -375,6 +376,16 @@ def run_matrix_supervisor(
 ) -> list[str]:
     if not plans:
         raise ValidationError("matrix execution requires at least one RunPlan")
+
+    release_scope = parent_execution_name or f"local-{secrets.token_hex(5)}"
+    plans = [
+        scope_matrix_child_release(plan, matrix_execution_name=release_scope)
+        for plan in plans
+    ]
+    detail(
+        "Matrix child target releases are scoped to "
+        f"{parent_execution_name or 'this local matrix execution'}"
+    )
 
     namespaces = {plan.deployment.namespace for plan in plans}
     if len(namespaces) != 1:
