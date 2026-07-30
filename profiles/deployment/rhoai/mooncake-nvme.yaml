@@ -48,7 +48,7 @@ spec:
     mooncake_store:
       # vLLM is a requester; the colocated Mooncake store sidecar owns this DRAM tier.
       mode: standalone-store
-      local_buffer_size: 4GB
+      local_buffer_size: 64GB
       store_global_segment_size: 64GB
       protocol: rdma
       # Leave empty for Mooncake NIC auto-discovery; set a device only when needed.

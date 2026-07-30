@@ -218,16 +218,30 @@ def render_rhoai_mooncake_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any
             ],
         },
     }
-    master_args = [f"--port={MOONCAKE_MASTER_PORT}"]
+    master_flags = [
+        f"--rpc_port={MOONCAKE_MASTER_PORT}",
+        "--rpc_address=0.0.0.0",
+    ]
     if spec.is_nvme:
-        master_args.append("--enable_offload=true")
+        master_flags += [
+            "--enable_offload=true",
+            "--offload_on_evict=true",
+            "--enable_disk_eviction=true",
+        ]
+    master_script = (
+        'MOONCAKE_DIR=/usr/local/lib/python3.12/dist-packages/mooncake\n'
+        'export LD_LIBRARY_PATH="$MOONCAKE_DIR:'
+        '/usr/local/lib/python3.12/dist-packages/'
+        'mooncake_transfer_engine.libs:${LD_LIBRARY_PATH:-}"\n'
+        'exec mooncake_master ' + ' '.join(master_flags) + '\n'
+    )
     pod_spec: dict[str, Any] = {
         "containers": [
             {
                 "name": "mooncake-master",
                 "image": plan.deployment.runtime.image,
-                "command": ["mooncake_master"],
-                "args": master_args,
+                "command": ["/bin/bash", "-c"],
+                "args": [master_script],
                 "ports": [
                     {
                         "name": "rpc",
