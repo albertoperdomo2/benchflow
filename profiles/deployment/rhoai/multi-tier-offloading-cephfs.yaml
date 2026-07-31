@@ -22,7 +22,7 @@ spec:
       PYTHONHASHSEED: "0"
     # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
     # larger than cpu_bytes_to_use below, plus some headroom.
-    shared_memory_size: 200Gi
+    shared_memory_size: 300Gi
     pvc_mounts:
       # BenchFlow creates this RWX CephFS PVC before deploying the model server
       # and deletes it during cleanup because filesystem-tier cache files persist
@@ -38,7 +38,7 @@ spec:
     vllm_args:
       - --max-model-len=8192
       # Keep secondary_tiers[].root_dir in sync with runtime.pvc_mounts[].mount_path.
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":68719476736,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/kv_cache","n_read_threads":64,"n_write_threads":32}]}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/kv_cache","n_read_threads":64,"n_write_threads":32}]}}
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching

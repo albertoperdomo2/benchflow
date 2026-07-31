@@ -18,7 +18,7 @@ spec:
       USER: benchflow
     # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
     # larger than cpu_bytes_to_use below, plus some headroom.
-    shared_memory_size: 200Gi
+    shared_memory_size: 300Gi
     # Required for hostPath volumes on OpenShift. For RHOAI LLMInferenceService,
     # bind this service account to an SCC that allows both hostPath and
     # runtime/default seccomp; on Poseidon, use:
@@ -34,15 +34,18 @@ spec:
       # The filesystem tier does not enforce byte capacity in vLLM config. Size
       # it by provisioning/quotaing this host directory, and wipe it between
       # benchmark runs because old tier files are not reused by later engines.
+      # cleanup: true makes BenchFlow empty this mount before deleting the
+      # release, while a model pod is still available on each used node.
       - name: nvme-kv-cache
         host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
         mount_path: /mnt/nvme-kv-cache
         type: Directory
         read_only: false
+        cleanup: true
     vllm_args:
       - --max-model-len=8192
       # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":68719476736,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache"}]}}
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching

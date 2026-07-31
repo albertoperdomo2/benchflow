@@ -6,21 +6,39 @@ spec:
   model:
     name:
       # - deepseek-ai/DeepSeek-V4-Flash
-      # - openai/gpt-oss-120b  # completions?? lower gmu to 0.6 or 0.5
+      # - Qwen/Qwen3.6-35B-A3B
       # - nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
-      # - google/gemma-4-31B
-      - Qwen/Qwen3.6-35B-A3B  # --gpu-memory-utilization=0.7
+      # - google/gemma-4-31B-it
+      # - RedHatAI/Llama-3_1-Nemotron-Ultra-253B-v1
+      - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8
   deployment_profile: 
     - cpu-kv-offload-distributed-default
-    - rhoai-cpu-kv-offload-64g
-    - multi-tier-offloading-nvme
-    - multi-tier-offloading-cephfs
+    # - rhoai-cpu-kv-offload-64g
+    # - rhoai-cpu-kv-offload-160g
+    - rhoai-cpu-kv-offload-256g
+    # - rhoai-cpu-kv-offload-512g
+    - multi-tier-offloading-nvme  # + 64GB CPU
+    - multi-tier-offloading-cephfs  # + 64GB CPU
   benchmark_profile:
     - aiperf-agentx-inference
     # - cpu-offloading-short-context
     # - cpu-offloading-long-output
     # - cpu-offloading-long-context
   model_overrides:
+    nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.8
+    RedHatAI/Llama-3_1-Nemotron-Ultra-253B-v1:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.9
     deepseek-ai/DeepSeek-V4-Flash:
       scale:
         tensor_parallelism: 8
@@ -28,21 +46,21 @@ spec:
       runtime:
         vllm_extra_args:
           - --kv-cache-dtype=fp8
-          - --gpu-memory-utilization=0.85
+          - --gpu-memory-utilization=0.65
     nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8:
       scale:
         tensor_parallelism: 4
         replicas: 1
       runtime:
         vllm_extra_args:
-          - --gpu-memory-utilization=0.85
+          - --gpu-memory-utilization=0.65
     Qwen/Qwen3.6-35B-A3B:
       scale:
         tensor_parallelism: 2
         replicas: 1
       runtime:
         vllm_extra_args:
-          - --gpu-memory-utilization=0.85
+          - --gpu-memory-utilization=0.55
           - --max-num-seqs=256
     google/gemma-4-31B:
       scale:
@@ -50,7 +68,7 @@ spec:
         replicas: 1
       runtime:
         vllm_extra_args:
-          - --gpu-memory-utilization=0.85
+          - --gpu-memory-utilization=0.55
   overrides:
     images:
       runtime: vllm/vllm-openai:v0.23.0 # v0.25.1
@@ -61,11 +79,11 @@ spec:
             nodeSelectorTerms:
               - matchExpressions:
                   - key: kubernetes.io/hostname
-                    operator: In
+                    operator: NotIn
                     values:
-                      - diadochos-hqxzk-gpu-h100-fx7c8
-      placement:
-        mode: sequential
+                      - diadochos-hqxzk-gpu-h100-gjfjh
+      # placement:
+        # mode: sequential
   metrics_profile: detailed
   target:
     endpoint_scope: internal
