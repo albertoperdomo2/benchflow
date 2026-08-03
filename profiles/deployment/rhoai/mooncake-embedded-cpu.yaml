@@ -37,7 +37,7 @@ spec:
     mooncake_store:
       # This is host DRAM contributed by each GPU rank, not a total per pod.
       global_segment_size: 80GB
-      local_buffer_size: 4GB
+      local_buffer_size: 64GB
       protocol: rdma
       # Leave empty for Mooncake NIC auto-discovery; set a device only when needed.
       device_name: ""

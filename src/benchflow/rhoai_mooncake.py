@@ -11,6 +11,11 @@ MOONCAKE_CONFIG_MOUNT_PATH = "/etc/benchflow/mooncake"
 MOONCAKE_CONFIG_FILENAME = "mooncake_config.json"
 MOONCAKE_MASTER_PORT = 50051
 MOONCAKE_STORE_PORT = 50053
+MOONCAKE_MASTER_METRICS_PORT = 9003
+MOONCAKE_PACKAGE_DIR = "/usr/local/lib/python3.12/dist-packages/mooncake"
+MOONCAKE_TRANSFER_ENGINE_LIB_DIR = (
+    "/usr/local/lib/python3.12/dist-packages/mooncake_transfer_engine.libs"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,16 +223,43 @@ def render_rhoai_mooncake_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any
             ],
         },
     }
-    master_args = [f"--port={MOONCAKE_MASTER_PORT}"]
+    master_flags = [
+        "--rpc_address=0.0.0.0",
+        f"--rpc_port={MOONCAKE_MASTER_PORT}",
+        f"--metrics_port={MOONCAKE_MASTER_METRICS_PORT}",
+    ]
     if spec.is_nvme:
-        master_args.append("--enable_offload=true")
+        master_flags.extend(
+            [
+                "--enable_offload",
+                "--offload_on_evict",
+                "--enable_disk_eviction",
+                "--eviction_high_watermark_ratio=0.99",
+                "--eviction_ratio=0.05",
+            ]
+        )
+    # The vLLM image packages Mooncake's shared libraries outside the default
+    # loader path. Copying the binary to /tmp also avoids executing it from the
+    # Python package directory under OpenShift's restricted runtime policy.
+    master_script = "\n".join(
+        [
+            f'MOONCAKE_DIR="{MOONCAKE_PACKAGE_DIR}"',
+            'cp "$MOONCAKE_DIR/mooncake_master" /tmp/mooncake_master',
+            "chmod +x /tmp/mooncake_master",
+            (
+                'export LD_LIBRARY_PATH="$MOONCAKE_DIR:'
+                f"{MOONCAKE_TRANSFER_ENGINE_LIB_DIR}:${{LD_LIBRARY_PATH:-}}\""
+            ),
+            "exec /tmp/mooncake_master " + " ".join(master_flags),
+        ]
+    )
     pod_spec: dict[str, Any] = {
         "containers": [
             {
                 "name": "mooncake-master",
                 "image": plan.deployment.runtime.image,
-                "command": ["mooncake_master"],
-                "args": master_args,
+                "command": ["/bin/bash", "-c"],
+                "args": [master_script],
                 "ports": [
                     {
                         "name": "rpc",
