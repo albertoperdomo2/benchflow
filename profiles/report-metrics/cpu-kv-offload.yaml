@@ -47,6 +47,69 @@ metrics:
     series: '{{pod}} {{transfer_type}}'
     yaxis: seconds/GiB
 
+  - title: KV offload transfer duration
+    description: Mean CUDA DMA duration per CPU-to-GPU load and GPU-to-CPU store; this excludes retrieval queueing and scheduler-step delay.
+    metric: kv_offload_transfer_mean_seconds_by_engine
+    series: '{{pod}} {{engine}} {{transfer_type}}'
+    yaxis: seconds/op
+
+  - title: KV load-to-store byte ratio
+    description: Rolling CPU-to-GPU load bytes divided by GPU-to-CPU store bytes. A low ratio indicates the CPU tier is receiving far more data than it returns.
+    metric: kv_offload_load_to_store_byte_ratio_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: ratio
+
+  - title: KV retrieval stalls
+    description: Deferred secondary-tier retrieval events per second. Report with the delay panels because this histogram samples only the slow path.
+    metric: kv_offload_tiering_lookup_async_stall_rate_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: stalls/s
+
+  - title: Requests blocked on KV retrieval
+    description: Average requests concurrently stalled in secondary-tier lookup, derived from async-delay seconds per second.
+    metric: kv_offload_tiering_lookup_async_blocked_requests_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: requests
+
+  - title: KV retrieval stall duration
+    description: Mean secondary-tier retrieval delay per deferred request. DMA time alone does not include this scheduler-visible stall.
+    metric: kv_offload_tiering_lookup_async_mean_seconds_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: seconds
+
+  - title: KV retrieval stall P90
+    description: P90 secondary-tier retrieval delay for deferred lookups. The histogram's 10-second ceiling means a saturated tail is a lower bound.
+    metric: kv_offload_tiering_lookup_async_p90_seconds_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: seconds
+
+  - title: CPU KV tier occupancy
+    description: CPU-tier occupancy and portions pinned by in-flight reads or writes. Occupancy near 100% or sustained pinning makes promotions unreliable.
+    metric: kv_offload_cpu_cache_usage_by_engine
+    series: '{{pod}} {{engine}} {{state}}'
+    scale: 100
+    yaxis: percent
+
+  - title: CPU KV tier allocation failures
+    description: Failed CPU-tier store allocations. Any non-zero rate makes offload comparisons conditionally valid at best.
+    metric: kv_offload_allocation_failures_rate_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: failures/s
+
+  - title: External prefix-cache hit rate
+    description: External KV connector hit rate. This is distinct from the local GPU prefix-cache hit rate.
+    metric: external_prefix_cache_hit_rate_by_engine
+    series: '{{pod}} {{engine}}'
+    scale: 100
+    yaxis: percent
+
+  - title: External KV prompt-token share
+    description: Share of prompt tokens supplied by external KV transfer rather than local compute or local prefix-cache hits.
+    metric: external_kv_transfer_prompt_token_share_by_engine
+    series: '{{pod}} {{engine}}'
+    scale: 100
+    yaxis: percent
+
   - title: KV block lifetime P90
     description: How long sampled KV blocks remain alive before release or eviction.
     query: 'histogram_quantile(0.9, sum by (pod, le) (rate({__name__=~"(vllm|kserve_vllm):kv_block_lifetime_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))'

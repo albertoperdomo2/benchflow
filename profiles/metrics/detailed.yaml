@@ -46,10 +46,87 @@ spec:
     inference_time_p99_seconds: histogram_quantile(0.99, sum(rate({__name__=~"(vllm|kserve_vllm):request_inference_time_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) by (le))
     kv_cache_usage_percent: '{__name__=~"(vllm|kserve_vllm):kv_cache_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"}'
     prefix_cache_hit_rate: sum(rate({__name__=~"(vllm|kserve_vllm):prefix_cache_hits(_total)?", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum(rate({__name__=~"(vllm|kserve_vllm):prefix_cache_queries(_total)?", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 1)
-    kv_offload_bytes_total_by_pod: sum by (pod, transfer_type) ({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"})
-    kv_offload_bytes_rate_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
-    kv_offload_time_rate_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
-    kv_offload_seconds_per_gib_by_pod: sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, transfer_type) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_total_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / 1024 / 1024 / 1024, 0.001)
+    kv_offload_bytes_total_by_pod: >-
+      sum by (pod, transfer_type) (
+        label_replace({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      )
+    kv_offload_bytes_rate_by_pod: >-
+      sum by (pod, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      )
+    kv_offload_time_rate_by_pod: >-
+      sum by (pod, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      )
+    kv_offload_seconds_per_gib_by_pod: >-
+      sum by (pod, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      ) / clamp_min(sum by (pod, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      ) / 1024 / 1024 / 1024, 0.001)
+    kv_offload_transfer_bytes_rate_by_engine: >-
+      sum by (pod, engine, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      )
+    kv_offload_transfer_bandwidth_by_engine: >-
+      sum by (pod, engine, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      ) / clamp_min(sum by (pod, engine, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      ), 0.001)
+    kv_offload_transfer_ops_rate_by_engine: >-
+      sum by (pod, engine, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      )
+    kv_offload_transfer_mean_seconds_by_engine: >-
+      sum by (pod, engine, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_time_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      ) / clamp_min(sum by (pod, engine, transfer_type) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_size_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      ), 0.001)
+    kv_offload_transfer_size_p90_bytes_by_engine: >-
+      histogram_quantile(0.9, sum by (pod, engine, transfer_type, le) (
+        label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_load_size_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "CPU_to_GPU", "__name__", ".*")
+        or label_replace(rate({__name__=~"(vllm|kserve_vllm):kv_offload_store_size_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]), "transfer_type", "GPU_to_CPU", "__name__", ".*")
+      ))
+    kv_offload_load_to_store_byte_ratio_by_engine: sum by (pod, engine) (increase({__name__=~"(vllm|kserve_vllm):kv_offload_load_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (increase({__name__=~"(vllm|kserve_vllm):kv_offload_store_bytes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 1)
+    kv_offload_tiering_lookup_async_stall_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_lookup_async_blocked_requests_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_lookup_async_mean_seconds_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    kv_offload_tiering_lookup_async_p50_seconds_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_tiering_lookup_async_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_tiering_lookup_async_p99_seconds_by_engine: histogram_quantile(0.99, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_lookup_async_stall_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_lookup_async_blocked_requests_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_lookup_async_mean_seconds_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    kv_offload_lookup_async_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_tiering_lookup_sync_p99_seconds_by_engine: histogram_quantile(0.99, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_sync_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_lookup_sync_p99_seconds_by_engine: histogram_quantile(0.99, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_sync_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_cpu_cache_usage_by_engine: >-
+      sum by (pod, engine, state) (
+        label_replace({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "state", "occupied", "__name__", ".*")
+        or label_replace({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_read_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "state", "read_pinned", "__name__", ".*")
+        or label_replace({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_write_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"}, "state", "write_pinned", "__name__", ".*")
+      )
+    kv_offload_cpu_cache_usage_percent_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_cache_read_usage_percent_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_read_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_cache_write_usage_percent_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_write_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_allocation_size_p90_blocks_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_allocation_size_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_allocation_failures_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_allocation_failure_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_stores_skipped_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_stores_skipped_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    external_prefix_cache_hit_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):external_prefix_cache_hits(_total)?", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):external_prefix_cache_queries(_total)?", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 1)
+    external_kv_transfer_prompt_token_share_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):prompt_tokens_by_source_total", namespace="$namespace", pod=~"$modelserver_pod_regex", source="external_kv_transfer"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):prompt_tokens_by_source_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 1)
     kv_block_lifetime_p50_seconds_by_pod: histogram_quantile(0.5, sum by (pod, le) (rate({__name__=~"(vllm|kserve_vllm):kv_block_lifetime_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
     kv_block_lifetime_p90_seconds_by_pod: histogram_quantile(0.9, sum by (pod, le) (rate({__name__=~"(vllm|kserve_vllm):kv_block_lifetime_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
     kv_block_lifetime_p99_seconds_by_pod: histogram_quantile(0.99, sum by (pod, le) (rate({__name__=~"(vllm|kserve_vllm):kv_block_lifetime_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
