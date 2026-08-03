@@ -157,6 +157,113 @@ def _clean_mooncake_nvme_store(
         detail(f"Deleted Mooncake NVMe cache from {pod_name}")
 
 
+def _runtime_container_with_host_path(pod: dict, host_path_name: str) -> str:
+    containers = pod.get("spec", {}).get("containers", [])
+    if not isinstance(containers, list):
+        return ""
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        mounts = container.get("volumeMounts", [])
+        if not isinstance(mounts, list):
+            continue
+        if any(
+            isinstance(mount, dict) and mount.get("name") == host_path_name
+            for mount in mounts
+        ):
+            return str(container.get("name") or "").strip()
+    return ""
+
+
+def _clean_runtime_host_path_contents(
+    plan: ResolvedRunPlan, *, kubectl_cmd: str, namespace: str
+) -> None:
+    host_paths = [
+        host_path
+        for host_path in plan.deployment.runtime.host_paths
+        if host_path.cleanup and not host_path.read_only
+    ]
+    if not host_paths:
+        return
+
+    payload = run_json_command(
+        [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"]
+    )
+    pods_by_node: dict[tuple[str, str], tuple[str, str]] = {}
+    for item in payload.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") or {}
+        pod_name = str(metadata.get("name") or "")
+        if not pod_name.startswith(plan.deployment.release_name):
+            continue
+        if str((item.get("status") or {}).get("phase") or "") != "Running":
+            continue
+        node_name = str((item.get("spec") or {}).get("nodeName") or "")
+        if not node_name:
+            continue
+        for host_path in host_paths:
+            container = _runtime_container_with_host_path(item, host_path.name)
+            if container:
+                pods_by_node.setdefault(
+                    (node_name, host_path.name), (pod_name, container)
+                )
+
+    if not pods_by_node:
+        raise CommandError(
+            "cannot clean rhoai runtime hostPath contents: no running model pod "
+            f"was found for release {plan.deployment.release_name}"
+        )
+
+    failures: list[str] = []
+    cleaned_nodes: set[str] = set()
+    host_paths_by_name = {host_path.name: host_path for host_path in host_paths}
+    for (node_name, host_path_name), (pod_name, container) in sorted(
+        pods_by_node.items()
+    ):
+        host_path = host_paths_by_name[host_path_name]
+        target = shlex.quote(host_path.mount_path.rstrip("/"))
+        script = (
+            "set -eu; "
+            f"if [ -d {target} ]; then "
+            f"find {target} -mindepth 1 -maxdepth 1 -exec rm -rf -- {{}} +; "
+            "fi"
+        )
+        result = run_command(
+            [
+                kubectl_cmd,
+                "exec",
+                pod_name,
+                "-n",
+                namespace,
+                "-c",
+                container,
+                "--",
+                "sh",
+                "-lc",
+                script,
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            failures.append(
+                f"{pod_name} ({host_path.mount_path}): "
+                f"{str(result.stderr or result.stdout or '').strip()}"
+            )
+            continue
+        cleaned_nodes.add(node_name)
+
+    if failures:
+        raise CommandError(
+            "failed to clean rhoai runtime hostPath contents: " + "; ".join(failures)
+        )
+    detail(
+        "Deleted rhoai runtime hostPath contents on node(s): "
+        + ", ".join(sorted(cleaned_nodes))
+    )
+
+
 def cleanup_rhoai(
     plan: ResolvedRunPlan,
     *,
@@ -196,6 +303,9 @@ def cleanup_rhoai(
         )
 
     _clean_mooncake_nvme_store(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
+    _clean_runtime_host_path_contents(
+        plan, kubectl_cmd=kubectl_cmd, namespace=namespace
+    )
     run_command(
         [
             kubectl_cmd,
