@@ -1,0 +1,59 @@
+# Mooncake standalone-store NVMe offload for RHOAI. Customize the DRAM staging
+# size and disk byte limit for the node, and keep offload_path aligned with the
+# writable local-NVMe hostPath prepared on every candidate GPU node.
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: mooncake-nvme
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0-ea.2
+  platform_channel: beta
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    image: vllm/vllm-openai:v0.26.0
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+      # All ranks sharing a Mooncake store must generate identical block hashes.
+      PYTHONHASHSEED: "0"
+      # Emits Mooncake memory-versus-disk tier summaries in vLLM logs.
+      VLLM_MOONCAKE_STORE_TIER_LOG: "1"
+    service_account_name: benchflow-hostpath-runtime
+    host_paths:
+      # This directory must already exist on each candidate node, be backed by
+      # local NVMe, and be writable by the OpenShift runtime UID.
+      - name: mooncake-nvme
+        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
+        mount_path: /mnt/mooncake-nvme
+        type: Directory
+        read_only: false
+    vllm_args:
+      - --max-model-len=8192
+      - --kv-transfer-config={"kv_connector":"MooncakeStoreConnector","kv_role":"kv_both"}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
+    startup_probe:
+      failureThreshold: 180
+    mooncake_store:
+      # vLLM is a requester; the colocated Mooncake store sidecar owns this DRAM tier.
+      mode: standalone-store
+      local_buffer_size: 64GB
+      store_global_segment_size: 64GB
+      protocol: rdma
+      # Leave empty for Mooncake NIC auto-discovery; set a device only when needed.
+      device_name: ""
+      host_path_name: mooncake-nvme
+      offload_path: /mnt/mooncake-nvme
+      # 1 TiB per model-pod store sidecar. Keep below usable local-NVMe capacity.
+      offload_size_limit_bytes: "1099511627776"

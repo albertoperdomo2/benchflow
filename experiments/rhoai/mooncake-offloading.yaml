@@ -1,0 +1,40 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: mooncake-offloading
+spec:
+  model:
+    name:
+      - google/gemma-4-31B-it
+  deployment_profile:
+    - mooncake-embedded-cpu
+  benchmark_profile:
+    - aiperf-agentx-inference
+  metrics_profile: detailed
+  model_overrides:
+    google/gemma-4-31B-it:
+      scale:
+        tensor_parallelism: 2
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.55
+  target:
+    endpoint_scope: internal
+  mlflow:
+    tags:
+      offload_type: mooncake
+  overrides:
+    runtime:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - diadochos-hqxzk-gpu-h100-gjfjh
+  namespace: benchflow
+  execution:
+    timeout: 8h
