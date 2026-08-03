@@ -812,20 +812,22 @@ def write_deployment_assets(
                 yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
             )
             written.append(target)
-        for manifest, filename in zip(
-            render_rhoai_mooncake_manifests(plan),
-            (
-                "mooncake-configmap.yaml",
-                "mooncake-master-service.yaml",
-                "mooncake-master-deployment.yaml",
-            ),
-            strict=True,
-        ):
-            target = output_dir / filename
-            target.write_text(
-                yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
-            )
-            written.append(target)
+        mooncake_manifests = render_rhoai_mooncake_manifests(plan)
+        if mooncake_manifests:
+            for manifest, filename in zip(
+                mooncake_manifests,
+                (
+                    "mooncake-configmap.yaml",
+                    "mooncake-master-service.yaml",
+                    "mooncake-master-deployment.yaml",
+                ),
+                strict=True,
+            ):
+                target = output_dir / filename
+                target.write_text(
+                    yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+                )
+                written.append(target)
         if plan.execution.profiling.enabled:
             profiler_target = output_dir / "vllm-profiler-configmap.yaml"
             profiler_target.write_text(

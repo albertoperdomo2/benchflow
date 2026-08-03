@@ -420,20 +420,21 @@ def deploy_rhoai(
                 yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
             )
             detail(f"Rendered runtime PVC manifest written to {pvc_target}")
-        for manifest, filename in zip(
-            mooncake_manifests,
-            (
-                "mooncake-configmap.yaml",
-                "mooncake-master-service.yaml",
-                "mooncake-master-deployment.yaml",
-            ),
-            strict=True,
-        ):
-            mooncake_target = manifests_dir / filename
-            mooncake_target.write_text(
-                yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
-            )
-            detail(f"Rendered Mooncake manifest written to {mooncake_target}")
+        if mooncake_manifests:
+            for manifest, filename in zip(
+                mooncake_manifests,
+                (
+                    "mooncake-configmap.yaml",
+                    "mooncake-master-service.yaml",
+                    "mooncake-master-deployment.yaml",
+                ),
+                strict=True,
+            ):
+                mooncake_target = manifests_dir / filename
+                mooncake_target.write_text(
+                    yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+                )
+                detail(f"Rendered Mooncake manifest written to {mooncake_target}")
         if profiler_configmap is not None:
             profiler_target = manifests_dir / "vllm-profiler-configmap.yaml"
             profiler_target.write_text(
