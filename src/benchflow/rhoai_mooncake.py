@@ -248,7 +248,7 @@ def render_rhoai_mooncake_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any
             "chmod +x /tmp/mooncake_master",
             (
                 'export LD_LIBRARY_PATH="$MOONCAKE_DIR:'
-                f"{MOONCAKE_TRANSFER_ENGINE_LIB_DIR}:${{LD_LIBRARY_PATH:-}}\""
+                f'{MOONCAKE_TRANSFER_ENGINE_LIB_DIR}:${{LD_LIBRARY_PATH:-}}"'
             ),
             "exec /tmp/mooncake_master " + " ".join(master_flags),
         ]
