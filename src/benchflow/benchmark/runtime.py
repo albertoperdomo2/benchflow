@@ -1803,6 +1803,61 @@ def validate_runs_compatibility(runs_data: list) -> tuple:
     return model, data_profile
 
 
+def _filter_rows_for_workload(
+    dataframe: Any,
+    workload_data_profile: dict[str, Any],
+    *,
+    source_name: str,
+) -> Any:
+    """Keep only rows matching Forge's static workload profile fields."""
+    if dataframe.empty:
+        return dataframe
+
+    import pandas as pd
+
+    column_map = {
+        "prompt_tokens": "prompt toks",
+        "output_tokens": "output toks",
+        "turns": "turns",
+        "prefix_tokens": "prefix toks",
+    }
+    filters: list[tuple[str, Any]] = []
+    for profile_key, column in column_map.items():
+        value = workload_data_profile.get(profile_key)
+        if value is None:
+            continue
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if column not in dataframe.columns:
+            raise ValueError(
+                f"Cannot scope {source_name} to Forge workload: missing column {column}"
+            )
+        filters.append((column, numeric_value))
+
+    if not filters:
+        raise ValueError("Forge workload has no static data-profile filters")
+
+    mask = pd.Series(True, index=dataframe.index)
+    for column, value in filters:
+        mask &= pd.to_numeric(dataframe[column], errors="coerce") == value
+    filtered = dataframe.loc[mask].copy()
+    if filtered.empty:
+        raise ValueError(
+            f"No {source_name} rows match Forge workload data profile "
+            + ", ".join(f"{column}={value:g}" for column, value in filters)
+        )
+    logger.info(
+        "Scoped %s to Forge workload data profile %s: %d/%d rows",
+        source_name,
+        ", ".join(f"{column}={value:g}" for column, value in filters),
+        len(filtered),
+        len(dataframe),
+    )
+    return filtered
+
+
 def generate_plot_only_report(
     runs_data: list,
     versions: list = None,
@@ -1816,6 +1871,7 @@ def generate_plot_only_report(
     include_total_throughput: bool = False,
     baseline_version: str | None = None,
     metrics_yaml_path: str | None = None,
+    workload_data_profile: dict[str, Any] | None = None,
     force: bool = False,
 ) -> str:
     """
@@ -1834,6 +1890,7 @@ def generate_plot_only_report(
         include_total_throughput: Render dashed total-throughput overlay in throughput charts
         baseline_version: Optional composed version name to use as the comparison-table baseline
         metrics_yaml_path: Optional report-metrics YAML path for archived Prometheus plots
+        workload_data_profile: Optional Forge profile used to scope all data sources
         force: Skip compatibility validation for known-comparable historical runs
 
     Returns:
@@ -1945,6 +2002,11 @@ def generate_plot_only_report(
         if not consolidated_df.empty and "_data_source" not in consolidated_df.columns:
             consolidated_df["_data_source"] = "csv"
 
+    if workload_data_profile is not None:
+        consolidated_df = _filter_rows_for_workload(
+            consolidated_df, workload_data_profile, source_name="historical CSV"
+        )
+
     # Process each run to get its CSV data
     all_run_dataframes = []
     ttft_distribution_dfs = []
@@ -1986,7 +2048,8 @@ def generate_plot_only_report(
             include_total_throughput=include_total_throughput,
         )
 
-        # Parse this run's JSON to DataFrame (replicas will be included via processor)
+        # Every GuideLLM source, including Forge, is normalized through this
+        # shared parser and request-level TTFT distribution extractor.
         run_df = processor.parse_guidellm_json()
         ttft_distribution_df = processor.parse_ttft_distribution_json()
 

@@ -8,6 +8,7 @@ from mlflow.store.artifact.artifact_repository_registry import get_artifact_repo
 from ..mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from ..models import ResolvedRunPlan, ValidationError
 from . import aiperf as aiperf_backend
+from . import forge as forge_backend
 from . import guidellm as guidellm_backend
 from .common import BenchmarkRunFailed, benchmark_version_from_plan
 from .run_report import generate_run_report as generate_guidellm_run_report
@@ -38,7 +39,13 @@ def _detect_mlflow_report_tool(
     detected: set[str] = set()
     for run_id in mlflow_run_ids:
         run = client.get_run(run_id)
+        if forge_backend.is_forge_run(dict(run.data.tags)):
+            detected.add("forge")
+            continue
         artifact_paths = _list_run_artifact_paths(run.info.artifact_uri)
+        if forge_backend.is_forge_artifact_paths(artifact_paths):
+            detected.add("forge")
+            continue
         if any(path.endswith("profile_export_aiperf.json") for path in artifact_paths):
             detected.add("aiperf")
         if any(
@@ -100,6 +107,7 @@ def generate_report(
     replicas: int = 1,
     mlflow_run_ids: list[str] | None = None,
     mlflow_tracking_uri: str | None = None,
+    forge_workload: str | None = None,
     versions: list[str] | None = None,
     version_overrides: dict[str, str] | None = None,
     additional_csv_files: list[str] | None = None,
@@ -120,6 +128,10 @@ def generate_report(
         )
     )
     if tool == "aiperf":
+        if forge_workload:
+            raise ValidationError(
+                "--forge-workload is only supported for Forge MLflow runs"
+            )
         if json_path is not None:
             raise ValidationError(
                 "AIPerf comparison reports do not support --json-path; use --mlflow-run-ids"
@@ -137,6 +149,32 @@ def generate_report(
             notes=notes,
             metrics_yaml_path=metrics_yaml_path,
             baseline_version=baseline_version,
+        )
+    if tool == "forge":
+        if json_path is not None:
+            raise ValidationError(
+                "Forge comparison reports require --mlflow-run-ids; "
+                "local Forge artifact directories are not supported"
+            )
+        return forge_backend.generate_report(
+            mlflow_run_ids=mlflow_run_ids or [],
+            mlflow_tracking_uri=mlflow_tracking_uri,
+            accelerator=accelerator,
+            forge_workload=forge_workload,
+            versions=versions,
+            version_overrides=version_overrides,
+            additional_csv_files=additional_csv_files,
+            notes=notes,
+            repeat_section_legends=repeat_section_legends,
+            include_total_throughput=include_total_throughput,
+            baseline_version=baseline_version,
+            metrics_yaml_path=metrics_yaml_path,
+            output_dir=output_dir,
+            output_file=output_file,
+        )
+    if forge_workload:
+        raise ValidationError(
+            "--forge-workload is only supported for Forge MLflow runs"
         )
     return guidellm_backend.generate_report(
         json_path=json_path,

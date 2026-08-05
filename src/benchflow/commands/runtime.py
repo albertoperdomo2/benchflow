@@ -779,6 +779,7 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         if args.mlflow_run_ids
         else None,
         mlflow_tracking_uri=args.mlflow_tracking_uri,
+        forge_workload=args.forge_workload,
         versions=[item.strip() for item in args.versions.split(",") if item.strip()]
         if args.versions
         else None,
@@ -1814,6 +1815,13 @@ def _register_comparison_report_options(command):
     command = click.option(
         "--versions",
         help="Comma-separated version list for multi-run report generation.",
+    )(command)
+    command = click.option(
+        "--forge-workload",
+        help=(
+            "Exact Forge workload label to compare, for example concurrent-1k-1k. "
+            "Only supported for Forge MLflow runs."
+        ),
     )(command)
     command = click.option(
         "--force",
