@@ -53,6 +53,26 @@ metrics:
     series: '{{pod}} {{engine}} {{transfer_type}}'
     yaxis: seconds/op
 
+  - title: KV offload DMA bandwidth
+    description: Effective CPU-to-GPU load and GPU-to-CPU store bandwidth measured from CUDA transfer time. This excludes scheduler and retrieval wait time.
+    metric: kv_offload_transfer_bandwidth_by_engine
+    series: '{{pod}} {{engine}} {{transfer_type}}'
+    scale: 0.000000001
+    yaxis: GB/s
+
+  - title: KV offload transfer operation rate
+    description: CPU-to-GPU load and GPU-to-CPU store operations per second.
+    metric: kv_offload_transfer_ops_rate_by_engine
+    series: '{{pod}} {{engine}} {{transfer_type}}'
+    yaxis: operations/s
+
+  - title: KV offload transfer size P90
+    description: P90 CPU-to-GPU load and GPU-to-CPU store size. The histogram ceiling is 200 MB, so a saturated tail is a lower bound.
+    metric: kv_offload_transfer_size_p90_bytes_by_engine
+    series: '{{pod}} {{engine}} {{transfer_type}}'
+    scale: 0.000001
+    yaxis: MB
+
   - title: KV load-to-store byte ratio
     description: Rolling CPU-to-GPU load bytes divided by GPU-to-CPU store bytes. A low ratio indicates the CPU tier is receiving far more data than it returns.
     metric: kv_offload_load_to_store_byte_ratio_by_engine
@@ -83,6 +103,48 @@ metrics:
     series: '{{pod}} {{engine}}'
     yaxis: seconds
 
+  - title: KV retrieval stall P50
+    description: Median secondary-tier retrieval delay for deferred lookups.
+    metric: kv_offload_tiering_lookup_async_p50_seconds_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: seconds
+
+  - title: KV retrieval stall P99
+    description: P99 secondary-tier retrieval delay for deferred lookups. A value near 10 seconds is a lower bound, not an exact percentile.
+    metric: kv_offload_tiering_lookup_async_p99_seconds_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: seconds
+
+  - title: KV retrieval stalls above histogram ceiling
+    description: Deferred secondary-tier retrieval events exceeding the 10-second async-delay histogram ceiling. Any non-zero value makes P99 a lower bound.
+    metric: kv_offload_tiering_lookup_async_overflow_rate_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: stalls/s
+
+  - title: KV connector retrieval stall duration P90
+    description: P90 connector-level deferred lookup duration, including CPU-tier deferrals. Compare with the secondary-tier panel to isolate tiering cost.
+    metric: kv_offload_lookup_async_p90_seconds_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: seconds
+
+  - title: KV scheduler lookup blocking P99
+    description: P99 synchronous secondary-tier lookup time on the scheduler thread. This should remain near microseconds; sustained growth means async retrieval is not behaving as intended.
+    metric: kv_offload_tiering_lookup_sync_p99_seconds_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: seconds
+
+  - title: KV connector lookup blocking P99
+    description: P99 synchronous connector lookup time on the scheduler thread, including CPU-tier lookups. This should remain near microseconds.
+    metric: kv_offload_lookup_sync_p99_seconds_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: seconds
+
+  - title: CPU KV allocation size P90
+    description: P90 number of CPU-tier blocks allocated per store operation.
+    metric: kv_offload_cpu_allocation_size_p90_blocks_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: blocks
+
   - title: CPU KV tier occupancy
     description: CPU-tier occupancy and portions pinned by in-flight reads or writes. Occupancy near 100% or sustained pinning makes promotions unreliable.
     metric: kv_offload_cpu_cache_usage_by_engine
@@ -95,6 +157,12 @@ metrics:
     metric: kv_offload_allocation_failures_rate_by_engine
     series: '{{pod}} {{engine}}'
     yaxis: failures/s
+
+  - title: CPU KV stores skipped
+    description: CPU-tier store operations skipped by the offload connector. This is emitted only when the store threshold is at least two.
+    metric: kv_offload_stores_skipped_rate_by_engine
+    series: '{{pod}} {{engine}}'
+    yaxis: stores/s
 
   - title: External prefix-cache hit rate
     description: External KV connector hit rate. This is distinct from the local GPU prefix-cache hit rate.
