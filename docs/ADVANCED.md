@@ -742,7 +742,7 @@ kind: BenchmarkProfile
 metadata:
   name: smoke # no direct CLI override
 spec:
-  tool: guidellm # supported values: guidellm, aiperf
+  tool: guidellm # supported values: guidellm, aiperf, inference-perf
   guidellm:
     backend:
       kind: openai_http
@@ -787,6 +787,32 @@ spec:
     export_level: "" # optional; for example records
     export_http_trace: false
     max_seconds: 7200 # remote benchmark job timeout hint
+  inference_perf:
+    # Native inference-perf configuration. BenchFlow injects server.model_name,
+    # server.base_url, a default tokenizer, and storage.local_storage.path.
+    # server.type defaults to vllm when omitted.
+    config:
+      api:
+        type: chat
+        streaming: true
+      load:
+        type: constant
+        stages:
+          - rate: 5
+            duration: 60
+      data:
+        type: shared_prefix
+        shared_prefix:
+          num_groups: 10
+          num_prompts_per_group: 2
+          system_prompt_len: 100
+          question_len: 1000
+          output_len: 300
+      report:
+        request_lifecycle:
+          summary: true
+          per_stage: true
+          per_request: true
   requirements:
     min_max_model_len: 8192 # no CLI override; raises the resolved deployment max-model-len when needed
   env:
@@ -817,6 +843,14 @@ The current AIPerf special cases are:
 - `aiperf.dataset_type` renders as `--custom-dataset-type`
 - `aiperf.endpoint_path` renders as `--endpoint`
 - `aiperf.max_seconds` is a BenchFlow timeout hint, not a direct AIPerf flag
+
+For Inference Perf profiles, `inference_perf.config` is the native Inference Perf
+configuration, not an llm-d benchmark wrapper. BenchFlow preserves its workload,
+load, API, metrics, report, and storage settings, then injects the resolved model,
+target URL, tokenizer default, and an artifact-local `storage.local_storage.path`.
+Use profile-specific `load.stages` rather than the generic `rates` or
+`max_seconds` experiment overrides. Every generated lifecycle report, rendered
+configuration, and process log is uploaded to MLflow.
 
 Safe GuideLLM benchmark overrides can be applied from the `Experiment` without
 changing the benchmark profile identity:

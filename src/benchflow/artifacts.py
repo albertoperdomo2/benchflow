@@ -840,6 +840,11 @@ def collect_artifacts(
                 plan.benchmark.aiperf.args.get("public_dataset")
                 or plan.benchmark.aiperf.dataset_name
                 or plan.benchmark.aiperf.dataset_url
+                if plan.benchmark.tool == "aiperf"
+                else json.dumps(
+                    plan.benchmark.inference_perf.config.get("data") or {},
+                    separators=(",", ":"),
+                )
             )
         ),
         "profile": plan.profiles.benchmark,

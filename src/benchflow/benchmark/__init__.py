@@ -10,6 +10,7 @@ from ..models import ResolvedRunPlan, ValidationError
 from . import aiperf as aiperf_backend
 from . import forge as forge_backend
 from . import guidellm as guidellm_backend
+from . import inference_perf as inference_perf_backend
 from .common import BenchmarkRunFailed, benchmark_version_from_plan
 from .run_report import generate_run_report as generate_guidellm_run_report
 
@@ -48,6 +49,8 @@ def _detect_mlflow_report_tool(
             continue
         if any(path.endswith("profile_export_aiperf.json") for path in artifact_paths):
             detected.add("aiperf")
+        if inference_perf_backend.is_inference_perf_artifact_paths(artifact_paths):
+            detected.add("inference-perf")
         if any(
             path.endswith("benchmark_output.json") or "benchmark_output_rate_" in path
             for path in artifact_paths
@@ -82,6 +85,16 @@ def run_benchmark(
         )
     if plan.benchmark.tool == "aiperf":
         return aiperf_backend.run_benchmark(
+            plan=plan,
+            target=target,
+            output_dir=output_dir,
+            mlflow_tracking_uri=mlflow_tracking_uri,
+            enable_mlflow=enable_mlflow,
+            mlflow_run_id=mlflow_run_id,
+            extra_tags=extra_tags,
+        )
+    if plan.benchmark.tool == "inference-perf":
+        return inference_perf_backend.run_benchmark(
             plan=plan,
             target=target,
             output_dir=output_dir,
@@ -149,6 +162,12 @@ def generate_report(
             notes=notes,
             metrics_yaml_path=metrics_yaml_path,
             baseline_version=baseline_version,
+        )
+    if tool == "inference-perf":
+        raise ValidationError(
+            "Inference Perf comparison reports are not supported yet. "
+            "The run's lifecycle reports and logs are available in MLflow; "
+            "comparison support will be added after validating a real benchmark run."
         )
     if tool == "forge":
         if json_path is not None:

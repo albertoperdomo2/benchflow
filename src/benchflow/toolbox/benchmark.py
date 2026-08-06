@@ -75,6 +75,18 @@ def _log_benchmark_details(plan: ResolvedRunPlan) -> None:
         )
         return
 
+    if plan.benchmark.tool == "inference-perf":
+        config = plan.benchmark.inference_perf.config
+        data = config.get("data") or {}
+        load = config.get("load") or {}
+        detail(
+            "Inference Perf workload: "
+            f"data={data.get('type', 'not set')}, "
+            f"load={load.get('type', 'not set')}, "
+            f"stages={len(load.get('stages') or [])}"
+        )
+        return
+
     guidellm = plan.benchmark.guidellm
     profile = runtime_module.guidellm_profile_mapping(guidellm.args)
     backend = runtime_module.guidellm_backend_mapping(guidellm.args)

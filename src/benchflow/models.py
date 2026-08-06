@@ -482,11 +482,21 @@ class AiperfBenchmarkSpec:
 
 
 @dataclass(slots=True)
+class InferencePerfBenchmarkSpec:
+    """Native Inference Perf configuration, excluding BenchFlow-owned wiring."""
+
+    config: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class BenchmarkProfileSpec:
     tool: str = "guidellm"
     env: dict[str, str] = field(default_factory=dict)
     guidellm: GuidellmBenchmarkSpec = field(default_factory=GuidellmBenchmarkSpec)
     aiperf: AiperfBenchmarkSpec = field(default_factory=AiperfBenchmarkSpec)
+    inference_perf: InferencePerfBenchmarkSpec = field(
+        default_factory=InferencePerfBenchmarkSpec
+    )
     requirements: BenchmarkRequirementsSpec = field(
         default_factory=BenchmarkRequirementsSpec
     )

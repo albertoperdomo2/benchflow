@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "benchflow"
 version = "0.1.0"
 description = "BenchFlow control plane for llm inference benchmarking"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
   "PyYAML>=6.0",
   "click>=8.1.0",
@@ -21,6 +21,7 @@ dependencies = [
   "mistral-common",
   "rich>=13.9.0",
   "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx",
+  "inference-perf @ git+https://github.com/kubernetes-sigs/inference-perf.git@f6c714bb479fea4cedf1e088b04d81a4d0e76fa2",
 ]
 
 [project.optional-dependencies]

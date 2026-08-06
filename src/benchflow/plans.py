@@ -114,6 +114,18 @@ def _set_aiperf_request_type(args: dict[str, object], request_type: str) -> None
     )
 
 
+def _set_inference_perf_request_type(
+    config: dict[str, object], request_type: str
+) -> None:
+    api = config.get("api")
+    if api is None:
+        api = {}
+    if not isinstance(api, dict):
+        raise ValidationError("inference_perf.config.api must be a mapping")
+    api["type"] = request_type.strip()
+    config["api"] = api
+
+
 def _set_guidellm_constraint(
     args: dict[str, object],
     *,
@@ -772,15 +784,25 @@ def resolve_run_plan(
                 benchmark.guidellm.args,
                 list(overrides.benchmark.rates),
             )
+        elif benchmark.tool == "inference-perf":
+            raise ValidationError(
+                "benchmark.rates is not supported for inference-perf; "
+                "define load.stages in the benchmark profile"
+            )
     if overrides.benchmark.max_seconds is not None:
         if benchmark.tool == "aiperf":
             benchmark.aiperf.max_seconds = overrides.benchmark.max_seconds
-        else:
+        elif benchmark.tool == "guidellm":
             _set_guidellm_constraint(
                 benchmark.guidellm.args,
                 kind="max_duration",
                 field="seconds",
                 value=overrides.benchmark.max_seconds,
+            )
+        elif benchmark.tool == "inference-perf":
+            raise ValidationError(
+                "benchmark.max_seconds is not supported for inference-perf; "
+                "define load stage durations in the benchmark profile"
             )
     if overrides.benchmark.max_requests is not None:
         if benchmark.tool == "guidellm":
@@ -789,6 +811,11 @@ def resolve_run_plan(
                 kind="max_requests",
                 field="count",
                 value=overrides.benchmark.max_requests,
+            )
+        elif benchmark.tool == "inference-perf":
+            raise ValidationError(
+                "benchmark.max_requests is not supported for inference-perf; "
+                "define the workload limit in the benchmark profile"
             )
     if overrides.benchmark.request_type is not None:
         if benchmark.tool == "guidellm":
@@ -800,6 +827,11 @@ def resolve_run_plan(
         elif benchmark.tool == "aiperf":
             _set_aiperf_request_type(
                 benchmark.aiperf.args,
+                overrides.benchmark.request_type,
+            )
+        elif benchmark.tool == "inference-perf":
+            _set_inference_perf_request_type(
+                benchmark.inference_perf.config,
                 overrides.benchmark.request_type,
             )
     if overrides.benchmark.env is not None:

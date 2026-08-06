@@ -8,7 +8,7 @@
 > [!NOTE]
 > This project is experimental and for learning purposes mainly, but the implemented execution paths today are `llm-d` and `RHOAI`. Expect some parts to still be highly coupled.
 
-BenchFlow is a packaged control plane for running benchmark scenarios, not a loose collection of scripts. It resolves an experiment into one immutable `RunPlan`, executes it through Tekton `PipelineRun`s, captures metrics and artifacts, and pushes the result to MLflow. The current benchmark backends are [vllm-project/guidellm](https://github.com/vllm-project/guidellm) and a narrow [AIPerf](https://github.com/ai-dynamo/aiperf) trace replay path with explicit Mooncake and Weka benchmark profiles.
+BenchFlow is a packaged control plane for running benchmark scenarios, not a loose collection of scripts. It resolves an experiment into one immutable `RunPlan`, executes it through Tekton `PipelineRun`s, captures metrics and artifacts, and pushes the result to MLflow. The current benchmark backends are [vllm-project/guidellm](https://github.com/vllm-project/guidellm), a narrow [AIPerf](https://github.com/ai-dynamo/aiperf) trace replay path, and native [Inference Perf](https://github.com/kubernetes-sigs/inference-perf) profiles.
 
 > [!WARNING]
 > BenchFlow now locks shared `llm-d` and `RHOAI` platform mutations per target cluster by setup key. Same-key runs can share a wave and use spare GPUs in parallel; different-key runs wait until the current admitted wave finishes. Shared platform prerequisites stay installed until a different setup key is requested or you explicitly tear them down.
@@ -84,7 +84,7 @@ For the full command surface, RunPlan PipelineRun flow, matrix execution, and lo
 ## Known Limitations
 
 - The current AIPerf support is intentionally narrow: the explicit `aiperf-mooncake-trace`, `aiperf-mooncake-toolagent-trace`, and `aiperf-weka-trace` benchmark profiles for existing chat-style endpoints. It is not generic AIPerf support.
-- Comparison reports do not mix benchmark tools. `bflow benchmark plot comparison` can compare multiple GuideLLM runs or multiple AIPerf runs, but not both in one report.
+- Comparison reports do not mix benchmark tools. `bflow benchmark plot comparison` can compare multiple GuideLLM runs or multiple AIPerf runs, but not both in one report. Inference Perf comparison reports are not supported yet; its rendered configuration, lifecycle reports, and logs are uploaded to MLflow.
 - Legacy target clusters without BenchFlow platform state are adopted heuristically; the first mutating run after upgrading BenchFlow may reset and reinstall shared `llm-d` or `RHOAI` prerequisites.
 - BenchFlow coordinates only the shared platform state it manages itself. Manual or out-of-band cluster mutations are not version-reconciled.
 - `llm-d` matrix children depend on release-scoped chart values; use the current BenchFlow image when testing parallel llm-d runs.

@@ -10,6 +10,7 @@ import yaml
 
 from .models import (
     AiperfBenchmarkSpec,
+    InferencePerfBenchmarkSpec,
     BenchmarkProfile,
     BenchmarkRequirementsSpec,
     BenchmarkProfileSpec,
@@ -957,11 +958,26 @@ def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
     )
 
 
+def _inference_perf_benchmark_from_dict(
+    raw: dict[str, Any], *, field_name: str
+) -> InferencePerfBenchmarkSpec:
+    config = raw.get("config")
+    if not isinstance(config, dict) or not config:
+        raise ValidationError(f"{field_name}.config must be a non-empty mapping")
+    normalized = _passthrough_value(config, f"{field_name}.config")
+    if not isinstance(
+        normalized, dict
+    ):  # Defensive: _passthrough_value preserves mappings.
+        raise ValidationError(f"{field_name}.config must be a mapping")
+    return InferencePerfBenchmarkSpec(config=normalized)
+
+
 def _benchmark_profile_spec_from_dict(raw: dict[str, Any]) -> BenchmarkProfileSpec:
     tool = str(raw.get("tool", "guidellm") or "guidellm").strip()
-    if tool not in {"guidellm", "aiperf"}:
+    if tool not in {"guidellm", "aiperf", "inference-perf"}:
         raise ValidationError(
-            f"unsupported benchmark tool: {tool}; supported tools are guidellm and aiperf"
+            "unsupported benchmark tool: "
+            f"{tool}; supported tools are guidellm, aiperf, and inference-perf"
         )
     env = {str(key): str(value) for key, value in (raw.get("env") or {}).items()}
     guidellm_raw = raw.get("guidellm")
@@ -980,6 +996,16 @@ def _benchmark_profile_spec_from_dict(raw: dict[str, Any]) -> BenchmarkProfileSp
     if not isinstance(aiperf_raw, dict):
         raise ValidationError("spec.aiperf must be a mapping")
 
+    inference_perf_raw = raw.get("inference_perf")
+    if tool == "inference-perf" and inference_perf_raw is None:
+        raise ValidationError(
+            "spec.inference_perf is required when spec.tool is inference-perf"
+        )
+    if inference_perf_raw is None:
+        inference_perf_raw = {}
+    if not isinstance(inference_perf_raw, dict):
+        raise ValidationError("spec.inference_perf must be a mapping")
+
     return BenchmarkProfileSpec(
         tool=tool,
         env=env,
@@ -987,6 +1013,13 @@ def _benchmark_profile_spec_from_dict(raw: dict[str, Any]) -> BenchmarkProfileSp
         aiperf=_aiperf_benchmark_from_dict(aiperf_raw)
         if tool == "aiperf"
         else AiperfBenchmarkSpec(),
+        inference_perf=(
+            _inference_perf_benchmark_from_dict(
+                inference_perf_raw, field_name="spec.inference_perf"
+            )
+            if tool == "inference-perf"
+            else InferencePerfBenchmarkSpec()
+        ),
         requirements=_benchmark_requirements_from_dict(raw.get("requirements")),
     )
 
@@ -1050,21 +1083,31 @@ def _resolved_aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmark
     )
 
 
+def _resolved_inference_perf_benchmark_from_dict(
+    raw: dict[str, Any], *, field_name: str
+) -> InferencePerfBenchmarkSpec:
+    return _inference_perf_benchmark_from_dict(raw, field_name=field_name)
+
+
 def _resolved_benchmark_profile_spec_from_dict(
     raw: dict[str, Any],
 ) -> BenchmarkProfileSpec:
     tool = str(raw.get("tool", "guidellm") or "guidellm").strip()
-    if tool not in {"guidellm", "aiperf"}:
+    if tool not in {"guidellm", "aiperf", "inference-perf"}:
         raise ValidationError(
-            f"unsupported benchmark tool: {tool}; supported tools are guidellm and aiperf"
+            "unsupported benchmark tool: "
+            f"{tool}; supported tools are guidellm, aiperf, and inference-perf"
         )
     env = {str(key): str(value) for key, value in (raw.get("env") or {}).items()}
     guidellm_raw = raw.get("guidellm") or {}
     aiperf_raw = raw.get("aiperf") or {}
+    inference_perf_raw = raw.get("inference_perf") or {}
     if not isinstance(guidellm_raw, dict):
         raise ValidationError("benchmark.guidellm must be a mapping")
     if not isinstance(aiperf_raw, dict):
         raise ValidationError("benchmark.aiperf must be a mapping")
+    if not isinstance(inference_perf_raw, dict):
+        raise ValidationError("benchmark.inference_perf must be a mapping")
     return BenchmarkProfileSpec(
         tool=tool,
         env=env,
@@ -1072,6 +1115,13 @@ def _resolved_benchmark_profile_spec_from_dict(
         aiperf=_resolved_aiperf_benchmark_from_dict(aiperf_raw)
         if tool == "aiperf"
         else AiperfBenchmarkSpec(),
+        inference_perf=(
+            _resolved_inference_perf_benchmark_from_dict(
+                inference_perf_raw, field_name="benchmark.inference_perf"
+            )
+            if tool == "inference-perf"
+            else InferencePerfBenchmarkSpec()
+        ),
         requirements=_benchmark_requirements_from_dict(raw.get("requirements")),
     )
 
@@ -1296,6 +1346,20 @@ def list_profile_entries(profiles_dir: Path) -> list[ProfileIndexEntry]:
             if tool == "aiperf":
                 details["endpoint_type"] = str(aiperf.get("endpoint_type", ""))
                 details["dataset_type"] = str(aiperf.get("dataset_type", ""))
+            elif tool == "inference-perf":
+                inference_perf = spec.get("inference_perf") or {}
+                config = (
+                    inference_perf.get("config")
+                    if isinstance(inference_perf, dict)
+                    else {}
+                )
+                if isinstance(config, dict):
+                    data = config.get("data") or {}
+                    load = config.get("load") or {}
+                    if isinstance(data, dict):
+                        details["data_type"] = str(data.get("type", ""))
+                    if isinstance(load, dict):
+                        details["load_type"] = str(load.get("type", ""))
             else:
                 profile = guidellm.get("profile") or {}
                 if isinstance(profile, dict):

@@ -677,9 +677,10 @@ def cmd_wait_completions(args: argparse.Namespace) -> int:
 
 def cmd_benchmark_run(args: argparse.Namespace) -> int:
     plan = load_runtime_plan(args)
-    if plan.benchmark.tool not in {"guidellm", "aiperf"}:
+    if plan.benchmark.tool not in {"guidellm", "aiperf", "inference-perf"}:
         raise ValidationError(
-            f"unsupported benchmark tool: {plan.benchmark.tool}; supported tools are guidellm and aiperf"
+            "unsupported benchmark tool: "
+            f"{plan.benchmark.tool}; supported tools are guidellm, aiperf, and inference-perf"
         )
     output_dir = Path(args.output_dir).resolve() if args.output_dir else None
     benchmark_target, _ = resolve_target_url(plan, target_url=args.target_url)
@@ -1667,7 +1668,7 @@ def benchmark_group() -> None:
 @benchmark_group.command(
     "run",
     help="Execute the configured benchmark and optionally upload results to MLflow.",
-    short_help="Run a GuideLLM benchmark",
+    short_help="Run the configured benchmark",
 )
 @runtime_plan_source_options
 @click.option(
