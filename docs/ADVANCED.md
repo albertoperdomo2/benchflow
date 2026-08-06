@@ -374,6 +374,7 @@ spec:
     base_url: https://my-existing-endpoint.example.com # --target-url
     path: /v1/models # --target-path; defaults to /v1/models
     metrics_release_name: my-existing-release # --target-metrics-release-name; enables metrics collection for an existing endpoint
+    endpoint_scope: external # --target-endpoint-scope; applies only to discovered targets
   ttl_seconds_after_finished: 3600 # --ttl-seconds-after-finished
   stages:
     download: true # --download / --no-download
@@ -474,6 +475,13 @@ Target-cluster semantics:
 - use `--target-kubeconfig` only for direct local BenchFlow commands; Tekton `PipelineRun`s cannot see your local filesystem
 - create the management-cluster Secret with `bflow target kubeconfig-secret create`
 - the control cluster runs Tekton, but target clusters do not need Tekton
+
+Endpoint scope:
+
+- `external` is the default and uses the deployed resource's external status URL. For RHOAI, this is the path that exercises the Gateway/EPP routing layer.
+- `internal` resolves a discovered endpoint to a cluster-local workload Service. For RHOAI `LLMInferenceService`, it uses `https://<release>-kserve-workload-svc.<namespace>.svc.cluster.local:8000`; for an RHOAI `InferenceService`, it uses `http://<release>-predictor.<namespace>.svc.cluster.local:8080`.
+- Therefore, RHOAI `internal` **bypasses Gateway/EPP routing**. Use it only when intentionally measuring the model-serving workload without EPP; use `external` for routing, prefix-cache, or end-to-end measurements.
+- `endpoint_scope` does not rewrite an explicitly supplied `spec.target.base_url` or `--target-url`.
 
 Existing endpoint path:
 

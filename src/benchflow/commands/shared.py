@@ -600,8 +600,8 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
             type=click.Choice(["external", "internal"]),
             help=(
                 "Endpoint scope to use when resolving a deployed target. Defaults "
-                "to external; internal uses cluster-local service URLs where "
-                "supported."
+                "to external. For RHOAI, internal calls the workload Service and "
+                "bypasses Gateway/EPP routing."
             ),
         ),
         click.option(
