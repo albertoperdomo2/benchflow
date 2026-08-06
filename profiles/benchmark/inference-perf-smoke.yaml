@@ -1,0 +1,35 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: inference-perf-smoke
+spec:
+  tool: inference-perf
+  inference_perf:
+    config:
+      api:
+        type: chat
+        streaming: true
+      load:
+        type: constant
+        interval: 15.0
+        request_timeout: 120
+        stages:
+          - rate: 1
+            duration: 30
+      data:
+        type: synthetic
+        input_distribution:
+          min: 32
+          max: 32
+          mean: 32
+          std_dev: 1
+        output_distribution:
+          min: 16
+          max: 16
+          mean: 16
+          std_dev: 1
+      report:
+        request_lifecycle:
+          summary: true
+          per_stage: true
+          per_request: true
