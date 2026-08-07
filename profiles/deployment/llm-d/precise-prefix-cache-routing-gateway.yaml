@@ -21,7 +21,7 @@ spec:
       PYTHONHASHSEED: "0"
     shared_memory_size: 200Gi
     vllm_args:
-      - --gpu-memory-utilization=0.64
+      - --gpu-memory-utilization=0.92
       - --enable-prefix-caching
   options:
     epp_config: |

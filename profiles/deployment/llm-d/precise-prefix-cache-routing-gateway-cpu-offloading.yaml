@@ -21,7 +21,7 @@ spec:
       PYTHONHASHSEED: "0"
     shared_memory_size: 200Gi
     vllm_args:
-      - --gpu-memory-utilization=0.64
+      - --gpu-memory-utilization=0.92
       - --enable-prefix-caching
       - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":34359738368}}
   options:
