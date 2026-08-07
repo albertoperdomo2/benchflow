@@ -4,12 +4,10 @@ import json
 import os
 import secrets
 import shutil
-import socket
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlsplit
 
 import yaml
 
@@ -91,87 +89,6 @@ def _remote_env(extra_env: dict[str, str] | None = None) -> list[dict[str, str]]
     return env
 
 
-def _remote_job_host_aliases(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
-    """Pin an isolated RHOAI Gateway address while retaining its TLS hostname."""
-    aliases = dict(plan.target_cluster.host_aliases)
-    target = plan.deployment.target
-    if not (
-        plan.deployment.platform == "rhoai"
-        and target.discovery == "llminferenceservice-status-url"
-        and target.endpoint_scope == "external"
-    ):
-        return [
-            {"ip": ip_address, "hostnames": [hostname]}
-            for hostname, ip_address in sorted(aliases.items())
-        ]
-
-    kubectl_cmd = require_any_command("oc", "kubectl")
-    service = run_json_command(
-        [
-            kubectl_cmd,
-            "get",
-            "llminferenceservice",
-            target.resource_name,
-            "-n",
-            plan.deployment.namespace,
-            "-o",
-            "json",
-        ]
-    )
-    status_url = str((service.get("status") or {}).get("url") or "").strip()
-    hostname = urlsplit(status_url).hostname
-    refs = (((service.get("spec") or {}).get("router") or {}).get("gateway") or {}).get(
-        "refs"
-    ) or []
-    if not hostname or len(refs) != 1 or not isinstance(refs[0], dict):
-        raise CommandError(
-            f"LLMInferenceService {target.resource_name} does not expose a usable "
-            "external Gateway reference"
-        )
-    gateway_name = str(refs[0].get("name") or "").strip()
-    gateway_namespace = str(refs[0].get("namespace") or plan.deployment.namespace)
-    gateway = run_json_command(
-        [
-            kubectl_cmd,
-            "get",
-            "gateway",
-            gateway_name,
-            "-n",
-            gateway_namespace,
-            "-o",
-            "json",
-        ]
-    )
-    addresses = (gateway.get("status") or {}).get("addresses") or []
-    address = addresses[0] if isinstance(addresses, list) and addresses else {}
-    gateway_address = str(
-        address.get("value") or address.get("hostname") or ""
-    ).strip()
-    if not gateway_address:
-        raise CommandError(
-            f"Gateway {gateway_namespace}/{gateway_name} does not have an external "
-            "address yet"
-        )
-    try:
-        address_infos = socket.getaddrinfo(
-            gateway_address, 443, type=socket.SOCK_STREAM
-        )
-    except OSError as exc:
-        raise CommandError(
-            f"could not resolve external Gateway address {gateway_address}"
-        ) from exc
-    ips = sorted({info[4][0] for info in address_infos if info[0] == socket.AF_INET})
-    if not ips:
-        raise CommandError(
-            f"external Gateway address {gateway_address} does not have an IPv4 address"
-        )
-    aliases[hostname] = ips[0]
-    return [
-        {"ip": ip_address, "hostnames": [alias_hostname]}
-        for alias_hostname, ip_address in sorted(aliases.items())
-    ]
-
-
 def _create_remote_job(
     plan: ResolvedRunPlan,
     *,
@@ -183,8 +100,6 @@ def _create_remote_job(
     volumes: list[dict[str, Any]] | None = None,
 ) -> None:
     safe_kind = sanitize_name(job_kind, max_length=20)
-    with use_kubeconfig(plan.target_cluster.kubeconfig):
-        host_aliases = _remote_job_host_aliases(plan)
     manifest = {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -211,7 +126,6 @@ def _create_remote_job(
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": plan.service_account,
-                    **({"hostAliases": host_aliases} if host_aliases else {}),
                     "containers": [
                         {
                             "name": "main",
