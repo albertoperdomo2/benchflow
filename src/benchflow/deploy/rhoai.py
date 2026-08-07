@@ -27,6 +27,8 @@ from ..rhoai_gateway import (
 from ..ui import detail, step, success
 
 _PUBLIC_ROUTE_AUTH_TIMEOUT_SECONDS = 900
+_RHOAI_INFERENCE_POOL_CRD = "inferencepools.inference.networking.k8s.io"
+_RHOAI_INFERENCE_POOL_API_VERSION = "v1"
 
 
 def _deployment_kind(plan: ResolvedRunPlan) -> str:
@@ -41,6 +43,51 @@ def _deployment_manifest_filename(plan: ResolvedRunPlan) -> str:
     if _deployment_kind(plan) == "InferenceService":
         return "inferenceservice.yaml"
     return "llminferenceservice.yaml"
+
+
+def _require_rhoai_inference_pool_api(kubectl_cmd: str) -> None:
+    """Ensure the API required by the RHOAI 3.5 EndpointPicker is available."""
+    result = run_command(
+        [kubectl_cmd, "get", "crd", _RHOAI_INFERENCE_POOL_CRD, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise CommandError(
+            "RHOAI LLMInferenceService deployments require "
+            f"{_RHOAI_INFERENCE_POOL_CRD}/{_RHOAI_INFERENCE_POOL_API_VERSION}. "
+            "The cluster only has a legacy or missing Gateway API Inference "
+            "Extension installation. Install the promoted InferencePool CRD "
+            "before deploying."
+        )
+
+    try:
+        payload = yaml.safe_load(result.stdout or "{}") or {}
+    except yaml.YAMLError as exc:
+        raise CommandError(
+            f"could not parse {_RHOAI_INFERENCE_POOL_CRD} returned by the cluster"
+        ) from exc
+
+    conditions = (payload.get("status") or {}).get("conditions") or []
+    established = any(
+        condition.get("type") == "Established" and condition.get("status") == "True"
+        for condition in conditions
+        if isinstance(condition, dict)
+    )
+    versions = (payload.get("spec") or {}).get("versions") or []
+    v1_served = any(
+        version.get("name") == _RHOAI_INFERENCE_POOL_API_VERSION
+        and version.get("served") is True
+        for version in versions
+        if isinstance(version, dict)
+    )
+    if not established or not v1_served:
+        raise CommandError(
+            "RHOAI LLMInferenceService deployments require an established "
+            f"{_RHOAI_INFERENCE_POOL_CRD}/{_RHOAI_INFERENCE_POOL_API_VERSION} "
+            "CRD. Install or upgrade the Gateway API Inference Extension "
+            "before deploying."
+        )
 
 
 def _deployment_exists(
@@ -396,6 +443,9 @@ def deploy_rhoai(
             )
         success(f"Skipping deploy; {resource_kind} {release_name} already exists")
         return manifests_dir.resolve() if manifests_dir else Path.cwd()
+
+    if resource_kind == "LLMInferenceService":
+        _require_rhoai_inference_pool_api(kubectl_cmd)
 
     profiler_configmap = (
         render_rhoai_profiler_configmap(plan) if _profiling_enabled(plan) else None
