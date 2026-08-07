@@ -1922,10 +1922,14 @@ def generate_plot_only_report(
             baseline_version,
         )
 
+    if not runs_data:
+        raise ValueError("No runs provided for report generation")
+
+    # The model is needed for the historical CSV processor regardless of
+    # whether compatibility validation is forced or performed normally.
+    model = runs_data[0]["params"].get("model")
+
     if force:
-        if not runs_data:
-            raise ValueError("No runs provided for report generation")
-        model = runs_data[0]["params"].get("model")
         logger.warning(
             "Skipping GuideLLM run compatibility validation because --force was set; "
             "report metadata will use the first run as the reference"

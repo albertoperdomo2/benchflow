@@ -36,6 +36,7 @@ DATA_PROFILE_PREFERRED_ORDER = [
     "turns",
     "prefix_tokens",
     "prefix_count",
+    "prefix_buckets",
 ]
 
 THROUGHPUT_TOTAL_LEGEND = "legend20"
@@ -161,6 +162,40 @@ def _ordered_data_profile_items(data_profile: Dict[str, Any]) -> list[tuple[str,
         key=lambda item: item[0],
     )
     return [*preferred, *remaining]
+
+
+def _format_data_profile_value(key: str, value: Any) -> str:
+    """Format structured profile values for the HTML report subtitle."""
+    if key == "prefix_buckets":
+        parsed = value
+        if isinstance(value, str):
+            cleaned = html.unescape(value.strip())
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError:
+                try:
+                    parsed = ast.literal_eval(cleaned)
+                except (ValueError, SyntaxError):
+                    parsed = value
+
+        if isinstance(parsed, list):
+            buckets = []
+            for bucket in parsed:
+                if not isinstance(bucket, dict):
+                    continue
+                fields = ", ".join(
+                    f"{field}={bucket[field]}"
+                    for field in ("bucket_weight", "prefix_count", "prefix_tokens")
+                    if field in bucket
+                )
+                if fields:
+                    buckets.append(f"{{{fields}}}")
+            if buckets:
+                return f"[{'; '.join(buckets)}]"
+
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value)
 
 
 def _has_metric_samples(metric_group: Dict[str, Any]) -> bool:
@@ -2231,7 +2266,7 @@ class BenchmarkProcessor:
 
         # Build data profile subtitle
         data_profile_parts = [
-            f"{key}: {value}"
+            f"{key}: {_format_data_profile_value(key, value)}"
             for key, value in _ordered_data_profile_items(self._resolved_data_profile())
         ]
 
