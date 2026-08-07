@@ -20,23 +20,24 @@ another user can submit an independent experiment at the same time.
 ## Design
 
 Every BenchFlow RHOAI `LLMInferenceService` release creates and owns one
-listener section on the bootstrap-managed `openshift-ai-inference` Gateway in
-`openshift-ingress`:
+Gateway in `openshift-ingress`:
 
-- The listener name is a deterministic hash of the deployment namespace and
-  release name, avoiding collisions between concurrent releases.
-- Its HTTPS and TLS configuration is copied from the bootstrap listener, but
-  its hostname is omitted. The external hostname belongs to the bootstrap
-  Gateway and resolves to its single load balancer.
+- The Gateway name is a compact deterministic hash of the deployment namespace
+  and release name, avoiding collisions and keeping Istio-derived Deployment
+  labels below Kubernetes' 63-character label limit.
+- Its GatewayClass, Istio revision label, HTTPS listener, hostname, TLS
+  reference, and allowed-routes policy are copied from the bootstrap-managed
+  `openshift-ai-inference` Gateway.
 - The `LLMInferenceService` explicitly uses
-  `spec.router.gateway.refs[0]`, including that listener's `sectionName`. It
-  never relies on an empty `router.gateway` default.
+  `spec.router.gateway.refs[0]` for this Gateway. It never relies on an empty
+  `router.gateway` default.
 
-The isolation boundary is the release-scoped listener section, not a separate
-Gateway object or the external hostname. Creating multiple Gateway objects
-with the bootstrap hostname is invalid on clusters where that hostname has one
-DNS target: only one Gateway's load balancer can receive external traffic,
-leaving the other accepted HTTPRoutes externally unreachable.
+The isolation boundary is the release-scoped Gateway object and its listener,
+not the external hostname. The shared hostname cannot route to every isolated
+Gateway because each Gateway receives an independent load balancer. For an
+external benchmark, BenchFlow therefore resolves the referenced release
+Gateway's published address and retains the release path from the
+LLMInferenceService status URL.
 
 This applies to all BenchFlow RHOAI `LLMInferenceService` modes, including
 default, approximate-prefix-cache, and precise-prefix-cache. It does not apply
@@ -46,14 +47,14 @@ LLMInferenceService router/EPP path.
 ## Lifecycle
 
 1. Bootstrap creates or reconciles the shared `openshift-ai-inference` Gateway.
-2. Deployment reads its trusted HTTPS listener source, atomically appends a
-   release listener section, and waits for that listener's `Accepted=True` and
-   `Programmed=True` conditions.
+2. Deployment reads that Gateway as the trusted TLS and listener source,
+   applies its release Gateway, and waits for `Accepted=True` and
+   `Programmed=True`.
 3. Deployment applies the LLMInferenceService with an explicit Gateway ref.
-   The listener patch and LLMInferenceService are captured as artifacts.
-4. Cleanup deletes the LLMInferenceService first, then removes only its
-   listener section. It also removes that listener if the service is already
-   absent, covering partial failed runs.
+   The rendered Gateway and LLMInferenceService are captured as artifacts.
+4. Cleanup deletes the LLMInferenceService first, then its release Gateway. It
+   also deletes the Gateway if the service is already absent, covering partial
+   failed runs.
 
 If a release already exists but points at the shared Gateway, BenchFlow fails
 instead of silently reusing it. Clean up and redeploy that release with the
@@ -63,7 +64,7 @@ current image.
 
 - The bootstrap-managed `openshift-ai-inference` Gateway must have an HTTPS
   listener with a hostname and a local TLS Secret reference.
-- The BenchFlow runner must be allowed to get and patch Gateways in
+- The BenchFlow runner must be allowed to get, create, and delete Gateways in
   `openshift-ingress`.
 
 BenchFlow fails clearly when any precondition is missing. It does not fall back
@@ -75,13 +76,11 @@ silently invalid.
 Before accepting this path on a RHOAI/Istio combination, launch two concurrent
 precise-prefix-cache releases and verify:
 
-- each generated HTTPRoute has only its release listener `sectionName` parent
-  reference;
-- the two HTTPRoutes attach to distinct listener sections on the bootstrap
-  Gateway;
+- each generated HTTPRoute has only its release Gateway parent reference;
+- the two HTTPRoutes attach to distinct Gateway objects and listeners;
 - Istio retains an `ExtProcPerRoute` override for each route;
 - EndpointPicker logs show per-request activity and prefix-cache scoring; and
-- cleanup removes only the corresponding release listener section.
+- cleanup removes only the corresponding release Gateway.
 
 The RHOAI documentation supports explicit `spec.router.gateway.refs`.
 INFERENG-6962 documents the failure caused by multiple HTTPRoutes sharing one

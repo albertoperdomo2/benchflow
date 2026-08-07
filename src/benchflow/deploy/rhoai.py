@@ -18,8 +18,11 @@ from ..rhoai_mooncake import (
     rhoai_mooncake_spec,
 )
 from ..rhoai_gateway import (
-    ensure_rhoai_release_gateway_listener,
+    load_rhoai_gateway_configuration,
+    render_rhoai_release_gateway,
+    rhoai_release_gateway_name,
     rhoai_release_gateway_reference,
+    wait_for_rhoai_gateway_ready,
 )
 from ..ui import detail, step, success
 
@@ -80,23 +83,31 @@ def _existing_llmisvc_uses_release_gateway(
     return rhoai_release_gateway_reference(plan) in refs
 
 
-def _ensure_release_gateway_listener(
+def _ensure_release_gateway(
     plan: ResolvedRunPlan,
     *,
     kubectl_cmd: str,
     timeout_seconds: int,
-) -> list[dict[str, object]]:
+) -> dict[str, object]:
+    config = load_rhoai_gateway_configuration(kubectl_cmd)
+    manifest = render_rhoai_release_gateway(plan, config)
+    gateway_name = rhoai_release_gateway_name(plan)
     step(
-        "Adding isolated RHOAI Gateway listener for release "
-        f"{plan.deployment.release_name}"
+        f"Applying isolated RHOAI Gateway {gateway_name} in {config.namespace} "
+        f"for release {plan.deployment.release_name}"
     )
-    patch = ensure_rhoai_release_gateway_listener(
-        plan,
-        kubectl_cmd=kubectl_cmd,
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text=yaml.safe_dump(manifest, sort_keys=False),
+    )
+    wait_for_rhoai_gateway_ready(
+        kubectl_cmd,
+        namespace=config.namespace,
+        name=gateway_name,
         timeout_seconds=min(timeout_seconds, 900),
     )
-    success(f"RHOAI Gateway listener is ready for {plan.deployment.release_name}")
-    return patch
+    success(f"RHOAI Gateway {gateway_name} is ready")
+    return manifest
 
 
 def _profiling_enabled(plan: ResolvedRunPlan) -> bool:
@@ -380,7 +391,7 @@ def deploy_rhoai(
         ):
             raise CommandError(
                 f"existing LLMInferenceService {release_name} does not use its "
-                "BenchFlow release-scoped Gateway listener. Clean up and redeploy it rather "
+                "BenchFlow release-scoped Gateway. Clean up and redeploy it rather "
                 "than silently bypassing EndpointPicker routing."
             )
         success(f"Skipping deploy; {resource_kind} {release_name} already exists")
@@ -390,8 +401,8 @@ def deploy_rhoai(
         render_rhoai_profiler_configmap(plan) if _profiling_enabled(plan) else None
     )
     mooncake_manifests = render_rhoai_mooncake_manifests(plan)
-    release_gateway_listener_patch = (
-        _ensure_release_gateway_listener(
+    release_gateway = (
+        _ensure_release_gateway(
             plan,
             kubectl_cmd=kubectl_cmd,
             timeout_seconds=verify_timeout_seconds,
@@ -430,13 +441,12 @@ def deploy_rhoai(
                 yaml.safe_dump(profiler_configmap, sort_keys=False), encoding="utf-8"
             )
             detail(f"Rendered profiler ConfigMap written to {profiler_target}")
-        if release_gateway_listener_patch is not None:
-            gateway_target = manifests_dir / "rhoai-gateway-listener-patch.yaml"
+        if release_gateway is not None:
+            gateway_target = manifests_dir / "rhoai-release-gateway.yaml"
             gateway_target.write_text(
-                yaml.safe_dump(release_gateway_listener_patch, sort_keys=False),
-                encoding="utf-8",
+                yaml.safe_dump(release_gateway, sort_keys=False), encoding="utf-8"
             )
-            detail(f"Rendered RHOAI Gateway listener patch written to {gateway_target}")
+            detail(f"Rendered RHOAI Gateway manifest written to {gateway_target}")
         names = [_deployment_manifest_filename(plan)]
         for manifest, name in zip(manifests, names, strict=True):
             target = manifests_dir / name

@@ -776,7 +776,7 @@ def write_deployment_assets(
     plan: ResolvedRunPlan,
     output_dir: Path,
     *,
-    rhoai_gateway_listener_patch: list[dict[str, Any]] | None = None,
+    rhoai_release_gateway: dict[str, Any] | None = None,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -799,11 +799,11 @@ def write_deployment_assets(
     if plan.deployment.platform == "rhoai":
         if (
             plan.deployment.target.resource_kind != "InferenceService"
-            and rhoai_gateway_listener_patch is None
+            and rhoai_release_gateway is None
         ):
             raise ValidationError(
                 "RHOAI LLMInferenceService rendering requires its release-scoped "
-                "Gateway listener patch"
+                "Gateway manifest"
             )
         for pvc_manifest in render_runtime_pvc_manifests(plan):
             pvc_name = str(pvc_manifest.get("metadata", {}).get("name") or "runtime")
@@ -835,10 +835,10 @@ def write_deployment_assets(
                 encoding="utf-8",
             )
             written.append(profiler_target)
-        if rhoai_gateway_listener_patch is not None:
-            gateway_target = output_dir / "rhoai-gateway-listener-patch.yaml"
+        if rhoai_release_gateway is not None:
+            gateway_target = output_dir / "rhoai-release-gateway.yaml"
             gateway_target.write_text(
-                yaml.safe_dump(rhoai_gateway_listener_patch, sort_keys=False),
+                yaml.safe_dump(rhoai_release_gateway, sort_keys=False),
                 encoding="utf-8",
             )
             written.append(gateway_target)
