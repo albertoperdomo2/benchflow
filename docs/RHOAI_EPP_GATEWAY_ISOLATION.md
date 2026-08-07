@@ -33,11 +33,11 @@ Gateway in `openshift-ingress`:
   `router.gateway` default.
 
 The isolation boundary is the release-scoped Gateway object and its listener,
-not the external hostname. The shared hostname cannot route to every isolated
-Gateway because each Gateway receives an independent load balancer. For an
-external benchmark, BenchFlow therefore resolves the referenced release
-Gateway's published address and retains the release path from the
-LLMInferenceService status URL.
+not the external hostname. Each Gateway receives an independent load balancer,
+but its TLS listener still requires the hostname published in the
+LLMInferenceService status URL. For remote external benchmark jobs, BenchFlow
+therefore adds a pod host alias that maps that hostname to the release
+Gateway's load-balancer IP. The URL, TLS SNI, and release path remain unchanged.
 
 This applies to all BenchFlow RHOAI `LLMInferenceService` modes, including
 default, approximate-prefix-cache, and precise-prefix-cache. It does not apply
