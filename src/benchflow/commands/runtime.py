@@ -779,6 +779,9 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
         ]
         if args.mlflow_run_ids
         else None,
+        local_runs_dirs=[Path(path).resolve() for path in args.local_runs_dir]
+        if args.local_runs_dir
+        else None,
         mlflow_tracking_uri=args.mlflow_tracking_uri,
         forge_workload=args.forge_workload,
         versions=[item.strip() for item in args.versions.split(",") if item.strip()]
@@ -1808,6 +1811,17 @@ def _register_comparison_report_options(command):
         help="Comma-separated MLflow run IDs to include in the report.",
     )(command)
     command = click.option(
+        "--local-runs-dir",
+        "local_runs_dir",
+        multiple=True,
+        type=click.Path(file_okay=False, exists=True, path_type=Path),
+        help=(
+            "Directory containing downloaded Forge MLflow artifact trees. Repeat "
+            "to combine directories. Each run directory name is used as its base "
+            "version label."
+        ),
+    )(command)
+    command = click.option(
         "--mlflow-tracking-uri",
         default=lambda: os.environ.get("MLFLOW_TRACKING_URI"),
         show_default="env MLFLOW_TRACKING_URI",
@@ -1821,7 +1835,7 @@ def _register_comparison_report_options(command):
         "--forge-workload",
         help=(
             "Exact Forge workload label to compare, for example concurrent-1k-1k. "
-            "Only supported for Forge MLflow runs."
+            "Only supported for Forge MLflow runs or local Forge artifacts."
         ),
     )(command)
     command = click.option(

@@ -119,6 +119,7 @@ def generate_report(
     output_file: Path | None = None,
     replicas: int = 1,
     mlflow_run_ids: list[str] | None = None,
+    local_runs_dirs: list[Path] | None = None,
     mlflow_tracking_uri: str | None = None,
     forge_workload: str | None = None,
     versions: list[str] | None = None,
@@ -135,9 +136,13 @@ def generate_report(
         plan.benchmark.tool
         if plan is not None
         else (
-            _detect_mlflow_report_tool(mlflow_run_ids, mlflow_tracking_uri)
-            if mlflow_run_ids
-            else "guidellm"
+            "forge"
+            if local_runs_dirs
+            else (
+                _detect_mlflow_report_tool(mlflow_run_ids, mlflow_tracking_uri)
+                if mlflow_run_ids
+                else "guidellm"
+            )
         )
     )
     if tool == "aiperf":
@@ -172,11 +177,12 @@ def generate_report(
     if tool == "forge":
         if json_path is not None:
             raise ValidationError(
-                "Forge comparison reports require --mlflow-run-ids; "
-                "local Forge artifact directories are not supported"
+                "Forge comparison reports do not support --json-path; use "
+                "--mlflow-run-ids, --local-runs-dir, or both"
             )
         return forge_backend.generate_report(
             mlflow_run_ids=mlflow_run_ids or [],
+            local_runs_dirs=local_runs_dirs or [],
             mlflow_tracking_uri=mlflow_tracking_uri,
             accelerator=accelerator,
             forge_workload=forge_workload,

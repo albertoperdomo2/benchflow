@@ -1415,7 +1415,7 @@ uploaded to MLflow.
 ### Comparison Reports
 
 Use `bflow benchmark plot comparison` to generate the comparison report from
-existing MLflow runs or benchmark JSON inputs.
+existing MLflow runs, local Forge artifact trees, or benchmark JSON inputs.
 
 You can either pass `--mlflow-tracking-uri` explicitly or let BenchFlow and the
 MLflow client read the standard environment variables:
@@ -1452,6 +1452,35 @@ bflow benchmark plot comparison \
   --mlflow-run-ids 3f0c1f...,91ab22...,c72de9... \
   --mlflow-tracking-uri https://mlflow.example.com
 ```
+
+Forge artifacts can also be read locally when an MLflow artifact download is
+unavailable or unreliable. Pass a directory containing one or more downloaded
+Forge run artifact directories. Each run directory name becomes the base version
+in the report, so name them accordingly before generating the report:
+
+```text
+./forge-runs/
+  llm-d-main-e09c88e/
+    01__test/...
+  llm-d-main-6afd09c/
+    01__test/...
+```
+
+```bash
+bflow benchmark plot comparison \
+  --local-runs-dir ./forge-runs \
+  --forge-workload concurrent-1k-1k \
+  --versions RHOAI-3.4,llm-d-main-e09c88e,llm-d-main-6afd09c \
+  --output-file forge-report.html
+```
+
+`--local-runs-dir` can be repeated and can be combined with
+`--mlflow-run-ids`. Local Forge artifacts provide the workload, deployment,
+accelerator, and GuideLLM results; MLflow run parameters are not copied into the
+artifact tree, which is why the directory name supplies the base version. If the
+directory is named after an MLflow run ID instead, select that prefix with
+`--versions` and use `--version-override` to give the resulting composed version
+its desired report label.
 
 This path:
 
@@ -1556,7 +1585,7 @@ bflow benchmark plot comparison \
 
 Useful notes:
 
-- `--mlflow-run-ids` is the key input for MLflow-backed comparison reports
+- `--mlflow-run-ids` is the key input for MLflow-backed comparison reports; Forge comparisons can instead use `--local-runs-dir`
 - `--mlflow-tracking-uri` should point to the MLflow server that owns those run IDs
 - if `--mlflow-tracking-uri` is omitted, BenchFlow falls back to `MLFLOW_TRACKING_URI`
 - MLflow authentication can come from `MLFLOW_TRACKING_USERNAME` and `MLFLOW_TRACKING_PASSWORD`

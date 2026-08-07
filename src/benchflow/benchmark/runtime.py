@@ -1808,6 +1808,7 @@ def _filter_rows_for_workload(
     workload_data_profile: dict[str, Any],
     *,
     source_name: str,
+    force: bool = False,
 ) -> Any:
     """Keep only rows matching Forge's static workload profile fields."""
     if dataframe.empty:
@@ -1831,6 +1832,14 @@ def _filter_rows_for_workload(
         except (TypeError, ValueError):
             continue
         if column not in dataframe.columns:
+            if force:
+                logger.warning(
+                    "Cannot strictly scope %s to Forge workload because it lacks "
+                    "column %s; retaining historical rows because force is enabled",
+                    source_name,
+                    column,
+                )
+                return dataframe
             raise ValueError(
                 f"Cannot scope {source_name} to Forge workload: missing column {column}"
             )
@@ -2004,7 +2013,10 @@ def generate_plot_only_report(
 
     if workload_data_profile is not None:
         consolidated_df = _filter_rows_for_workload(
-            consolidated_df, workload_data_profile, source_name="historical CSV"
+            consolidated_df,
+            workload_data_profile,
+            source_name="historical CSV",
+            force=force,
         )
 
     # Process each run to get its CSV data
