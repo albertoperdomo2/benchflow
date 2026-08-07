@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -10,51 +11,26 @@ from .cluster import CommandError, run_command, run_json_command
 from .models import ResolvedRunPlan
 
 
-RHOAI_GATEWAY_CLASS_NAME = "openshift-ai-inference"
 RHOAI_GATEWAY_NAME = "openshift-ai-inference"
 RHOAI_GATEWAY_NAMESPACE = "openshift-ingress"
+_LISTENER_PATCH_RETRIES = 5
 
 
 @dataclass(frozen=True, slots=True)
 class RhoaiGatewayConfiguration:
     namespace: str
-    gateway_class_name: str
-    labels: dict[str, str]
     listener: dict[str, Any]
 
 
-def rhoai_release_gateway_name(plan: ResolvedRunPlan) -> str:
-    """Return a compact, cluster-unique Gateway name for a BenchFlow release.
-
-    Istio derives its gateway Deployment label from ``<gateway>-<class>``.
-    Keep the Gateway name short enough for Kubernetes' 63-character label
-    limit with the RHOAI GatewayClass used by BenchFlow.
-    """
+def rhoai_release_gateway_listener_name(plan: ResolvedRunPlan) -> str:
+    """Return a stable listener name that is unique across BenchFlow namespaces."""
     identity = f"{plan.deployment.namespace}/{plan.deployment.release_name}"
-    suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+    suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
     return f"benchflow-{suffix}"
 
 
-def _https_listener(payload: dict[str, Any]) -> dict[str, Any]:
-    listeners = (payload.get("spec") or {}).get("listeners") or []
-    for listener in listeners:
-        if not isinstance(listener, dict):
-            continue
-        if str(listener.get("protocol") or "").upper() != "HTTPS":
-            continue
-        hostname = str(listener.get("hostname") or "").strip()
-        tls = listener.get("tls")
-        if hostname and isinstance(tls, dict):
-            return listener
-    raise CommandError(
-        "RHOAI shared Gateway must expose an HTTPS listener with a hostname and TLS "
-        f"configuration: {RHOAI_GATEWAY_NAMESPACE}/{RHOAI_GATEWAY_NAME}"
-    )
-
-
-def load_rhoai_gateway_configuration(kubectl_cmd: str) -> RhoaiGatewayConfiguration:
-    """Read the bootstrap-managed Gateway used as the TLS and domain source."""
-    payload = run_json_command(
+def _gateway_payload(kubectl_cmd: str) -> dict[str, Any]:
+    return run_json_command(
         [
             kubectl_cmd,
             "get",
@@ -66,91 +42,202 @@ def load_rhoai_gateway_configuration(kubectl_cmd: str) -> RhoaiGatewayConfigurat
             "json",
         ]
     )
-    spec = payload.get("spec") or {}
-    metadata = payload.get("metadata") or {}
-    labels = metadata.get("labels") or {}
-    gateway_class_name = str(
-        spec.get("gatewayClassName") or RHOAI_GATEWAY_CLASS_NAME
-    ).strip()
-    return RhoaiGatewayConfiguration(
-        namespace=RHOAI_GATEWAY_NAMESPACE,
-        gateway_class_name=gateway_class_name,
-        labels={
-            key: value
-            for key, value in labels.items()
-            if isinstance(key, str) and isinstance(value, str) and key == "istio.io/rev"
-        },
-        listener=copy.deepcopy(_https_listener(payload)),
+
+
+def _https_listener(payload: dict[str, Any]) -> dict[str, Any]:
+    listeners = (payload.get("spec") or {}).get("listeners") or []
+    for listener in listeners:
+        if not isinstance(listener, dict):
+            continue
+        if str(listener.get("protocol") or "").upper() != "HTTPS":
+            continue
+        if str(listener.get("hostname") or "").strip() and isinstance(
+            listener.get("tls"), dict
+        ):
+            return listener
+    raise CommandError(
+        "RHOAI shared Gateway must expose an HTTPS listener with a hostname and TLS "
+        f"configuration: {RHOAI_GATEWAY_NAMESPACE}/{RHOAI_GATEWAY_NAME}"
     )
 
 
-def render_rhoai_release_gateway(
+def load_rhoai_gateway_configuration(kubectl_cmd: str) -> RhoaiGatewayConfiguration:
+    """Read the bootstrap-managed Gateway's working HTTPS listener."""
+    return RhoaiGatewayConfiguration(
+        namespace=RHOAI_GATEWAY_NAMESPACE,
+        listener=copy.deepcopy(_https_listener(_gateway_payload(kubectl_cmd))),
+    )
+
+
+def render_rhoai_release_gateway_listener(
     plan: ResolvedRunPlan,
     config: RhoaiGatewayConfiguration,
 ) -> dict[str, Any]:
-    """Render a release-scoped Gateway with an isolated HTTPS listener."""
+    """Create an isolated listener on the externally published Gateway.
+
+    The bootstrap Gateway owns the external hostname and load balancer. A
+    release-specific listener section keeps its HTTPRoute separate while all
+    releases remain reachable through that single published endpoint.
+    """
     listener = copy.deepcopy(config.listener)
-    listener["name"] = "benchflow"
-    return {
-        "apiVersion": "gateway.networking.k8s.io/v1",
-        "kind": "Gateway",
-        "metadata": {
-            "name": rhoai_release_gateway_name(plan),
-            "namespace": config.namespace,
-            "labels": {
-                "app.kubernetes.io/name": "benchflow",
-                "app.kubernetes.io/managed-by": "benchflow",
-                "benchflow.io/release": plan.deployment.release_name,
-                "benchflow.io/source-namespace": plan.deployment.namespace,
-                **config.labels,
-            },
-        },
-        "spec": {
-            "gatewayClassName": config.gateway_class_name,
-            "listeners": [listener],
-        },
-    }
+    listener["name"] = rhoai_release_gateway_listener_name(plan)
+    # Reusing the hostname on port 443 would conflict with the bootstrap
+    # listener. sectionName is the routing isolation boundary here.
+    listener.pop("hostname", None)
+    return listener
+
+
+def render_rhoai_release_gateway_listener_patch(
+    plan: ResolvedRunPlan,
+    config: RhoaiGatewayConfiguration,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "op": "add",
+            "path": "/spec/listeners/-",
+            "value": render_rhoai_release_gateway_listener(plan, config),
+        }
+    ]
 
 
 def rhoai_release_gateway_reference(plan: ResolvedRunPlan) -> dict[str, str]:
     return {
-        "name": rhoai_release_gateway_name(plan),
+        "name": RHOAI_GATEWAY_NAME,
         "namespace": RHOAI_GATEWAY_NAMESPACE,
+        "sectionName": rhoai_release_gateway_listener_name(plan),
     }
 
 
-def wait_for_rhoai_gateway_ready(
+def _listener_index(payload: dict[str, Any], listener_name: str) -> int | None:
+    listeners = (payload.get("spec") or {}).get("listeners") or []
+    for index, listener in enumerate(listeners):
+        if isinstance(listener, dict) and listener.get("name") == listener_name:
+            return index
+    return None
+
+
+def _listener_ready(payload: dict[str, Any], listener_name: str) -> bool:
+    listeners = (payload.get("status") or {}).get("listeners") or []
+    for listener in listeners:
+        if not isinstance(listener, dict) or listener.get("name") != listener_name:
+            continue
+        conditions = listener.get("conditions") or []
+        accepted = any(
+            item.get("type") == "Accepted" and item.get("status") == "True"
+            for item in conditions
+            if isinstance(item, dict)
+        )
+        programmed = any(
+            item.get("type") == "Programmed" and item.get("status") == "True"
+            for item in conditions
+            if isinstance(item, dict)
+        )
+        return accepted and programmed
+    return False
+
+
+def wait_for_rhoai_release_gateway_listener(
     kubectl_cmd: str,
     *,
-    namespace: str,
-    name: str,
+    plan: ResolvedRunPlan,
     timeout_seconds: int,
 ) -> None:
+    listener_name = rhoai_release_gateway_listener_name(plan)
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
+        if _listener_ready(_gateway_payload(kubectl_cmd), listener_name):
+            return
+        time.sleep(5)
+    raise CommandError(
+        f"timed out waiting for RHOAI Gateway listener {listener_name} on "
+        f"{RHOAI_GATEWAY_NAMESPACE}/{RHOAI_GATEWAY_NAME} to become ready"
+    )
+
+
+def ensure_rhoai_release_gateway_listener(
+    plan: ResolvedRunPlan,
+    *,
+    kubectl_cmd: str,
+    timeout_seconds: int,
+) -> list[dict[str, Any]]:
+    """Atomically append a release listener without replacing concurrent listeners."""
+    config = load_rhoai_gateway_configuration(kubectl_cmd)
+    patch = render_rhoai_release_gateway_listener_patch(plan, config)
+    listener_name = rhoai_release_gateway_listener_name(plan)
+    for attempt in range(_LISTENER_PATCH_RETRIES):
+        if _listener_index(_gateway_payload(kubectl_cmd), listener_name) is not None:
+            wait_for_rhoai_release_gateway_listener(
+                kubectl_cmd, plan=plan, timeout_seconds=timeout_seconds
+            )
+            return patch
         result = run_command(
-            [kubectl_cmd, "get", "gateway", name, "-n", namespace, "-o", "json"],
+            [
+                kubectl_cmd,
+                "patch",
+                "gateway",
+                RHOAI_GATEWAY_NAME,
+                "-n",
+                RHOAI_GATEWAY_NAMESPACE,
+                "--type=json",
+                "-p",
+                json.dumps(patch, separators=(",", ":")),
+            ],
             capture_output=True,
             check=False,
         )
         if result.returncode == 0:
-            payload = run_json_command(
-                [kubectl_cmd, "get", "gateway", name, "-n", namespace, "-o", "json"]
+            wait_for_rhoai_release_gateway_listener(
+                kubectl_cmd, plan=plan, timeout_seconds=timeout_seconds
             )
-            conditions = (payload.get("status") or {}).get("conditions") or []
-            accepted = any(
-                item.get("type") == "Accepted" and item.get("status") == "True"
-                for item in conditions
-                if isinstance(item, dict)
+            return patch
+        if attempt + 1 == _LISTENER_PATCH_RETRIES:
+            raise CommandError(
+                "failed to add RHOAI release Gateway listener "
+                f"{listener_name}: {(result.stderr or result.stdout).strip()}"
             )
-            programmed = any(
-                item.get("type") == "Programmed" and item.get("status") == "True"
-                for item in conditions
-                if isinstance(item, dict)
+        time.sleep(1)
+    raise AssertionError("unreachable")
+
+
+def remove_rhoai_release_gateway_listener(
+    plan: ResolvedRunPlan, *, kubectl_cmd: str
+) -> None:
+    """Remove only this release's listener, retrying concurrent list updates."""
+    listener_name = rhoai_release_gateway_listener_name(plan)
+    for attempt in range(_LISTENER_PATCH_RETRIES):
+        index = _listener_index(_gateway_payload(kubectl_cmd), listener_name)
+        if index is None:
+            return
+        result = run_command(
+            [
+                kubectl_cmd,
+                "patch",
+                "gateway",
+                RHOAI_GATEWAY_NAME,
+                "-n",
+                RHOAI_GATEWAY_NAMESPACE,
+                "--type=json",
+                "-p",
+                json.dumps(
+                    [
+                        {
+                            "op": "test",
+                            "path": f"/spec/listeners/{index}/name",
+                            "value": listener_name,
+                        },
+                        {"op": "remove", "path": f"/spec/listeners/{index}"},
+                    ],
+                    separators=(",", ":"),
+                ),
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return
+        if attempt + 1 == _LISTENER_PATCH_RETRIES:
+            raise CommandError(
+                "failed to remove RHOAI release Gateway listener "
+                f"{listener_name}: {(result.stderr or result.stdout).strip()}"
             )
-            if accepted and programmed:
-                return
-        time.sleep(5)
-    raise CommandError(
-        f"timed out waiting for Gateway {namespace}/{name} to become ready"
-    )
+        time.sleep(1)
