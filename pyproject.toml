@@ -20,11 +20,15 @@ dependencies = [
   "datasets==4.8.4",
   "mistral-common",
   "rich>=13.9.0",
-  "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx",
-  "inference-perf @ git+https://github.com/kubernetes-sigs/inference-perf.git@f6c714bb479fea4cedf1e088b04d81a4d0e76fa2",
 ]
 
 [project.optional-dependencies]
+aiperf = [
+  "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx",
+]
+inference-perf = [
+  "inference-perf @ git+https://github.com/kubernetes-sigs/inference-perf.git@f6c714bb479fea4cedf1e088b04d81a4d0e76fa2",
+]
 dev = [
   "pre-commit>=3.7.0",
   "ruff>=0.8.0",

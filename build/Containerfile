@@ -52,6 +52,18 @@ WORKDIR /opt/benchflow
 COPY pyproject.toml .
 COPY src/ src/
 
+# AIPerf and Inference Perf require incompatible exact Transformers versions.
+# BenchFlow only invokes their CLIs, so keep each tool in its own environment.
+RUN python -m venv /opt/benchflow/venvs/aiperf \
+    && /opt/benchflow/venvs/aiperf/bin/pip install --no-cache-dir \
+        "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx" \
+    && ln -s /opt/benchflow/venvs/aiperf/bin/aiperf /usr/local/bin/aiperf
+
+RUN python -m venv /opt/benchflow/venvs/inference-perf \
+    && /opt/benchflow/venvs/inference-perf/bin/pip install --no-cache-dir \
+        "inference-perf @ git+https://github.com/kubernetes-sigs/inference-perf.git@f6c714bb479fea4cedf1e088b04d81a4d0e76fa2" \
+    && ln -s /opt/benchflow/venvs/inference-perf/bin/inference-perf /usr/local/bin/inference-perf
+
 RUN pip install --no-cache-dir .
 
 LABEL org.opencontainers.image.description="BenchFlow is a Tekton-based LLM inference benchmarking tool for single-cluster and management-target cluster workflows."
