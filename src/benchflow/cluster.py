@@ -221,72 +221,6 @@ def _inferenceservice_internal_url(resource_name: str, namespace: str) -> str:
     return f"http://{resource_name}-predictor.{namespace}.svc.cluster.local:8080"
 
 
-def _llminferenceservice_external_gateway_url(
-    kubectl_cmd: str,
-    payload: dict[str, Any],
-    *,
-    resource_name: str,
-    namespace: str,
-) -> str:
-    """Resolve the release Gateway's public address while retaining its path.
-
-    RHOAI publishes a common hostname in LLMInferenceService ``status.url``.
-    That hostname cannot address multiple release-scoped Gateways because each
-    Gateway receives its own load balancer. Use the referenced Gateway's
-    published address instead, while preserving KServe's release path.
-    """
-    gateway = ((payload.get("spec") or {}).get("router") or {}).get("gateway") or {}
-    refs = gateway.get("refs") or []
-    if not isinstance(refs, list) or len(refs) != 1 or not isinstance(refs[0], dict):
-        raise CommandError(
-            f"LLMInferenceService {resource_name} in namespace {namespace} must "
-            "reference exactly one Gateway to resolve an external endpoint"
-        )
-    gateway_ref = refs[0]
-    gateway_name = str(gateway_ref.get("name") or "").strip()
-    gateway_namespace = str(gateway_ref.get("namespace") or namespace).strip()
-    if not gateway_name:
-        raise CommandError(
-            f"LLMInferenceService {resource_name} in namespace {namespace} has "
-            "an unnamed Gateway reference"
-        )
-    gateway_payload = run_json_command(
-        [
-            kubectl_cmd,
-            "get",
-            "gateway",
-            gateway_name,
-            "-n",
-            gateway_namespace,
-            "-o",
-            "json",
-        ]
-    )
-    addresses = (gateway_payload.get("status") or {}).get("addresses") or []
-    if not isinstance(addresses, list) or not addresses:
-        raise CommandError(
-            f"Gateway {gateway_namespace}/{gateway_name} does not have "
-            "status.addresses yet"
-        )
-    address = addresses[0] if isinstance(addresses[0], dict) else {}
-    hostname = str(address.get("value") or address.get("hostname") or "").strip()
-    if not hostname:
-        raise CommandError(
-            f"Gateway {gateway_namespace}/{gateway_name} does not have a usable "
-            "external address yet"
-        )
-    status_url = str((payload.get("status") or {}).get("url") or "").strip()
-    if not status_url:
-        raise CommandError(
-            f"LLMInferenceService {resource_name} in namespace {namespace} "
-            "does not have status.url yet"
-        )
-    parsed = urlsplit(status_url)
-    return urlunsplit((parsed.scheme or "https", hostname, parsed.path, "", "")).rstrip(
-        "/"
-    )
-
-
 def resolve_target_base_url(target: Any, namespace: str) -> str:
     endpoint_scope = _target_scope(target)
     if target.discovery == "static":
@@ -354,12 +288,13 @@ def resolve_target_base_url(target: Any, namespace: str) -> str:
                 "json",
             ]
         )
-        return _llminferenceservice_external_gateway_url(
-            kubectl_cmd,
-            payload,
-            resource_name=resource_name,
-            namespace=namespace,
-        )
+        url = str(payload.get("status", {}).get("url") or "").strip()
+        if not url:
+            raise CommandError(
+                f"LLMInferenceService {resource_name} in namespace {namespace} "
+                "does not have status.url yet"
+            )
+        return url.rstrip("/")
 
     if target.discovery == "inferenceservice-status-url":
         kubectl_cmd = require_any_command("oc", "kubectl")

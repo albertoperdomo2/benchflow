@@ -13,7 +13,7 @@ from ..rhoai_mooncake import (
     mooncake_nvme_release_directory,
     rhoai_mooncake_spec,
 )
-from ..rhoai_gateway import RHOAI_GATEWAY_NAMESPACE, rhoai_release_gateway_name
+from ..rhoai_gateway import remove_rhoai_release_gateway_listener
 from ..ui import detail
 
 
@@ -64,21 +64,12 @@ def _delete_runtime_pvcs(
         )
 
 
-def _delete_release_gateway(plan: ResolvedRunPlan, *, kubectl_cmd: str) -> None:
+def _remove_release_gateway_listener(
+    plan: ResolvedRunPlan, *, kubectl_cmd: str
+) -> None:
     if _deployment_kind(plan) != "LLMInferenceService":
         return
-    run_command(
-        [
-            kubectl_cmd,
-            "delete",
-            "gateway",
-            rhoai_release_gateway_name(plan),
-            "-n",
-            RHOAI_GATEWAY_NAMESPACE,
-            "--ignore-not-found",
-        ],
-        check=False,
-    )
+    remove_rhoai_release_gateway_listener(plan, kubectl_cmd=kubectl_cmd)
 
 
 def _delete_mooncake_resources(
@@ -294,7 +285,7 @@ def cleanup_rhoai(
     if exists.returncode != 0:
         _delete_profiler_configmap(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
         _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
-        _delete_release_gateway(plan, kubectl_cmd=kubectl_cmd)
+        _remove_release_gateway_listener(plan, kubectl_cmd=kubectl_cmd)
         _delete_mooncake_resources(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
         if skip_if_not_exists:
             return
@@ -320,7 +311,7 @@ def cleanup_rhoai(
     if not wait_for_deletion:
         _delete_profiler_configmap(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
         _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
-        _delete_release_gateway(plan, kubectl_cmd=kubectl_cmd)
+        _remove_release_gateway_listener(plan, kubectl_cmd=kubectl_cmd)
         _delete_mooncake_resources(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
         return
 
@@ -345,7 +336,7 @@ def cleanup_rhoai(
                 plan, kubectl_cmd=kubectl_cmd, namespace=namespace
             )
             _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
-            _delete_release_gateway(plan, kubectl_cmd=kubectl_cmd)
+            _remove_release_gateway_listener(plan, kubectl_cmd=kubectl_cmd)
             _delete_mooncake_resources(
                 plan, kubectl_cmd=kubectl_cmd, namespace=namespace
             )
