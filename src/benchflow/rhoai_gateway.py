@@ -35,6 +35,17 @@ def rhoai_release_gateway_name(plan: ResolvedRunPlan) -> str:
     return f"benchflow-{suffix}"
 
 
+def _release_gateway_hostname(plan: ResolvedRunPlan, shared_hostname: str) -> str:
+    """Derive a wildcard-compatible external hostname for one release Gateway."""
+    _, separator, domain = shared_hostname.partition(".")
+    if not separator or not domain:
+        raise CommandError(
+            "RHOAI shared Gateway listener hostname must include a DNS domain: "
+            f"{shared_hostname}"
+        )
+    return f"{rhoai_release_gateway_name(plan)}.{domain}"
+
+
 def _https_listener(payload: dict[str, Any]) -> dict[str, Any]:
     listeners = (payload.get("spec") or {}).get("listeners") or []
     for listener in listeners:
@@ -91,6 +102,7 @@ def render_rhoai_release_gateway(
     """Render a release-scoped Gateway with an isolated HTTPS listener."""
     listener = copy.deepcopy(config.listener)
     listener["name"] = "benchflow"
+    listener["hostname"] = _release_gateway_hostname(plan, str(listener["hostname"]))
     return {
         "apiVersion": "gateway.networking.k8s.io/v1",
         "kind": "Gateway",
