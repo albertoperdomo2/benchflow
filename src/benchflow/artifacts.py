@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,181 @@ from .ui import detail, step, success
 
 RHOAI_PROFILER_OUTPUT_DIR = "/tmp/benchflow-profiler"
 ROOK_CEPH_NAMESPACE = "rook-ceph"
+_SENSITIVE_ARGUMENT_RE = re.compile(
+    r"(?i)(?:secret|password|passwd|credential|api[-_]?key|authorization|"
+    r"(?:^|[-_])token(?:$|[-_=]))"
+)
+
+
+def _redact_command_values(values: object) -> object:
+    """Keep command shape while removing likely credentials from arguments."""
+    if not isinstance(values, list):
+        return values
+
+    redacted: list[object] = []
+    redact_next = False
+    for value in values:
+        if not isinstance(value, str):
+            redacted.append(value)
+            continue
+        if redact_next:
+            redacted.append("<redacted>")
+            redact_next = False
+            continue
+        if not _SENSITIVE_ARGUMENT_RE.search(value):
+            redacted.append(value)
+            continue
+        if "=" in value:
+            redacted.append(f"{value.split('=', maxsplit=1)[0]}=<redacted>")
+        elif value.startswith("-"):
+            redacted.append(value)
+            redact_next = True
+        else:
+            redacted.append("<redacted>")
+    return redacted
+
+
+def _redact_env_reference(value: object) -> object:
+    """Retain secret/config reference identity without exposing values."""
+    if not isinstance(value, dict):
+        return "<redacted>"
+
+    references: dict[str, object] = {}
+    for ref_type in (
+        "secretKeyRef",
+        "configMapKeyRef",
+        "fieldRef",
+        "resourceFieldRef",
+        "secretRef",
+        "configMapRef",
+    ):
+        ref = value.get(ref_type)
+        if not isinstance(ref, dict):
+            continue
+        references[ref_type] = {
+            key: item
+            for key, item in ref.items()
+            if key
+            in {
+                "name",
+                "key",
+                "optional",
+                "apiVersion",
+                "fieldPath",
+                "containerName",
+                "resource",
+                "divisor",
+            }
+        }
+    return references or "<redacted>"
+
+
+def _redact_env_from_entry(entry: dict[str, object]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    if "prefix" in entry:
+        result["prefix"] = entry["prefix"]
+    reference = _redact_env_reference(entry)
+    if isinstance(reference, dict):
+        result.update(reference)
+    else:
+        result["source"] = reference
+    return result
+
+
+def _redact_pod_artifact(value: object, *, field_name: str = "") -> object:
+    """Redact secret-bearing pod fields while retaining useful diagnostics."""
+    if isinstance(value, list):
+        if field_name in {"command", "args"}:
+            return _redact_command_values(value)
+        return [_redact_pod_artifact(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    redacted: dict[str, object] = {}
+    for key, item in value.items():
+        if key == "annotations":
+            # Annotations commonly contain a complete applied manifest.
+            continue
+        if key == "env":
+            if not isinstance(item, list):
+                continue
+            redacted[key] = [
+                {
+                    **(
+                        {"name": entry["name"]}
+                        if isinstance(entry, dict) and "name" in entry
+                        else {}
+                    ),
+                    **(
+                        {"value": "<redacted>"}
+                        if isinstance(entry, dict) and "value" in entry
+                        else {}
+                    ),
+                    **(
+                        {"valueFrom": _redact_env_reference(entry["valueFrom"])}
+                        if isinstance(entry, dict) and "valueFrom" in entry
+                        else {}
+                    ),
+                }
+                for entry in item
+                if isinstance(entry, dict)
+            ]
+            continue
+        if key == "envFrom":
+            # References are operationally useful; Kubernetes never returns
+            # their resolved values, so preserve only the reference metadata.
+            redacted[key] = (
+                [
+                    _redact_env_from_entry(entry)
+                    for entry in item
+                    if isinstance(entry, dict)
+                ]
+                if isinstance(item, list)
+                else "<redacted>"
+            )
+            continue
+        if key in {"data", "stringData"} or _SENSITIVE_ARGUMENT_RE.search(key):
+            redacted[key] = "<redacted>"
+            continue
+        redacted[key] = _redact_pod_artifact(item, field_name=key)
+    return redacted
+
+
+def _write_redacted_pods_snapshot(
+    kubectl_cmd: str,
+    state_dir: Path,
+    namespace: str,
+    release_name: str,
+) -> bool:
+    result = run_command(
+        [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return False
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return False
+    payload["items"] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") or {}
+        if not isinstance(metadata, dict) or not _matches_release(
+            metadata, release_name
+        ):
+            continue
+        payload["items"].append(_redact_pod_artifact(item))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "pods-json.txt").write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return True
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -181,7 +357,6 @@ def _collect_platform_state(
     snapshot_count = 0
     for name, command in (
         ("pods-wide", ["get", "pods", "-n", namespace, "-o", "wide"]),
-        ("pods-json", ["get", "pods", "-n", namespace, "-o", "json"]),
         (
             "workloads",
             [
@@ -217,35 +392,9 @@ def _collect_platform_state(
         if _write_command_snapshot(kubectl_cmd, state_dir, name, command):
             snapshot_count += 1
 
-    pods_payload = run_command(
-        [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"],
-        capture_output=True,
-        check=False,
-    )
-    if pods_payload.returncode != 0 or not pods_payload.stdout.strip():
-        return snapshot_count
-    try:
-        payload = json.loads(pods_payload.stdout)
-    except json.JSONDecodeError:
-        return snapshot_count
+    if _write_redacted_pods_snapshot(kubectl_cmd, state_dir, namespace, release_name):
+        snapshot_count += 1
 
-    describe_dir = state_dir / "describe"
-    for item in payload.get("items", []):
-        metadata = item.get("metadata", {})
-        if not isinstance(metadata, dict) or not _matches_release(
-            metadata, release_name
-        ):
-            continue
-        pod_name = str(metadata.get("name") or "")
-        if not pod_name:
-            continue
-        if _write_command_snapshot(
-            kubectl_cmd,
-            describe_dir,
-            f"pod-{pod_name}",
-            ["describe", "pod", pod_name, "-n", namespace],
-        ):
-            snapshot_count += 1
     return snapshot_count
 
 
