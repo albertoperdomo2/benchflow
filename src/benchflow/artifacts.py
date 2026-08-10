@@ -19,6 +19,10 @@ _SENSITIVE_ARGUMENT_RE = re.compile(
     r"(?i)(?:secret|password|passwd|credential|api[-_]?key|authorization|"
     r"(?:^|[-_])token(?:$|[-_=]))"
 )
+_SENSITIVE_OPTION_VALUE_RE = re.compile(
+    r"(?i)(--?(?:secret|password|passwd|credential|api[-_]?key|"
+    r"authorization|token)(?:=|\s+))\S+"
+)
 
 
 def _redact_command_values(values: object) -> object:
@@ -47,6 +51,19 @@ def _redact_command_values(values: object) -> object:
         else:
             redacted.append("<redacted>")
     return redacted
+
+
+def _redact_describe_output(output: str) -> str:
+    """Preserve pod diagnostics without retaining explicit credentials."""
+    redacted_lines: list[str] = []
+    for line in output.splitlines(keepends=True):
+        field, separator, _ = line.partition(":")
+        if separator and _SENSITIVE_ARGUMENT_RE.search(field.strip()):
+            suffix = "\n" if line.endswith("\n") else ""
+            redacted_lines.append(f"{field}: <redacted>{suffix}")
+            continue
+        redacted_lines.append(_SENSITIVE_OPTION_VALUE_RE.sub(r"\1<redacted>", line))
+    return "".join(redacted_lines)
 
 
 def _redact_env_reference(value: object) -> object:
@@ -288,6 +305,18 @@ def _collect_pod_logs(
         )
     except CommandError:
         return False
+    describe_dir = log_dir.parent / "pod-describes"
+    describe_dir.mkdir(parents=True, exist_ok=True)
+    describe_result = run_command(
+        [kubectl_cmd, "describe", "pod", pod_name, "-n", namespace],
+        capture_output=True,
+        check=False,
+    )
+    if describe_result.returncode == 0 and describe_result.stdout.strip():
+        (describe_dir / f"{pod_name}.txt").write_text(
+            _redact_describe_output(describe_result.stdout), encoding="utf-8"
+        )
+
     containers = _pod_container_names(payload)
     has_logs = False
     for container in containers:
@@ -302,6 +331,26 @@ def _collect_pod_logs(
             has_logs = True
         elif log_file.exists():
             log_file.unlink()
+        previous_log_file = log_dir / f"{pod_name}_{container}.previous.log"
+        previous_result = run_command(
+            [
+                kubectl_cmd,
+                "logs",
+                pod_name,
+                "-c",
+                container,
+                "-n",
+                namespace,
+                "--previous",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if previous_result.returncode == 0 and previous_result.stdout.strip():
+            previous_log_file.write_text(previous_result.stdout, encoding="utf-8")
+            has_logs = True
+        elif previous_log_file.exists():
+            previous_log_file.unlink()
     return has_logs
 
 
@@ -322,6 +371,7 @@ def _ensure_artifact_layout(artifacts_dir: Path) -> None:
         "logs/model",
         "logs/gaie",
         "logs/infra",
+        "logs/pod-describes",
         "logs/storage-offloading",
         "logs/cephfs",
         "manifests",

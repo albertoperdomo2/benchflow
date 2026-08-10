@@ -330,6 +330,9 @@ spec:
         - name: target-kubeconfig
           workspace: target-kubeconfig
     - name: cleanup
+      # Finalization collects failed deployment pod state and logs. It must
+      # complete before cleanup deletes those workload pods.
+      runAfter: [finalize-mlflow-run]
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-cleanup)"
           operator: in
