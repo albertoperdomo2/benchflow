@@ -24,7 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 aiperf = [
-  "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx",
+  "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@main",
 ]
 inference-perf = [
   "inference-perf @ git+https://github.com/kubernetes-sigs/inference-perf.git@f6c714bb479fea4cedf1e088b04d81a4d0e76fa2",

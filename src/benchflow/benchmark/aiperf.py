@@ -297,6 +297,7 @@ def _build_command(
     aiperf: AiperfBenchmarkSpec,
 ) -> list[str]:
     args = dict(aiperf.args)
+    ui = str(args.pop("ui", "none"))
     args.setdefault(
         "endpoint_path", plan.deployment.target.path or "/v1/chat/completions"
     )
@@ -311,7 +312,7 @@ def _build_command(
         "--artifact-dir",
         str(artifact_dir),
         "--ui",
-        "none",
+        ui,
     ]
     if aiperf.dataset_url:
         command.extend(

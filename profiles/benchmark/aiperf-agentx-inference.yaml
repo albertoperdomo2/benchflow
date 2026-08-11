@@ -10,19 +10,29 @@ spec:
     min_max_model_len: 131072
   aiperf:
     # Source: AIPerf InferenceX AgentX MVP scenario recipe.
-    # https://github.com/ai-dynamo/aiperf/blob/a75c4612b6f8cf7e3bc88e6cd560fbf9be7c1a69/docs/tutorials/agentx-mvp.md
+    # https://github.com/ai-dynamo/aiperf/blob/main/docs/tutorials/agentx-mvp.md
     scenario: inferencex-agentx-mvp
-    # Pin the exact Weka corpus instead of relying on AIPerf's moving alias.
+    # AgentX MVP accepts generic weka_hf only for this exact pinned corpus
     public_dataset: weka_hf
-    hf_weka_repo: semianalysisai/cc-traces-weka-with-subagents-060826
+    hf_weka_dataset: semianalysisai/cc-traces-weka-062126
     endpoint_type: chat
     endpoint_path: /v1/chat/completions
+    # AgentX scenario locks these values; make them explicit for auditability
     streaming: true
     use_server_token_count: true
-    # Some models provide a tokenizer through custom Hugging Face code.
-    tokenizer_trust_remote_code: true
-    max_context_length: 131072
-    concurrency: 32
+    extra_inputs: ignore_eos:true
+    cache_bust: first_turn_prefix
+    system_idle_gap_cap_seconds: 10
+    ui: simple
+    # Scenario defaults that must stay fixed for comparable runs
+    trajectory_start_min_ratio: 0.0
+    trajectory_start_max_ratio: 1.0
     benchmark_duration: 1800
+    random_seed: 20260707
+    # Some models provide a tokenizer through custom Hugging Face code
+    tokenizer_trust_remote_code: true
+    max_context_length: 128000
+    # Deliberate load setting: change only when comparing a different load
+    concurrency: 32
+    # BenchFlow process timeout, not an AIPerf workload argument
     max_seconds: 7200
-    random_seed: 42
