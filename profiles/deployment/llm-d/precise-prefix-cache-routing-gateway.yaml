@@ -23,6 +23,7 @@ spec:
     vllm_args:
       - --gpu-memory-utilization=0.92
       - --enable-prefix-caching
+      - --enable-prompt-tokens-details
   options:
     epp_config: |
       apiVersion: llm-d.ai/v1alpha1

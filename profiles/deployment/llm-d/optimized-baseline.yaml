@@ -18,3 +18,4 @@ spec:
     tensor_parallelism: 2
     vllm_args:
       - --gpu-memory-utilization=0.95
+      - --enable-prompt-tokens-details

@@ -18,6 +18,7 @@ spec:
       USER: benchflow
     vllm_args:
       - --gpu-memory-utilization=0.95
+      - --enable-prompt-tokens-details
       # - --max-model-len=8192
       # - --enable-prefix-caching
       # - --trust-remote-code

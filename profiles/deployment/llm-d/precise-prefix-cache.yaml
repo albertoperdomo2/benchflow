@@ -22,3 +22,4 @@ spec:
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching
+      - --enable-prompt-tokens-details

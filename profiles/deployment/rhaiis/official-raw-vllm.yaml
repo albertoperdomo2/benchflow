@@ -18,4 +18,5 @@ spec:
       USER: benchflow
     vllm_args:
       - --enable-prefix-caching
+      - --enable-prompt-tokens-details
       - --gpu-memory-utilization=0.7
