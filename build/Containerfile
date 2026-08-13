@@ -56,7 +56,13 @@ COPY src/ src/
 # BenchFlow only invokes their CLIs, so keep each tool in its own environment.
 RUN python -m venv /opt/benchflow/venvs/aiperf \
     && /opt/benchflow/venvs/aiperf/bin/pip install --no-cache-dir \
-        "aiperf @ git+https://github.com/ai-dynamo/aiperf.git@ajc/agentx" \
+        "aiperf==0.12.0" \
+    && /opt/benchflow/venvs/aiperf/bin/python -c \
+        "from importlib.metadata import version; assert version('aiperf') == '0.12.0'" \
+    && /opt/benchflow/venvs/aiperf/bin/aiperf profile --help \
+        | grep -q -- "--hf-weka-dataset" \
+    && /opt/benchflow/venvs/aiperf/bin/aiperf profile --help \
+        | grep -q -- "--system-idle-gap-cap-seconds" \
     && ln -s /opt/benchflow/venvs/aiperf/bin/aiperf /usr/local/bin/aiperf
 
 RUN python -m venv /opt/benchflow/venvs/inference-perf \
