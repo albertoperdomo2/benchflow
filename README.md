@@ -13,6 +13,8 @@ BenchFlow is a packaged control plane for running benchmark scenarios, not a loo
 > [!WARNING]
 > BenchFlow now locks shared `llm-d` and `RHOAI` platform mutations per target cluster by setup key. Same-key runs can share a wave and use spare GPUs in parallel; different-key runs wait until the current admitted wave finishes. Shared platform prerequisites stay installed until a different setup key is requested or you explicitly tear them down.
 
+Each submitted execution scopes its target-cluster release and any BenchFlow-created runtime PVCs to the concrete execution name, so concurrent runs of the same experiment do not deploy, share, or clean up each other's managed resources. Pre-provisioned PVCs remain shared.
+
 ## Quickstart
 
 Install the CLI from the repository root:

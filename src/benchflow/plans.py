@@ -31,7 +31,10 @@ from .models import (
 
 _MATRIX_CHILD_INDEX_LABEL = "benchflow.io/matrix-child-index"
 _MATRIX_RELEASE_SCOPE_LABEL = "benchflow.io/matrix-release-scope"
+_EXECUTION_RELEASE_BASE_LABEL = "benchflow.io/execution-release-base"
+_EXECUTION_RELEASE_SCOPE_LABEL = "benchflow.io/execution-release-scope"
 _MATRIX_RELEASE_MAX_LENGTH = 42
+_PVC_CLAIM_MAX_LENGTH = 253
 _MAX_MODEL_LEN_FLAG = "--max-model-len"
 _UNSUPPORTED_BENCHMARK_ENV = {
     "GUIDELLM_OUTPUT_PATH": (
@@ -287,6 +290,95 @@ def scope_matrix_child_release(
         deployment=replace(
             plan.deployment,
             release_name=release_name,
+            target=scoped_target,
+        ),
+    )
+
+
+def scope_execution_release(
+    plan: ResolvedRunPlan,
+    *,
+    execution_name: str,
+) -> ResolvedRunPlan:
+    """Give one submitted execution its own target-cluster release.
+
+    The execution name is concrete by submission time, unlike the RunPlan's
+    experiment-derived release name. Persist the unscoped base in RunPlan
+    labels so rerunning an already scoped RunPlan replaces the old execution
+    suffix instead of accumulating suffixes.
+    """
+    scope_source = execution_name.strip()
+    if not scope_source:
+        raise ValidationError("execution name is required to scope its release")
+
+    scope = hashlib.sha1(scope_source.encode("utf-8")).hexdigest()[:10]
+    labels = dict(plan.metadata.labels)
+    existing_scope = str(labels.get(_EXECUTION_RELEASE_SCOPE_LABEL) or "").strip()
+    if existing_scope == scope:
+        return plan
+
+    base_release = str(
+        labels.get(_EXECUTION_RELEASE_BASE_LABEL) or plan.deployment.release_name
+    ).strip()
+    if not base_release:
+        raise ValidationError("execution release base must not be empty")
+
+    previous_release = plan.deployment.release_name
+    suffix = f"-{scope}"
+    prefix = sanitize_name(
+        base_release,
+        max_length=max(1, _MATRIX_RELEASE_MAX_LENGTH - len(suffix)),
+    )
+    release_name = f"{prefix}{suffix}"
+    target = plan.deployment.target
+    scoped_target = replace(
+        target,
+        base_url=target.base_url.replace(previous_release, release_name),
+        resource_name=(
+            release_name
+            if target.resource_name == previous_release
+            else target.resource_name
+        ),
+        metrics_release_name=(
+            release_name
+            if target.metrics_release_name == previous_release
+            else target.metrics_release_name
+        ),
+    )
+    labels[_EXECUTION_RELEASE_BASE_LABEL] = base_release
+    labels[_EXECUTION_RELEASE_SCOPE_LABEL] = scope
+    previous_scope_suffix = f"-{existing_scope}" if existing_scope else ""
+    scoped_pvc_mounts = []
+    for pvc_mount in plan.deployment.runtime.pvc_mounts:
+        if not pvc_mount.create:
+            scoped_pvc_mounts.append(pvc_mount)
+            continue
+        base_claim_name = pvc_mount.claim_name
+        if previous_scope_suffix and base_claim_name.endswith(previous_scope_suffix):
+            base_claim_name = base_claim_name[: -len(previous_scope_suffix)]
+        claim_suffix = f"-{scope}"
+        claim_prefix = base_claim_name[
+            : _PVC_CLAIM_MAX_LENGTH - len(claim_suffix)
+        ].rstrip("-.")
+        if not claim_prefix:
+            raise ValidationError("created runtime PVC claim name must not be empty")
+        scoped_pvc_mounts.append(
+            replace(
+                pvc_mount,
+                claim_name=f"{claim_prefix}{claim_suffix}",
+            )
+        )
+    scoped_runtime = replace(
+        plan.deployment.runtime,
+        pvc_mounts=scoped_pvc_mounts,
+    )
+    return replace(
+        plan,
+        metadata=replace(plan.metadata, labels=labels),
+        deployment=replace(
+            plan.deployment,
+            release_name=release_name,
+            runtime=scoped_runtime,
             target=scoped_target,
         ),
     )

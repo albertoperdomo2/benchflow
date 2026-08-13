@@ -25,7 +25,7 @@ from ..kueue import (
 )
 from ..loaders import load_run_plan_data, load_run_plan_file
 from ..models import sanitize_name
-from ..plans import scope_matrix_child_release
+from ..plans import scope_execution_release, scope_matrix_child_release
 from ..platform_state import setup_key_for_plan
 from .matrix_payloads import (
     adopt_matrix_run_plans_configmap,
@@ -55,6 +55,7 @@ def _materialize_execution_name(manifest: dict[str, Any]) -> tuple[dict[str, Any
     if explicit_name:
         labels = metadata.setdefault("labels", {})
         labels["benchflow.io/execution-name"] = explicit_name
+        _scope_manifest_run_plan(rendered, explicit_name)
         return rendered, explicit_name
 
     raw_prefix = str(metadata.get("generateName") or "benchflow-").strip().rstrip("-")
@@ -64,7 +65,31 @@ def _materialize_execution_name(manifest: dict[str, Any]) -> tuple[dict[str, Any
     metadata.pop("generateName", None)
     labels = metadata.setdefault("labels", {})
     labels["benchflow.io/execution-name"] = execution_name
+    _scope_manifest_run_plan(rendered, execution_name)
     return rendered, execution_name
+
+
+def _scope_manifest_run_plan(manifest: dict[str, Any], execution_name: str) -> None:
+    """Scope a single-run manifest's RunPlan to its concrete execution name."""
+    params = (manifest.get("spec", {}) or {}).get("params", []) or []
+    for param in params:
+        if str((param or {}).get("name") or "").strip() != "RUN_PLAN":
+            continue
+        raw_value = (param or {}).get("value")
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            raise ValidationError("execution manifest has an empty RUN_PLAN param")
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError as exc:
+            raise ValidationError(
+                "execution manifest has an invalid RUN_PLAN param"
+            ) from exc
+        plan = load_run_plan_data(payload)
+        scoped_plan = scope_execution_release(plan, execution_name=execution_name)
+        param["value"] = json.dumps(
+            scoped_plan.to_dict(), separators=(",", ":"), sort_keys=True
+        )
+        return
 
 
 def _pending_execution_summary(namespace: str, name: str) -> dict[str, Any] | None:
