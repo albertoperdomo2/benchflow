@@ -14,7 +14,7 @@ spec:
     scenario: inferencex-agentx-mvp
     # AgentX MVP accepts generic weka_hf only for this exact pinned corpus
     public_dataset: weka_hf
-    hf_weka_dataset: semianalysisai/cc-traces-weka-062126
+    hf_weka_repo: semianalysisai/cc-traces-weka-062126
     endpoint_type: chat
     endpoint_path: /v1/chat/completions
     # AgentX scenario locks these values; make them explicit for auditability
