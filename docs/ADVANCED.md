@@ -1453,6 +1453,14 @@ bflow benchmark plot comparison \
   --mlflow-tracking-uri https://mlflow.example.com
 ```
 
+For MLflow-backed Forge runs, the composed version is the run's base version
+plus the captured Forge deployment profile. If the MLflow run has a non-empty
+`benchflow_tag`, BenchFlow appends it as a final suffix. For example, base
+version `v0.5.0`, deployment profile `precise-prefix-cache`, and
+`benchflow_tag=rc2` produce `v0.5.0-precise-prefix-cache-rc2`. Use this optional
+tag to distinguish runs whose ordinary version parameters are otherwise
+identical. Local Forge artifact trees do not have MLflow tags and are unchanged.
+
 Forge artifacts can also be read locally when an MLflow artifact download is
 unavailable or unreliable. Pass a directory containing one or more downloaded
 Forge run artifact directories. Each run directory name becomes the base version

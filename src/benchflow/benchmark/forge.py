@@ -20,6 +20,7 @@ from . import runtime
 logger = logging.getLogger(__name__)
 
 _TEST_LABELS_NAMES = ("__test_labels__.yaml",)
+_COMPARISON_VERSION_TAG = "benchflow_tag"
 
 
 class _ForgeArtifactUnavailable(Exception):
@@ -313,8 +314,11 @@ def _compose_version(
         or model
         or "unknown"
     ).strip()
-    suffix = deployment_profile.strip()
-    return f"{base_version}-{suffix}" if suffix else base_version
+    suffixes = [
+        deployment_profile.strip(),
+        str(tags.get(_COMPARISON_VERSION_TAG) or "").strip(),
+    ]
+    return "-".join([base_version, *(suffix for suffix in suffixes if suffix)])
 
 
 def _validate_forge_runs(
