@@ -270,13 +270,36 @@ def _log_summary_metrics(summary: dict[str, Any]) -> None:
 
 
 def _log_artifacts(artifact_dir: Path) -> None:
+    # Upload all files and directories in artifact_dir to MLflow.
+    # This includes both summary files (profile_export_aiperf.json/csv)
+    # and full trace files (profile_export.jsonl) for swim-lane diagram generation.
+
+    uploaded_files = set()
+
     for child in sorted(artifact_dir.iterdir()):
         if child.is_dir():
+            # mlflow.log_artifacts uploads the directory and all its contents recursively
             mlflow.log_artifacts(
                 str(child), artifact_path=f"{_AIPERF_ARTIFACT_ROOT}/{child.name}"
             )
+            # Track all files in subdirectories as uploaded
+            for subfile in child.rglob("*"):
+                if subfile.is_file():
+                    uploaded_files.add(subfile.name)
         else:
             mlflow.log_artifact(str(child), artifact_path=_AIPERF_ARTIFACT_ROOT)
+            uploaded_files.add(child.name)
+
+    # Explicitly ensure profile_export.jsonl is uploaded from any standard location
+    # This is critical for swim-lane diagram generation in aiperf analyze
+    if "profile_export.jsonl" not in uploaded_files:
+        for candidate in _AIPERF_RECORD_CANDIDATES:
+            trace_path = artifact_dir / candidate if not Path(candidate).is_absolute() else Path(candidate)
+            if not trace_path.is_relative_to(artifact_dir):
+                trace_path = artifact_dir / Path(candidate).name
+            if trace_path.exists() and trace_path.is_file():
+                mlflow.log_artifact(str(trace_path), artifact_path=_AIPERF_ARTIFACT_ROOT)
+                break
 
 
 def _summary_path(artifact_dir: Path) -> Path:
