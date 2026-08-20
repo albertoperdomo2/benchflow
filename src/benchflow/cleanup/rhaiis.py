@@ -6,8 +6,11 @@ from ..cluster import CommandError, require_any_command, run_command
 from ..models import ResolvedRunPlan, ValidationError
 from ..renderers.deployment import (
     rhaiis_raw_vllm_deployment_name,
+    rhaiis_raw_vllm_headless_service_name,
+    rhaiis_raw_vllm_is_distributed,
     rhaiis_raw_vllm_service_name,
     rhaiis_raw_vllm_servicemonitor_name,
+    rhaiis_raw_vllm_workload_kind,
 )
 
 
@@ -49,16 +52,20 @@ def cleanup_rhaiis(
 
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
-    deployment_name = rhaiis_raw_vllm_deployment_name(plan)
+    workload_name = rhaiis_raw_vllm_deployment_name(plan)
+    workload_kind = rhaiis_raw_vllm_workload_kind(plan)
     service_name = rhaiis_raw_vllm_service_name(plan)
+    service_names = [service_name]
+    if rhaiis_raw_vllm_is_distributed(plan):
+        service_names.append(rhaiis_raw_vllm_headless_service_name(plan))
     servicemonitor_name = rhaiis_raw_vllm_servicemonitor_name(plan)
 
     exists = run_command(
         [
             kubectl_cmd,
             "get",
-            "deployment",
-            deployment_name,
+            workload_kind,
+            workload_name,
             "-n",
             namespace,
             "-o",
@@ -80,23 +87,24 @@ def cleanup_rhaiis(
             ],
             check=False,
         )
-        run_command(
-            [
-                kubectl_cmd,
-                "delete",
-                "service",
-                service_name,
-                "-n",
-                namespace,
-                "--ignore-not-found",
-            ],
-            check=False,
-        )
+        for name in service_names:
+            run_command(
+                [
+                    kubectl_cmd,
+                    "delete",
+                    "service",
+                    name,
+                    "-n",
+                    namespace,
+                    "--ignore-not-found",
+                ],
+                check=False,
+            )
         _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
         if skip_if_not_exists:
             return
         raise CommandError(
-            f"Deployment {deployment_name} not found in namespace {namespace}"
+            f"{workload_kind} {workload_name} not found in namespace {namespace}"
         )
 
     run_command(
@@ -111,24 +119,25 @@ def cleanup_rhaiis(
         ],
         check=False,
     )
+    for name in service_names:
+        run_command(
+            [
+                kubectl_cmd,
+                "delete",
+                "service",
+                name,
+                "-n",
+                namespace,
+                "--ignore-not-found",
+            ],
+            check=False,
+        )
     run_command(
         [
             kubectl_cmd,
             "delete",
-            "service",
-            service_name,
-            "-n",
-            namespace,
-            "--ignore-not-found",
-        ],
-        check=False,
-    )
-    run_command(
-        [
-            kubectl_cmd,
-            "delete",
-            "deployment",
-            deployment_name,
+            workload_kind,
+            workload_name,
             "-n",
             namespace,
         ]
@@ -144,8 +153,8 @@ def cleanup_rhaiis(
             [
                 kubectl_cmd,
                 "get",
-                "deployment",
-                deployment_name,
+                workload_kind,
+                workload_name,
                 "-n",
                 namespace,
                 "-o",
@@ -159,4 +168,6 @@ def cleanup_rhaiis(
             return
         time.sleep(5)
 
-    raise CommandError(f"timed out waiting for Deployment deletion: {deployment_name}")
+    raise CommandError(
+        f"timed out waiting for {workload_kind} deletion: {workload_name}"
+    )

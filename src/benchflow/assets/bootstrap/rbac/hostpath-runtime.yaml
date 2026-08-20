@@ -9,9 +9,11 @@ priority: 10
 allowPrivilegedContainer: true
 allowPrivilegeEscalation: true
 allowHostDirVolumePlugin: true
-allowHostNetwork: false
+# Distributed raw-vLLM profiles use the host network for one process per node
+# and host IPC for the local tensor-parallel worker group.
+allowHostNetwork: true
 allowHostPID: false
-allowHostIPC: false
+allowHostIPC: true
 allowHostPorts: false
 readOnlyRootFilesystem: false
 requiredDropCapabilities:

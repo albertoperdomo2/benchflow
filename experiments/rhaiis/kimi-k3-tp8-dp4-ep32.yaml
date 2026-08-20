@@ -1,0 +1,33 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: kimi-k3-tp8-dp4-ep32
+spec:
+  model:
+    name:
+      - moonshotai/Kimi-K3
+  deployment_profile: rhaiis-kimi-k3-tp8-dp4-ep32
+  benchmark_profile: aiperf-agentx-inference
+  metrics_profile: detailed
+  namespace: benchflow
+  # To benchmark an existing Kimi deployment in any namespace, set target.base_url
+  # (or pass --target-url). BenchFlow then skips download, deploy, and cleanup;
+  # collect is also skipped unless target.metrics_release_name is provided.
+  # target:
+  #   base_url: https://kimi-k3.example.com
+  #   # Required to collect metrics from an existing deployment in spec.namespace.
+  #   # Set it to the release token shared by that deployment's workload pod names.
+  #   metrics_release_name: kimi-k3-tp8-dp4-ep32
+  #   Prometheus uses as pod=~".*<metrics_release_name>.*"
+  stages:
+    download: false  # model and DSpark weights are already present in the per-node hostPath.
+    deploy: true
+    benchmark: true
+    collect: true
+    cleanup: true
+  mlflow:
+    tags:
+      accelerator: H200
+      topology: tp8-dp4-ep32
+  execution:
+    timeout: 12h

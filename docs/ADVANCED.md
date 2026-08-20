@@ -1,8 +1,7 @@
 # BenchFlow Advanced Guide
 
 This document is the full operational guide for BenchFlow as it exists today.
-The implemented execution paths are `llm-d` and `rhoai`. `rhaiis` remains future
-work and should be treated as an unsupported placeholder.
+The implemented execution paths are `llm-d`, `rhoai`, and RHAIIS `raw-vllm`.
 
 ## Table of Contents
 
@@ -580,6 +579,12 @@ spec:
     epp_config: "" # rhoai/llm-d only, optional EndpointPickerConfig rendered with Jinja
     epp_verbosity: 4 # rhoai/llm-d only, optional EPP scheduler verbosity
     startup_probe: {} # rhoai LLMInferenceService only, optional Kubernetes startupProbe override
+    model_path: /models # rhaiis raw-vllm only; uses a runtime hostPath instead of model_storage PVC
+    distributed: # rhaiis raw-vllm only
+      enabled: true # render one ranked multi-node StatefulSet instead of independent Deployment replicas
+      master_port: 29500
+      host_network: true
+      host_ipc: true
 ```
 
 RHOAI deployment profiles can provide a custom EPP configuration with
@@ -671,9 +676,36 @@ requires `bflow bootstrap` to apply its read-only `rook-ceph` diagnostics RBAC.
 Host kernel and kubelet logs are intentionally not collected because they
 require privileged node access.
 
-`hostPath` is only appropriate for single-node or otherwise deliberately
-node-local experiments. If replicas land on different nodes, each node gets its
-own isolated hostPath contents.
+`hostPath` is only appropriate for single-node experiments or deployments such
+as distributed Kimi-K3 where the same assets are deliberately replicated at the
+same path on every selected node. Each node still has isolated hostPath contents;
+BenchFlow does not synchronize them.
+
+RHAIIS raw-vLLM profiles can use `spec.options.distributed.enabled` for one
+multi-node vLLM process group. BenchFlow renders a parallel-start `StatefulSet`,
+a headless rendezvous Service, and a stable API Service that resolves only to
+ordinal zero. The pod ordinal becomes `--node-rank`; ordinal zero serves the
+OpenAI API and every other ordinal receives `--headless`. BenchFlow owns
+`--nnodes`, `--node-rank`, `--master-addr`, and `--master-port`; the profile owns
+the parallel strategy, such as `--data-parallel-size` and
+`--enable-expert-parallel`.
+
+Distributed raw-vLLM requires an absolute `spec.options.model_path` inside one
+of `spec.runtime.host_paths`, and at least two runtime replicas. BenchFlow adds
+required pod anti-affinity so each rank lands on a different Kubernetes node.
+When `host_network` is enabled it also sets `ClusterFirstWithHostNet` so the
+rank-zero rendezvous name remains resolvable. On OpenShift, profiles using these
+host features must select the bootstrap-managed `benchflow-hostpath-runtime`
+service account. Its SCC allows hostPath, host networking, and host IPC.
+
+The characterized Kimi-K3 TP8 x DP4 x EP32 deployment is available as:
+
+```bash
+bflow experiment run experiments/rhaiis/kimi-k3-tp8-dp4-ep32.yaml
+```
+
+That profile expects the model and DSpark cache to already exist under
+`/mnt/local/kimi-k3/models` on each of its four named H200 nodes.
 
 This is intended for deployment-profile variants such as
 `llm-d-storage-offloading`, not for ad hoc experiment overrides.
@@ -1700,11 +1732,10 @@ BenchFlow currently assumes:
 - MLflow is reachable
 - MLflow artifacts are backed by S3
 - a suitable storage class exists for the BenchFlow PVCs
-- `llm-d` and `rhoai` are the implemented execution platforms
+- `llm-d`, `rhoai`, and RHAIIS `raw-vllm` are the implemented execution paths
 
 It does not currently implement:
 
-- `rhaiis` execution
 - public cluster-stored custom profiles
 - public RunPlan matrix submission from a JSON array
 

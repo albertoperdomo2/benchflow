@@ -768,6 +768,56 @@ def _storage_from_dict(raw: dict[str, Any] | None) -> ModelStorageSpec:
     )
 
 
+def _rhaiis_raw_vllm_options_from_dict(raw: Any) -> dict[str, Any]:
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ValidationError("spec.options must be a mapping")
+    unknown = sorted(set(raw) - {"model_path", "distributed"})
+    if unknown:
+        raise ValidationError(
+            "unsupported rhaiis raw-vllm spec.options fields: " + ", ".join(unknown)
+        )
+
+    normalized: dict[str, Any] = {}
+    model_path = str(raw.get("model_path") or "").strip()
+    if model_path:
+        if not model_path.startswith("/"):
+            raise ValidationError(
+                "spec.options.model_path must be an absolute container path"
+            )
+        normalized["model_path"] = model_path
+
+    distributed_raw = raw.get("distributed") or {}
+    if not isinstance(distributed_raw, dict):
+        raise ValidationError("spec.options.distributed must be a mapping")
+    unknown_distributed = sorted(
+        set(distributed_raw) - {"enabled", "master_port", "host_network", "host_ipc"}
+    )
+    if unknown_distributed:
+        raise ValidationError(
+            "unsupported spec.options.distributed fields: "
+            + ", ".join(unknown_distributed)
+        )
+    enabled = _as_bool(distributed_raw.get("enabled"), False)
+    if enabled and not model_path:
+        raise ValidationError(
+            "spec.options.model_path is required for distributed raw-vllm"
+        )
+    if distributed_raw or enabled:
+        master_port = int(distributed_raw.get("master_port", 29500))
+        if not 1 <= master_port <= 65535:
+            raise ValidationError(
+                "spec.options.distributed.master_port must be between 1 and 65535"
+            )
+        normalized["distributed"] = {
+            "enabled": enabled,
+            "master_port": master_port,
+            "host_network": _as_bool(distributed_raw.get("host_network"), False),
+            "host_ipc": _as_bool(distributed_raw.get("host_ipc"), False),
+        }
+    return normalized
+
+
 def _benchmark_requirements_from_dict(
     raw: dict[str, Any] | None,
 ) -> BenchmarkRequirementsSpec:
@@ -1156,6 +1206,8 @@ def load_deployment_profile(path: Path) -> DeploymentProfile:
         raise ValidationError(f"{path} is missing spec.platform")
     if not profile_spec.mode:
         raise ValidationError(f"{path} is missing spec.mode")
+    if profile_spec.platform == "rhaiis" and profile_spec.mode == "raw-vllm":
+        profile_spec.options = _rhaiis_raw_vllm_options_from_dict(spec.get("options"))
 
     return DeploymentProfile(
         api_version=str(raw.get("apiVersion", "benchflow.io/v1alpha1")),

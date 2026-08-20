@@ -6,7 +6,7 @@
 *Repeatable LLM inference benchmarks for OpenShift.*
 
 > [!NOTE]
-> This project is experimental and for learning purposes mainly, but the implemented execution paths today are `llm-d` and `RHOAI`. Expect some parts to still be highly coupled.
+> This project is experimental and for learning purposes mainly, but the implemented execution paths today are `llm-d`, `RHOAI`, and RHAIIS `raw-vllm`. Expect some parts to still be highly coupled.
 
 BenchFlow is a packaged control plane for running benchmark scenarios, not a loose collection of scripts. It resolves an experiment into one immutable `RunPlan`, executes it through Tekton `PipelineRun`s, captures metrics and artifacts, and pushes the result to MLflow. The current benchmark backends are [vllm-project/guidellm](https://github.com/vllm-project/guidellm), a narrow [AIPerf](https://github.com/ai-dynamo/aiperf) trace replay path, and native [Inference Perf](https://github.com/kubernetes-sigs/inference-perf) profiles.
 

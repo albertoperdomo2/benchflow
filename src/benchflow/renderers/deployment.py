@@ -583,6 +583,19 @@ def rhaiis_raw_vllm_deployment_name(plan: ResolvedRunPlan) -> str:
     return f"{plan.deployment.release_name}-vllm"
 
 
+def rhaiis_raw_vllm_is_distributed(plan: ResolvedRunPlan) -> bool:
+    distributed = plan.deployment.options.get("distributed") or {}
+    return isinstance(distributed, dict) and distributed.get("enabled") is True
+
+
+def rhaiis_raw_vllm_workload_kind(plan: ResolvedRunPlan) -> str:
+    return "statefulset" if rhaiis_raw_vllm_is_distributed(plan) else "deployment"
+
+
+def rhaiis_raw_vllm_headless_service_name(plan: ResolvedRunPlan) -> str:
+    return f"{rhaiis_raw_vllm_deployment_name(plan)}-headless"
+
+
 def rhaiis_raw_vllm_service_name(plan: ResolvedRunPlan) -> str:
     return plan.deployment.release_name
 
@@ -609,13 +622,35 @@ def _rhaiis_raw_vllm_selector_labels(plan: ResolvedRunPlan) -> dict[str, str]:
 
 
 def _rhaiis_raw_vllm_model_path(plan: ResolvedRunPlan) -> str:
+    explicit = str(plan.deployment.options.get("model_path") or "").strip()
+    if explicit:
+        return explicit
     mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
     return f"{mount_root}/{model_storage_relative_path(plan.deployment.model_storage, plan.model)}"
 
 
+def _rhaiis_raw_vllm_uses_model_pvc(plan: ResolvedRunPlan) -> bool:
+    return not str(plan.deployment.options.get("model_path") or "").strip()
+
+
 def _rhaiis_raw_vllm_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
-    mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
-    cache_dir = f"{mount_root}{plan.deployment.model_storage.cache_dir.rstrip('/')}"
+    if _rhaiis_raw_vllm_uses_model_pvc(plan):
+        mount_root = plan.deployment.model_storage.mount_path.rstrip("/")
+        cache_dir = f"{mount_root}{plan.deployment.model_storage.cache_dir.rstrip('/')}"
+    else:
+        model_path = Path(_rhaiis_raw_vllm_model_path(plan))
+        containing_mounts = [
+            Path(item.mount_path)
+            for item in plan.deployment.runtime.host_paths
+            if model_path == Path(item.mount_path)
+            or model_path.is_relative_to(Path(item.mount_path))
+        ]
+        cache_root = max(
+            containing_mounts,
+            key=lambda item: len(item.parts),
+            default=model_path.parent,
+        )
+        cache_dir = str(cache_root / "hf")
     env = {
         "HOME": "/tmp/vllm-home",
         "HF_HOME": cache_dir,
@@ -626,15 +661,47 @@ def _rhaiis_raw_vllm_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     return [{"name": key, "value": value} for key, value in sorted(env.items())]
 
 
-def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
-    if not plan.deployment.runtime.image:
-        raise ValidationError(
-            "rhaiis raw-vllm deployments require deployment.runtime.image"
+def _rhaiis_raw_vllm_storage(
+    plan: ResolvedRunPlan,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    mounts: list[dict[str, Any]] = []
+    volumes: list[dict[str, Any]] = []
+    if _rhaiis_raw_vllm_uses_model_pvc(plan):
+        mounts.append(
+            {
+                "name": "model-storage",
+                "mountPath": plan.deployment.model_storage.mount_path,
+            }
         )
+        volumes.append(
+            {
+                "name": "model-storage",
+                "persistentVolumeClaim": {
+                    "claimName": plan.deployment.model_storage.pvc_name
+                },
+            }
+        )
+    if plan.deployment.runtime.shared_memory_size:
+        mounts.append({"name": "dshm", "mountPath": "/dev/shm"})
+        volumes.append(
+            {
+                "name": "dshm",
+                "emptyDir": {
+                    "medium": "Memory",
+                    "sizeLimit": plan.deployment.runtime.shared_memory_size,
+                },
+            }
+        )
+    mounts.extend(_runtime_host_path_volume_mounts(plan))
+    mounts.extend(_runtime_pvc_volume_mounts(plan))
+    volumes.extend(_runtime_host_path_volumes(plan))
+    volumes.extend(_runtime_pvc_volumes(plan))
+    return mounts, volumes
 
-    labels = _rhaiis_raw_vllm_labels(plan)
-    selector_labels = _rhaiis_raw_vllm_selector_labels(plan)
-    container_spec: dict[str, Any] = {
+
+def _rhaiis_raw_vllm_container(plan: ResolvedRunPlan) -> dict[str, Any]:
+    volume_mounts, _ = _rhaiis_raw_vllm_storage(plan)
+    return {
         "name": "vllm",
         "image": plan.deployment.runtime.image,
         "command": ["python3", "-m", "vllm.entrypoints.openai.api_server"],
@@ -655,21 +722,39 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
             "failureThreshold": 3,
         },
         "resources": _runtime_resource_requirements(plan, include_gpu=True),
-        "volumeMounts": [
-            {
-                "name": "model-storage",
-                "mountPath": plan.deployment.model_storage.mount_path,
-            },
-            *(
-                [{"name": "dshm", "mountPath": "/dev/shm"}]
-                if plan.deployment.runtime.shared_memory_size
-                else []
-            ),
-            *_runtime_host_path_volume_mounts(plan),
-            *_runtime_pvc_volume_mounts(plan),
-        ],
+        "volumeMounts": volume_mounts,
     }
 
+
+def _rhaiis_raw_vllm_pod_spec(
+    plan: ResolvedRunPlan, container_spec: dict[str, Any]
+) -> dict[str, Any]:
+    _, volumes = _rhaiis_raw_vllm_storage(plan)
+    pod_spec: dict[str, Any] = {
+        "containers": [container_spec],
+        "volumes": volumes,
+    }
+    runtime = plan.deployment.runtime
+    if runtime.node_selector:
+        pod_spec["nodeSelector"] = dict(runtime.node_selector)
+    if runtime.affinity:
+        pod_spec["affinity"] = deepcopy(runtime.affinity)
+    if runtime.tolerations:
+        pod_spec["tolerations"] = list(runtime.tolerations)
+    if runtime.service_account_name:
+        pod_spec["serviceAccountName"] = runtime.service_account_name
+    if runtime.image_pull_secrets:
+        pod_spec["imagePullSecrets"] = list(runtime.image_pull_secrets)
+    return pod_spec
+
+
+def _render_rhaiis_single_raw_vllm_manifests(
+    plan: ResolvedRunPlan,
+) -> list[dict[str, Any]]:
+    labels = _rhaiis_raw_vllm_labels(plan)
+    selector_labels = _rhaiis_raw_vllm_selector_labels(plan)
+    container_spec = _rhaiis_raw_vllm_container(plan)
+    pod_spec = _rhaiis_raw_vllm_pod_spec(plan, container_spec)
     deployment = {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
@@ -684,48 +769,10 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
             "selector": {"matchLabels": selector_labels},
             "template": {
                 "metadata": {"labels": {**labels, **selector_labels}},
-                "spec": {
-                    "containers": [container_spec],
-                    "volumes": [
-                        {
-                            "name": "model-storage",
-                            "persistentVolumeClaim": {
-                                "claimName": plan.deployment.model_storage.pvc_name
-                            },
-                        },
-                        *(
-                            [
-                                {
-                                    "name": "dshm",
-                                    "emptyDir": {
-                                        "medium": "Memory",
-                                        "sizeLimit": (
-                                            plan.deployment.runtime.shared_memory_size
-                                        ),
-                                    },
-                                }
-                            ]
-                            if plan.deployment.runtime.shared_memory_size
-                            else []
-                        ),
-                        *_runtime_host_path_volumes(plan),
-                        *_runtime_pvc_volumes(plan),
-                    ],
-                },
+                "spec": pod_spec,
             },
         },
     }
-
-    pod_spec = deployment["spec"]["template"]["spec"]
-    if plan.deployment.runtime.node_selector:
-        pod_spec["nodeSelector"] = dict(plan.deployment.runtime.node_selector)
-    if plan.deployment.runtime.affinity:
-        pod_spec["affinity"] = dict(plan.deployment.runtime.affinity)
-    if plan.deployment.runtime.tolerations:
-        pod_spec["tolerations"] = list(plan.deployment.runtime.tolerations)
-    if plan.deployment.runtime.service_account_name:
-        pod_spec["serviceAccountName"] = plan.deployment.runtime.service_account_name
-
     service = {
         "apiVersion": "v1",
         "kind": "Service",
@@ -747,7 +794,6 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
             ],
         },
     }
-
     servicemonitor = {
         "apiVersion": "monitoring.coreos.com/v1",
         "kind": "ServiceMonitor",
@@ -768,8 +814,190 @@ def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, An
             ],
         },
     }
-
     return [deployment, service, servicemonitor]
+
+
+def _render_rhaiis_distributed_raw_vllm_manifests(
+    plan: ResolvedRunPlan,
+) -> list[dict[str, Any]]:
+    runtime = plan.deployment.runtime
+    if runtime.replicas < 2:
+        raise ValidationError(
+            "rhaiis distributed raw-vllm requires runtime.replicas >= 2"
+        )
+    model_path = Path(_rhaiis_raw_vllm_model_path(plan))
+    if not model_path.is_absolute():
+        raise ValidationError("rhaiis raw-vllm options.model_path must be absolute")
+    if not any(
+        model_path == Path(item.mount_path)
+        or model_path.is_relative_to(Path(item.mount_path))
+        for item in runtime.host_paths
+    ):
+        raise ValidationError(
+            "rhaiis distributed raw-vllm options.model_path must be inside a runtime.host_paths mount"
+        )
+
+    distributed = plan.deployment.options.get("distributed") or {}
+    master_port = int(distributed.get("master_port", 29500))
+    workload_name = rhaiis_raw_vllm_deployment_name(plan)
+    headless_name = rhaiis_raw_vllm_headless_service_name(plan)
+    leader_host = f"{workload_name}-0.{headless_name}.{plan.deployment.namespace}.svc.cluster.local"
+    labels = _rhaiis_raw_vllm_labels(plan)
+    selector_labels = _rhaiis_raw_vllm_selector_labels(plan)
+    metrics_target = {"benchflow.io/metrics-target": plan.deployment.release_name}
+
+    container_spec = _rhaiis_raw_vllm_container(plan)
+    base_argv = [
+        *container_spec.pop("command"),
+        *container_spec.pop("args"),
+        f"--nnodes={runtime.replicas}",
+        f"--master-addr={leader_host}",
+        f"--master-port={master_port}",
+    ]
+    container_spec["command"] = ["/bin/sh", "-c"]
+    container_spec["args"] = [
+        """node_rank=${HOSTNAME##*-}\nif [ \"${node_rank}\" = \"0\" ]; then\n  exec \"$@\" --node-rank=\"${node_rank}\"\nfi\nexec \"$@\" --node-rank=\"${node_rank}\" --headless\n""",
+        "benchflow-vllm",
+        *base_argv,
+    ]
+    container_spec["ports"].append(
+        {"containerPort": master_port, "name": "distributed", "protocol": "TCP"}
+    )
+    container_spec["readinessProbe"] = {
+        "exec": {
+            "command": [
+                "/bin/sh",
+                "-c",
+                """node_rank=${HOSTNAME##*-}; if [ \"${node_rank}\" != \"0\" ]; then kill -0 1; else python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)\"; fi""",
+            ]
+        },
+        "periodSeconds": 10,
+        "timeoutSeconds": 5,
+        "failureThreshold": 3,
+    }
+    pod_spec = _rhaiis_raw_vllm_pod_spec(plan, container_spec)
+    pod_spec["hostNetwork"] = bool(distributed.get("host_network", False))
+    pod_spec["hostIPC"] = bool(distributed.get("host_ipc", False))
+    if pod_spec["hostNetwork"]:
+        pod_spec["dnsPolicy"] = "ClusterFirstWithHostNet"
+
+    affinity = pod_spec.setdefault("affinity", {})
+    required_anti_affinity = affinity.setdefault("podAntiAffinity", {}).setdefault(
+        "requiredDuringSchedulingIgnoredDuringExecution", []
+    )
+    required_anti_affinity.append(
+        {
+            "labelSelector": {"matchLabels": selector_labels},
+            "topologyKey": "kubernetes.io/hostname",
+        }
+    )
+
+    statefulset = {
+        "apiVersion": "apps/v1",
+        "kind": "StatefulSet",
+        "metadata": {
+            "name": workload_name,
+            "namespace": plan.deployment.namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "serviceName": headless_name,
+            "podManagementPolicy": "Parallel",
+            "replicas": runtime.replicas,
+            "selector": {"matchLabels": selector_labels},
+            "template": {
+                "metadata": {"labels": {**labels, **selector_labels}},
+                "spec": pod_spec,
+            },
+        },
+    }
+    headless_service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": headless_name,
+            "namespace": plan.deployment.namespace,
+            "labels": {**labels, **metrics_target},
+        },
+        "spec": {
+            "clusterIP": "None",
+            "publishNotReadyAddresses": True,
+            "selector": selector_labels,
+            "ports": [
+                {
+                    "name": "http",
+                    "port": 8000,
+                    "protocol": "TCP",
+                    "targetPort": "http",
+                },
+                {
+                    "name": "distributed",
+                    "port": master_port,
+                    "protocol": "TCP",
+                    "targetPort": "distributed",
+                },
+            ],
+        },
+    }
+    api_service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": rhaiis_raw_vllm_service_name(plan),
+            "namespace": plan.deployment.namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "type": "ExternalName",
+            "externalName": leader_host,
+            "ports": [
+                {
+                    "name": "http",
+                    "port": 8000,
+                    "protocol": "TCP",
+                    "targetPort": "http",
+                }
+            ],
+        },
+    }
+    servicemonitor = {
+        "apiVersion": "monitoring.coreos.com/v1",
+        "kind": "ServiceMonitor",
+        "metadata": {
+            "name": rhaiis_raw_vllm_servicemonitor_name(plan),
+            "namespace": plan.deployment.namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "selector": {"matchLabels": metrics_target},
+            "namespaceSelector": {"matchNames": [plan.deployment.namespace]},
+            "endpoints": [
+                {
+                    "path": "/metrics",
+                    "port": "http",
+                    "scheme": "http",
+                    "relabelings": [
+                        {
+                            "sourceLabels": ["__meta_kubernetes_pod_name"],
+                            "regex": f"{workload_name}-0",
+                            "action": "keep",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    return [statefulset, headless_service, api_service, servicemonitor]
+
+
+def render_rhaiis_raw_vllm_manifests(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
+    if not plan.deployment.runtime.image:
+        raise ValidationError(
+            "rhaiis raw-vllm deployments require deployment.runtime.image"
+        )
+    if rhaiis_raw_vllm_is_distributed(plan):
+        return _render_rhaiis_distributed_raw_vllm_manifests(plan)
+    return _render_rhaiis_single_raw_vllm_manifests(plan)
 
 
 def write_deployment_assets(
@@ -859,8 +1087,14 @@ def write_deployment_assets(
             )
             written.append(target)
         manifests = render_rhaiis_raw_vllm_manifests(plan)
-        names = ["deployment.yaml", "service.yaml", "servicemonitor.yaml"]
-        for manifest, name in zip(manifests, names, strict=True):
+        for manifest in manifests:
+            kind = str(manifest.get("kind") or "manifest").lower()
+            manifest_name = str((manifest.get("metadata") or {}).get("name") or "")
+            name = (
+                "headless-service.yaml"
+                if kind == "service" and manifest_name != plan.deployment.release_name
+                else f"{kind}.yaml"
+            )
             target = output_dir / name
             target.write_text(
                 yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"

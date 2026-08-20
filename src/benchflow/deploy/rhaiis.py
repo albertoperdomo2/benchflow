@@ -10,6 +10,7 @@ from ..renderers.deployment import (
     render_runtime_pvc_manifests,
     render_rhaiis_raw_vllm_manifests,
     rhaiis_raw_vllm_deployment_name,
+    rhaiis_raw_vllm_workload_kind,
 )
 from ..ui import detail, step, success
 
@@ -21,13 +22,15 @@ def _ensure_supported_mode(plan: ResolvedRunPlan) -> None:
         )
 
 
-def _deployment_exists(namespace: str, deployment_name: str, kubectl_cmd: str) -> bool:
+def _workload_exists(
+    namespace: str, workload_kind: str, workload_name: str, kubectl_cmd: str
+) -> bool:
     result = run_command(
         [
             kubectl_cmd,
             "get",
-            "deployment",
-            deployment_name,
+            workload_kind,
+            workload_name,
             "-n",
             namespace,
             "-o",
@@ -39,27 +42,36 @@ def _deployment_exists(namespace: str, deployment_name: str, kubectl_cmd: str) -
     return result.returncode == 0
 
 
-def _verify_deployment(
+def _verify_workload(
     namespace: str,
-    deployment_name: str,
+    workload_kind: str,
+    workload_name: str,
     kubectl_cmd: str,
     timeout_seconds: int,
 ) -> None:
     step(
-        f"Waiting for RHAIIS deployment {deployment_name} in namespace {namespace} to become ready"
+        f"Waiting for RHAIIS {workload_kind} {workload_name} in namespace {namespace} to become ready"
     )
     run_command(
         [
             kubectl_cmd,
             "rollout",
             "status",
-            f"deployment/{deployment_name}",
+            f"{workload_kind}/{workload_name}",
             "-n",
             namespace,
             f"--timeout={timeout_seconds}s",
         ]
     )
-    success(f"RHAIIS deployment {deployment_name} is ready")
+    success(f"RHAIIS {workload_kind} {workload_name} is ready")
+
+
+def _manifest_filename(manifest: dict, plan: ResolvedRunPlan) -> str:
+    kind = str(manifest.get("kind") or "manifest").lower()
+    name = str((manifest.get("metadata") or {}).get("name") or "")
+    if kind == "service" and name != plan.deployment.release_name:
+        return "headless-service.yaml"
+    return f"{kind}.yaml"
 
 
 def _apply_runtime_pvc_manifests(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
@@ -84,11 +96,14 @@ def deploy_rhaiis(
 
     kubectl_cmd = require_any_command("oc", "kubectl")
     namespace = plan.deployment.namespace
-    deployment_name = rhaiis_raw_vllm_deployment_name(plan)
+    workload_name = rhaiis_raw_vllm_deployment_name(plan)
+    workload_kind = rhaiis_raw_vllm_workload_kind(plan)
     manifests = render_rhaiis_raw_vllm_manifests(plan)
 
-    if skip_if_exists and _deployment_exists(namespace, deployment_name, kubectl_cmd):
-        success(f"Skipping deploy; Deployment {deployment_name} already exists")
+    if skip_if_exists and _workload_exists(
+        namespace, workload_kind, workload_name, kubectl_cmd
+    ):
+        success(f"Skipping deploy; {workload_kind} {workload_name} already exists")
         return manifests_dir.resolve() if manifests_dir else Path.cwd()
 
     if manifests_dir is not None:
@@ -100,11 +115,8 @@ def deploy_rhaiis(
                 yaml.safe_dump(pvc_manifest, sort_keys=False), encoding="utf-8"
             )
             detail(f"Rendered runtime PVC manifest written to {pvc_target}")
-        for manifest, name in zip(
-            manifests,
-            ["deployment.yaml", "service.yaml", "servicemonitor.yaml"],
-            strict=True,
-        ):
+        for manifest in manifests:
+            name = _manifest_filename(manifest, plan)
             target = manifests_dir / name
             target.write_text(
                 yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
@@ -122,17 +134,21 @@ def deploy_rhaiis(
             input_text=yaml.safe_dump(manifest, sort_keys=False),
         )
     success(
-        f"Applied Deployment {deployment_name}, Service {plan.deployment.release_name}, and ServiceMonitor in namespace {namespace}"
+        f"Applied RHAIIS raw-vLLM {workload_kind} {workload_name} and supporting services in namespace {namespace}"
     )
 
     if verify:
         try:
-            _verify_deployment(
-                namespace, deployment_name, kubectl_cmd, verify_timeout_seconds
+            _verify_workload(
+                namespace,
+                workload_kind,
+                workload_name,
+                kubectl_cmd,
+                verify_timeout_seconds,
             )
         except CommandError as exc:
             raise CommandError(
-                f"failed to verify RHAIIS deployment {deployment_name}: {exc}"
+                f"failed to verify RHAIIS {workload_kind} {workload_name}: {exc}"
             ) from exc
 
     return manifests_dir.resolve() if manifests_dir else Path.cwd()
