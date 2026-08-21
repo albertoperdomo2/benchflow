@@ -518,6 +518,10 @@ def run_matrix_supervisor(
                 f"benchmark={plan.profiles.benchmark}, "
                 f"metrics={plan.profiles.metrics}"
             )
+            if plan.benchmark.tool == "aiperf":
+                concurrency = plan.benchmark.aiperf.args.get("concurrency")
+                if concurrency is not None:
+                    descriptor += f", concurrency={concurrency}"
             step(f"[{index}/{total}] Submitting child execution")
             detail(descriptor)
             manifest = render_execution_manifest(

@@ -304,6 +304,7 @@ class OverrideRuntimeSpec:
 @dataclass(slots=True)
 class OverrideBenchmarkSpec:
     rates: list[int] | None = None
+    concurrency: int | list[int] | None = None
     max_seconds: int | None = None
     max_requests: str | None = None
     request_type: str | None = None

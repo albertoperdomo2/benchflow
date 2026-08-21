@@ -120,6 +120,18 @@ def _int_or_list(raw: Any, field_name: str) -> int | list[int] | None:
         ) from exc
 
 
+def _positive_int_or_list(raw: Any, field_name: str) -> int | list[int] | None:
+    value = _int_or_list(raw, field_name)
+    if value is None:
+        return None
+    values = value if isinstance(value, list) else [value]
+    if any(item <= 0 for item in values):
+        raise ValidationError(f"{field_name} must contain only positive integers")
+    if len(values) != len(set(values)):
+        raise ValidationError(f"{field_name} must not contain duplicate values")
+    return value
+
+
 def _int_list(raw: Any, field_name: str) -> list[int] | None:
     if raw is None:
         return None
@@ -585,6 +597,10 @@ def _overrides_from_dict(
         ),
         benchmark=OverrideBenchmarkSpec(
             rates=_int_list(benchmark.get("rates"), f"{field_name}.benchmark.rates"),
+            concurrency=_positive_int_or_list(
+                benchmark.get("concurrency"),
+                f"{field_name}.benchmark.concurrency",
+            ),
             max_seconds=_positive_int(
                 benchmark.get("max_seconds"),
                 f"{field_name}.benchmark.max_seconds",
@@ -627,6 +643,7 @@ def _reject_model_override_axes(override: OverrideSpec, *, field_name: str) -> N
         "images.scheduler": override.images.scheduler,
         "scale.replicas": override.scale.replicas,
         "scale.tensor_parallelism": override.scale.tensor_parallelism,
+        "benchmark.concurrency": override.benchmark.concurrency,
         "llm_d.repo_ref": override.llm_d.repo_ref,
     }
     for suffix, value in axis_fields.items():
@@ -953,6 +970,8 @@ def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
             normalized = _as_bool(value, False)
         elif key in {"synthesis_max_isl", "fixed_schedule_end_offset"}:
             normalized = _optional_positive_int(value, field_name)
+        elif key == "concurrency":
+            normalized = _positive_int(value, field_name)
         else:
             normalized = _passthrough_value(value, field_name)
         if normalized is not None:

@@ -218,6 +218,9 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
     )
     replicas = parse_axis_ints(getattr(args, "replicas", None), "--replicas")
     tensor_parallelism = parse_axis_ints(getattr(args, "tp", None), "--tp")
+    concurrency = parse_axis_ints(getattr(args, "concurrency", None), "--concurrency")
+    if isinstance(concurrency, list) and len(concurrency) != len(set(concurrency)):
+        raise ValidationError("--concurrency must not contain duplicate values")
     llmd_repo_ref = parse_axis_strings(
         getattr(args, "llmd_repo_ref", None), "--llmd-repo-ref"
     )
@@ -390,6 +393,11 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 list(base_experiment.spec.overrides.benchmark.rates)
                 if base_experiment.spec.overrides.benchmark.rates is not None
                 else None
+            ),
+            concurrency=(
+                concurrency
+                if concurrency is not None
+                else base_experiment.spec.overrides.benchmark.concurrency
             ),
             max_seconds=base_experiment.spec.overrides.benchmark.max_seconds,
             max_requests=base_experiment.spec.overrides.benchmark.max_requests,
@@ -658,6 +666,12 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
             type=int,
             multiple=True,
             help="Override tensor parallelism. Repeat to build a matrix axis.",
+        ),
+        click.option(
+            "--concurrency",
+            type=click.IntRange(min=1),
+            multiple=True,
+            help="Override AIPerf concurrency. Repeat to build a matrix axis.",
         ),
         click.option(
             "--env",

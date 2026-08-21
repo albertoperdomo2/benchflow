@@ -609,6 +609,10 @@ def _merge_model_override(
                 model_override.benchmark.rates,
                 base.benchmark.rates,
             ),
+            concurrency=_scalar_model_override(
+                model_override.benchmark.concurrency,
+                base.benchmark.concurrency,
+            ),
             max_seconds=_scalar_model_override(
                 model_override.benchmark.max_seconds,
                 base.benchmark.max_seconds,
@@ -870,6 +874,16 @@ def resolve_run_plan(
         options["enable_auth"] = overrides.rhoai.enable_auth
 
     benchmark = deepcopy(benchmark_profile.spec)
+    if overrides.benchmark.concurrency is not None:
+        concurrency = _scalar_override(
+            overrides.benchmark.concurrency,
+            "spec.overrides.benchmark.concurrency",
+        )
+        if benchmark.tool != "aiperf":
+            raise ValidationError(
+                "benchmark.concurrency is currently supported only for aiperf"
+            )
+        benchmark.aiperf.args["concurrency"] = int(concurrency)
     if overrides.benchmark.rates is not None:
         if benchmark.tool == "guidellm":
             _set_guidellm_load_values(

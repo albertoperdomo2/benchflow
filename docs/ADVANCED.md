@@ -426,6 +426,7 @@ spec:
     rhoai:
       enable_auth: false # --rhoai-auth / --no-rhoai-auth
     benchmark:
+      concurrency: [4, 8, 16] # --concurrency, AIPerf-only integer or list for matrix
       env:
         GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: DEBUG # profile-owned benchmark env can be overridden per experiment
   model_overrides:
@@ -454,6 +455,7 @@ Override semantics:
 - `runtime.node_selector`, `runtime.affinity`, and `runtime.tolerations` replace the profile value when set in `spec.overrides.runtime`
 - `runtime.image_pull_secrets` is profile-owned and currently rendered for RHOAI runtime pods
 - `benchmark.env` merges by key and override values win on collisions
+- `benchmark.concurrency` overrides AIPerf's scalar concurrency; a list creates a matrix axis, while GuideLLM and Inference Perf reject this field
 - benchmark `requirements` can raise the effective deployment runtime settings for a given child `RunPlan`
 - today `requirements.min_max_model_len` raises the effective `--max-model-len` for that resolved run when the benchmark needs a larger context window than the deployment default
 - `model_overrides` is keyed by model name and is applied only after a matrix child resolves to a single model; listing models under `spec.model.name` does not change deployment configuration by itself, and model overrides cannot define new matrix axes
@@ -915,6 +917,32 @@ For AIPerf profiles, use exactly one dataset source:
   blessed `aiperf-weka-trace` profile
 - `dataset_url` plus `dataset_type` for the existing downloaded JSONL path
 
+AIPerf concurrency can be promoted to an experiment matrix dimension without
+duplicating benchmark profiles:
+
+```yaml
+spec:
+  benchmark_profile: aiperf-agentx-inference
+  overrides:
+    scale:
+      replicas: [4, 8]
+    benchmark:
+      concurrency: [4, 8, 16, 32, 64, 128, 256, 512, 1024]
+```
+
+Each concurrency becomes a separate child execution with one ordinary AIPerf
+invocation. The benchmark profile continues to own the scenario, dataset,
+request behavior, and default concurrency.
+
+The CLI equivalent repeats `--concurrency`:
+
+```bash
+bflow experiment run experiments/rhoai/cpu-offloading.yaml \
+  --concurrency 4 \
+  --concurrency 8 \
+  --concurrency 16
+```
+
 For downloaded JSONL datasets, `dataset_name` is optional. When omitted,
 BenchFlow derives the cached file name from `dataset_url`, for example
 `toolagent_trace.jsonl`. Use `dataset_name` only when the URL does not have a
@@ -1120,6 +1148,7 @@ BenchFlow expands the cartesian product of those profile lists.
 Current behavior:
 
 - each combination becomes one normal child `RunPlan`
+- list-valued `overrides.benchmark.concurrency` adds an AIPerf-only matrix axis
 - each child `RunPlan` becomes one normal child execution
 - `bflow experiment run` submits one supervisor execution
 - `rhoai` and `llm-d` child executions are submitted together and Kueue can admit them in parallel

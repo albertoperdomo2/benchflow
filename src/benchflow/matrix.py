@@ -54,13 +54,21 @@ def _axis_values(value) -> list[object]:
 
 def _override_axes(
     experiment: Experiment,
-) -> tuple[list[object], list[object], list[object], list[object], list[object]]:
+) -> tuple[
+    list[object],
+    list[object],
+    list[object],
+    list[object],
+    list[object],
+    list[object],
+]:
     overrides = experiment.spec.overrides
     return (
         _axis_values(overrides.images.runtime),
         _axis_values(overrides.images.scheduler),
         _axis_values(overrides.scale.replicas),
         _axis_values(overrides.scale.tensor_parallelism),
+        _axis_values(overrides.benchmark.concurrency),
         _axis_values(overrides.llm_d.repo_ref),
     )
 
@@ -79,6 +87,7 @@ def is_matrix_experiment(experiment: Experiment) -> bool:
         scheduler_images,
         replicas_values,
         tensor_parallelism_values,
+        concurrency_values,
         repo_refs,
     ) = _override_axes(experiment)
     return any(
@@ -92,6 +101,7 @@ def is_matrix_experiment(experiment: Experiment) -> bool:
             scheduler_images,
             replicas_values,
             tensor_parallelism_values,
+            concurrency_values,
             repo_refs,
         )
     )
@@ -107,6 +117,7 @@ def experiment_matrix_size(experiment: Experiment) -> int:
         scheduler_images,
         replicas_values,
         tensor_parallelism_values,
+        concurrency_values,
         repo_refs,
     ) = _override_axes(experiment)
     return (
@@ -118,6 +129,7 @@ def experiment_matrix_size(experiment: Experiment) -> int:
         * len(scheduler_images)
         * len(replicas_values)
         * len(tensor_parallelism_values)
+        * len(concurrency_values)
         * len(repo_refs)
     )
 
@@ -132,6 +144,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
         scheduler_images,
         replicas_values,
         tensor_parallelism_values,
+        concurrency_values,
         repo_refs,
     ) = _override_axes(experiment)
     expanded: list[Experiment] = []
@@ -145,6 +158,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
             scheduler_images,
             replicas_values,
             tensor_parallelism_values,
+            concurrency_values,
             repo_refs,
         )
     )
@@ -158,6 +172,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
         scheduler_image,
         replicas,
         tensor_parallelism,
+        concurrency,
         repo_ref,
     ) in enumerate(combinations, start=1):
         labels = dict(experiment.metadata.labels)
@@ -277,6 +292,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                                 if experiment.spec.overrides.benchmark.rates is not None
                                 else None
                             ),
+                            concurrency=concurrency,
                             max_seconds=experiment.spec.overrides.benchmark.max_seconds,
                             max_requests=experiment.spec.overrides.benchmark.max_requests,
                             request_type=experiment.spec.overrides.benchmark.request_type,
