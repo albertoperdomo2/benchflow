@@ -41,6 +41,7 @@ KUEUE_SKIP_RESERVATION_LABEL = "benchflow.io/kueue-skip-reservation"
 _NVIDIA_GPU_RESOURCE = "nvidia.com/gpu"
 _NVIDIA_DRA_GPU_DEVICE_CLASS = "gpu.nvidia.com"
 REQUESTED_GPUS_LABEL = "benchflow.io/requested-gpus"
+PRIORITY_LABEL = "benchflow.io/priority"
 CLUSTER_QUEUE_LABEL = "benchflow.io/cluster-name"
 TARGET_KUBECONFIG_SECRET_LABEL = "benchflow.io/target-kubeconfig-secret"
 EXECUTION_NAME_LABEL = "benchflow.io/execution-name"
@@ -157,6 +158,7 @@ def execution_labels_for_plan(
     labels = {
         CLUSTER_QUEUE_LABEL: cluster_name_from_plan(plan),
         REQUESTED_GPUS_LABEL: str(requested_gpus(plan)),
+        PRIORITY_LABEL: str(plan.execution.priority),
         KUEUE_SKIP_RESERVATION_LABEL: str(skip_reservation).lower(),
     }
     secret_name = target_kubeconfig_secret_from_plan(plan)
@@ -170,11 +172,17 @@ def execution_labels_for_matrix(
     *,
     skip_reservation: bool = False,
 ) -> dict[str, str]:
+    if not plans:
+        raise ValidationError("at least one RunPlan is required")
+    priorities = {plan.execution.priority for plan in plans}
+    if len(priorities) != 1:
+        raise ValidationError("matrix runs must resolve to one execution priority")
     labels = {
         CLUSTER_QUEUE_LABEL: cluster_name_from_plans(plans),
         REQUESTED_GPUS_LABEL: str(
             0 if skip_reservation else requested_gpus_for_matrix(plans)
         ),
+        PRIORITY_LABEL: str(next(iter(priorities))),
         KUEUE_SKIP_RESERVATION_LABEL: str(skip_reservation).lower(),
     }
     secret_name = target_kubeconfig_secret_from_plans(plans)
@@ -198,6 +206,16 @@ def requested_gpus_from_labels(labels: dict[str, str] | None) -> int:
         return int(str(labels.get(REQUESTED_GPUS_LABEL) or "0"))
     except ValueError:
         return 0
+
+
+def priority_from_labels(labels: dict[str, str] | None) -> int:
+    if not labels:
+        return 0
+    try:
+        priority = int(str(labels.get(PRIORITY_LABEL) or "0"))
+    except ValueError:
+        return 0
+    return max(0, min(priority, 2_147_483_647))
 
 
 def queue_name_from_labels(labels: dict[str, str] | None) -> str:
@@ -308,6 +326,7 @@ def _workload_json(
     execution_name: str,
     submission_configmap_name: str,
     requested_gpu_count: int,
+    priority: int,
     max_execution_seconds: int,
     execution_labels: dict[str, str] | None = None,
     execution_annotations: dict[str, str] | None = None,
@@ -345,6 +364,7 @@ def _workload_json(
         "spec": {
             "active": True,
             "queueName": cluster_name,
+            "priority": priority,
             "maximumExecutionTimeSeconds": max_execution_seconds,
             "podSets": [
                 {
@@ -378,6 +398,7 @@ def create_reservation_workload(
     execution_name: str,
     submission_configmap_name: str,
     requested_gpu_count: int,
+    priority: int,
     execution_timeout: str,
     execution_labels: dict[str, str] | None = None,
     execution_annotations: dict[str, str] | None = None,
@@ -391,6 +412,7 @@ def create_reservation_workload(
         execution_name=execution_name,
         submission_configmap_name=submission_configmap_name,
         requested_gpu_count=requested_gpu_count,
+        priority=priority,
         max_execution_seconds=_duration_seconds(execution_timeout),
         execution_labels=execution_labels,
         execution_annotations=execution_annotations,

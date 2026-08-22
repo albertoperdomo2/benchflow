@@ -454,6 +454,11 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                     if getattr(args, "timeout", None) is not None
                     else base_experiment.spec.execution.timeout
                 ),
+                priority=(
+                    int(getattr(args, "priority"))
+                    if getattr(args, "priority", None) is not None
+                    else base_experiment.spec.execution.priority
+                ),
                 verify_completions=(
                     bool(getattr(args, "verify_completions"))
                     if getattr(args, "verify_completions", None) is not None
@@ -627,6 +632,14 @@ def experiment_input_options(func: Callable[..., object]) -> Callable[..., objec
         click.option(
             "--timeout",
             help="Execution timeout for the main PipelineRun, for example 3h or 30m.",
+        ),
+        click.option(
+            "--priority",
+            type=click.IntRange(min=0, max=2_147_483_647),
+            help=(
+                "Kueue priority for this execution. Higher values run before lower "
+                "priority work waiting in the same cluster queue."
+            ),
         ),
         click.option(
             "--verify-completions/--no-verify-completions",

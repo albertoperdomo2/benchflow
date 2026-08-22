@@ -238,6 +238,7 @@ class ProfilingSpec:
 @dataclass(slots=True)
 class ExecutionSpec:
     timeout: str = "3h"
+    priority: int = 0
     verify_completions: bool = True
     profiling: ProfilingSpec = field(default_factory=ProfilingSpec)
 
@@ -247,8 +248,24 @@ class ExecutionSpec:
         timeout = str(raw.get("timeout", "3h") or "3h").strip()
         if not timeout:
             raise ValidationError("execution.timeout must not be empty")
+        priority_raw = raw.get("priority", 0)
+        if isinstance(priority_raw, bool) or not isinstance(priority_raw, (int, str)):
+            raise ValidationError("execution.priority must be a non-negative integer")
+        if isinstance(priority_raw, str) and not re.fullmatch(
+            r"[+-]?\d+", priority_raw.strip()
+        ):
+            raise ValidationError("execution.priority must be a non-negative integer")
+        try:
+            priority = int(priority_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "execution.priority must be a non-negative integer"
+            ) from exc
+        if priority < 0 or priority > 2_147_483_647:
+            raise ValidationError("execution.priority must be between 0 and 2147483647")
         return cls(
             timeout=timeout,
+            priority=priority,
             verify_completions=_as_bool(raw.get("verify_completions"), True),
             profiling=ProfilingSpec.from_dict(raw.get("profiling")),
         )

@@ -18,6 +18,7 @@ from ..kueue import (
     list_reservation_workloads,
     reservation_workload_by_execution_name,
     queue_name_from_labels,
+    priority_from_labels,
     requested_gpus_from_labels,
     reservation_required_for_labels,
     submission_configmap_name_from_labels,
@@ -354,6 +355,7 @@ def submit_execution_manifest(manifest: dict[str, Any], namespace: str) -> str:
 
     cluster_name = queue_name_from_labels(labels)
     requested_gpus = requested_gpus_from_labels(labels)
+    priority = priority_from_labels(labels)
     execution_timeout = str(
         (manifest.get("spec", {}) or {}).get("timeouts", {}).get("pipeline") or "3h"
     )
@@ -377,6 +379,7 @@ def submit_execution_manifest(manifest: dict[str, Any], namespace: str) -> str:
             execution_name=execution_name,
             submission_configmap_name=configmap_name,
             requested_gpu_count=requested_gpus,
+            priority=priority,
             execution_timeout=execution_timeout,
             execution_labels=labels,
             execution_annotations=annotations,

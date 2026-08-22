@@ -299,6 +299,16 @@ value; for same-cluster runs, the queue name is `local`.
 This means `bflow experiment run ...` is set-and-forget again: your laptop does
 not need to stay alive while the execution waits in queue.
 
+Executions default to Kueue priority `0`. Set `spec.execution.priority` or pass
+`--priority` with a higher non-negative integer to place an execution ahead of
+lower-priority pending work in the same cluster queue. Priority does not evict
+an execution that Kueue has already admitted; the higher-priority run starts
+when enough queue capacity becomes available.
+
+```bash
+bflow experiment run experiments/rhoai/cpu-offloading.yaml --priority 100
+```
+
 Important behavior:
 - for `llm-d` and `RHOAI`, BenchFlow adds a setup key to each queued execution
 - once a target cluster has an admitted setup key, BenchFlow admits only matching-key workloads until that admitted wave finishes
@@ -387,6 +397,7 @@ spec:
       owner: perf # --mlflow-tag owner=perf
   execution:
     timeout: 3h # --timeout
+    priority: 0 # --priority; higher values run before lower-priority pending work in the same cluster queue
     verify_completions: true # --verify-completions / --no-verify-completions
   overrides:
     images:

@@ -208,6 +208,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                     ),
                     execution=ExecutionSpec(
                         timeout=experiment.spec.execution.timeout,
+                        priority=experiment.spec.execution.priority,
                         verify_completions=experiment.spec.execution.verify_completions,
                         profiling=ProfilingSpec(
                             enabled=experiment.spec.execution.profiling.enabled,
