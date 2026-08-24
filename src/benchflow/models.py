@@ -421,6 +421,7 @@ class RuntimeSpec:
     image: str = ""
     replicas: int = 1
     tensor_parallelism: int = 1
+    pipeline_parallelism: int = 1
     vllm_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     shared_memory_size: str = ""

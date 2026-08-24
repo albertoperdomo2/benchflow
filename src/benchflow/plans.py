@@ -733,6 +733,7 @@ def resolve_run_plan(
             if tp_override is not None
             else deployment_profile.spec.runtime.tensor_parallelism
         ),
+        pipeline_parallelism=deployment_profile.spec.runtime.pipeline_parallelism,
         vllm_args=_resolve_vllm_args(
             deployment_args=[
                 *(
@@ -797,6 +798,14 @@ def resolve_run_plan(
     if runtime.placement.mode and deployment_profile.spec.mode == "isvc":
         raise ValidationError(
             "runtime.placement is not supported for rhoai isvc deployments"
+        )
+    if runtime.pipeline_parallelism > 1 and not (
+        deployment_profile.spec.platform == "rhaiis"
+        and deployment_profile.spec.mode == "raw-vllm"
+    ):
+        raise ValidationError(
+            "runtime.pipeline_parallelism is currently supported only for "
+            "rhaiis raw-vllm deployments"
         )
     if runtime.host_paths and deployment_profile.spec.platform not in {
         "llm-d",

@@ -538,6 +538,7 @@ spec:
     image: ghcr.io/llm-d/llm-d-cuda:v0.4.0 # overridden by spec.overrides.images.runtime or --runtime-image
     replicas: 1 # overridden by spec.overrides.scale.replicas or --replicas
     tensor_parallelism: 1 # overridden by spec.overrides.scale.tensor_parallelism or --tp
+    pipeline_parallelism: 1 # rhaiis raw-vllm only; total GPUs per replica are TP x PP
     vllm_args:
       - --max-model-len=8192 # base guide args for the deployment profile
     env:

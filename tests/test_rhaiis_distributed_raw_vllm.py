@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from benchflow.loaders import ProfileCatalog, load_experiment
+from benchflow.loaders import ProfileCatalog, load_experiment, load_run_plan_data
 from benchflow.matrix import resolve_experiment_matrix
 from benchflow.renderers.deployment import render_rhaiis_raw_vllm_manifests
 
@@ -22,6 +22,31 @@ def _kimi_plan():
 
 
 class RhaiisDistributedRawVllmTest(unittest.TestCase):
+    def test_raw_vllm_renders_tp4_pp2_on_eight_gpus(self) -> None:
+        experiment = load_experiment(
+            REPO_ROOT / "experiments/rhaiis/llama-33-70b-release.yaml"
+        )
+        plan = resolve_experiment_matrix(
+            experiment, ProfileCatalog.load(REPO_ROOT / "profiles")
+        )[0]
+        plan.deployment.runtime.tensor_parallelism = 4
+        plan.deployment.runtime.pipeline_parallelism = 2
+
+        self.assertEqual(plan.deployment.runtime.tensor_parallelism, 4)
+        self.assertEqual(plan.deployment.runtime.pipeline_parallelism, 2)
+        restored = load_run_plan_data(plan.to_dict())
+        self.assertEqual(restored.deployment.runtime.pipeline_parallelism, 2)
+
+        manifests = render_rhaiis_raw_vllm_manifests(plan)
+        deployment = next(
+            manifest for manifest in manifests if manifest["kind"] == "Deployment"
+        )
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        self.assertIn("--tensor-parallel-size=4", container["args"])
+        self.assertIn("--pipeline-parallel-size=2", container["args"])
+        self.assertEqual(container["resources"]["limits"]["nvidia.com/gpu"], "8")
+        self.assertEqual(container["resources"]["requests"]["nvidia.com/gpu"], "8")
+
     def test_existing_raw_vllm_profile_keeps_deployment_shape(self) -> None:
         experiment = load_experiment(
             REPO_ROOT / "experiments/rhaiis/llama-33-70b-release.yaml"

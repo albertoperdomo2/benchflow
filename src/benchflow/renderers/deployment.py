@@ -196,7 +196,10 @@ def _runtime_resource_requirements(
         "requests": dict(plan.deployment.runtime.resources.requests),
     }
     if include_gpu:
-        gpu_count = str(plan.deployment.runtime.tensor_parallelism)
+        gpu_count = str(
+            plan.deployment.runtime.tensor_parallelism
+            * plan.deployment.runtime.pipeline_parallelism
+        )
         resources["limits"]["nvidia.com/gpu"] = gpu_count
         resources["requests"]["nvidia.com/gpu"] = gpu_count
     return resources
@@ -709,6 +712,14 @@ def _rhaiis_raw_vllm_container(plan: ResolvedRunPlan) -> dict[str, Any]:
             f"--model={_rhaiis_raw_vllm_model_path(plan)}",
             f"--served-model-name={plan.model.name}",
             f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
+            *(
+                [
+                    "--pipeline-parallel-size="
+                    f"{plan.deployment.runtime.pipeline_parallelism}"
+                ]
+                if plan.deployment.runtime.pipeline_parallelism > 1
+                else []
+            ),
             "--port=8000",
             "--host=0.0.0.0",
             *plan.deployment.runtime.vllm_args,

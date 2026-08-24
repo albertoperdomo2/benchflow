@@ -791,6 +791,13 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
         image=str(raw.get("image", "")),
         replicas=int(raw.get("replicas", 1)),
         tensor_parallelism=int(raw.get("tensor_parallelism", 1)),
+        pipeline_parallelism=(
+            _positive_int(
+                raw.get("pipeline_parallelism", 1),
+                "spec.runtime.pipeline_parallelism",
+            )
+            or 1
+        ),
         vllm_args=[str(item) for item in (raw.get("vllm_args") or [])],
         env=env,
         shared_memory_size=_optional_string(raw.get("shared_memory_size")),
