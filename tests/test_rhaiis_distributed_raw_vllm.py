@@ -41,6 +41,7 @@ class RhaiisDistributedRawVllmTest(unittest.TestCase):
         deployment = next(
             manifest for manifest in manifests if manifest["kind"] == "Deployment"
         )
+        self.assertEqual(deployment["spec"]["progressDeadlineSeconds"], 3600)
         container = deployment["spec"]["template"]["spec"]["containers"][0]
         self.assertIn("--tensor-parallel-size=4", container["args"])
         self.assertIn("--pipeline-parallel-size=2", container["args"])

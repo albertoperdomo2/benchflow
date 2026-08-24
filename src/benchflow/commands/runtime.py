@@ -2296,7 +2296,7 @@ def task_setup_run_plan_command(**kwargs: object) -> int:
 @click.option(
     "--verify-timeout-seconds",
     type=int,
-    default=1800,
+    default=3600,
     show_default=True,
     help="Maximum time to wait for deployment verification.",
 )

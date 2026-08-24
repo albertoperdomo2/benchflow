@@ -22,7 +22,7 @@ from ..rhoai_gateway import rhoai_release_gateway_reference
 RHOAI_PROFILER_CONFIGMAP_SUFFIX = "vllm-profiler"
 RHOAI_PROFILER_MOUNT_PATH = "/home/vllm/profiler"
 RHOAI_PROFILER_OUTPUT_DIR = "/tmp/benchflow-profiler"
-RAHIIS_PROGRESS_DEADLINE_SECONDS = 1800
+RAHIIS_PROGRESS_DEADLINE_SECONDS = 3600
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
