@@ -550,6 +550,9 @@ spec:
         mount_path: /mnt/nvme/kv-cache # path visible to the vLLM container
         type: DirectoryOrCreate # optional Kubernetes hostPath type
         read_only: false # optional, defaults to false
+    artifact_directories: # optional directories copied from every model runtime pod
+      - name: oracle-trace # destination below runtime-artifacts/ in the artifact bundle
+        path: /tmp/vllm-kv-oracle-traces # absolute path inside the runtime container
     resources:
       requests:
         cpu: "16" # overridden by spec.overrides.runtime.resources.requests.cpu or --runtime-cpu-request
@@ -627,6 +630,16 @@ the model-server HTTPS health endpoint on port `8000` with
 `failureThreshold: 120`, `periodSeconds: 10`, and `timeoutSeconds: 1`. Profiles
 can override those fields with `spec.options.startup_probe`; setting it to
 `false` disables BenchFlow's explicit startup probe.
+
+Deployment profiles can collect runtime-generated files with
+`spec.runtime.artifact_directories`. For each declared source, BenchFlow copies
+the complete directory from every matching model pod into
+`runtime-artifacts/<name>/<pod>/` before cleanup. Missing or empty directories
+are ignored. The normal artifact upload then publishes those files to MLflow;
+the runtime artifact collector has no separate MLflow path. This setting is
+profile-owned and cannot be overridden by an experiment. Names and source paths
+must be unique, paths must be absolute, and root or runtime secret directories
+are rejected.
 
 llm-d, RHOAI, and RHAIIS raw vLLM profiles can mount node-local storage with
 `spec.runtime.host_paths`. BenchFlow renders those entries as Kubernetes

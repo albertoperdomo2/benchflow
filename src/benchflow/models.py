@@ -411,6 +411,12 @@ class RuntimePVCMountSpec:
 
 
 @dataclass(slots=True)
+class RuntimeArtifactDirectorySpec:
+    name: str
+    path: str
+
+
+@dataclass(slots=True)
 class RuntimeSpec:
     image: str = ""
     replicas: int = 1
@@ -420,6 +426,9 @@ class RuntimeSpec:
     shared_memory_size: str = ""
     host_paths: list[RuntimeHostPathSpec] = field(default_factory=list)
     pvc_mounts: list[RuntimePVCMountSpec] = field(default_factory=list)
+    artifact_directories: list[RuntimeArtifactDirectorySpec] = field(
+        default_factory=list
+    )
     service_account_name: str = ""
     node_selector: dict[str, str] = field(default_factory=dict)
     affinity: dict[str, Any] = field(default_factory=dict)

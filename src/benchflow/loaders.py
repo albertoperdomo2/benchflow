@@ -37,6 +37,7 @@ from .models import (
     ProfileRefs,
     ResolvedDeployment,
     ResolvedRunPlan,
+    RuntimeArtifactDirectorySpec,
     RuntimeHostPathSpec,
     RuntimePlacementSpec,
     RuntimePVCMountSpec,
@@ -469,6 +470,56 @@ def _runtime_pvc_mounts_from_dict(
     return pvc_mounts
 
 
+def _runtime_artifact_directories_from_dict(
+    raw: Any, field_name: str
+) -> list[RuntimeArtifactDirectorySpec]:
+    entries = _mapping_list(raw, field_name)
+    artifact_directories: list[RuntimeArtifactDirectorySpec] = []
+    names: set[str] = set()
+    paths: set[str] = set()
+    forbidden_paths = {"/", "/var/run/secrets", "/run/secrets"}
+    for index, item in enumerate(entries):
+        item_field = f"{field_name}[{index}]"
+        name = _nonempty_string(item.get("name"), f"{item_field}.name")
+        path = _nonempty_string(item.get("path"), f"{item_field}.path")
+        if name is None:
+            raise ValidationError(f"{item_field}.name is required")
+        if path is None:
+            raise ValidationError(f"{item_field}.path is required")
+        if len(name) > 63 or not _KUBERNETES_VOLUME_NAME_RE.match(name):
+            raise ValidationError(
+                f"{item_field}.name must be a valid Kubernetes-style name"
+            )
+        if name in names:
+            raise ValidationError(
+                f"{item_field}.name duplicates artifact directory {name!r}"
+            )
+        if not path.startswith("/"):
+            raise ValidationError(f"{item_field}.path must be an absolute path")
+        path_parts = [part for part in path.split("/") if part]
+        if ".." in path_parts:
+            raise ValidationError(f"{item_field}.path must not contain '..'")
+        normalized_path = "/" + "/".join(path_parts)
+        if normalized_path in forbidden_paths or any(
+            normalized_path.startswith(f"{prefix}/")
+            for prefix in forbidden_paths
+            if prefix != "/"
+        ):
+            raise ValidationError(
+                f"{item_field}.path must not target a root or runtime secret directory"
+            )
+        if normalized_path in paths:
+            raise ValidationError(
+                f"{item_field}.path duplicates artifact path {normalized_path!r}"
+            )
+        artifact_directories.append(
+            RuntimeArtifactDirectorySpec(name=name, path=normalized_path)
+        )
+        names.add(name)
+        paths.add(normalized_path)
+    return artifact_directories
+
+
 def _mapping_list(raw: Any, field_name: str) -> list[dict[str, Any]]:
     if raw is None:
         return []
@@ -748,6 +799,10 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
         ),
         pvc_mounts=_runtime_pvc_mounts_from_dict(
             raw.get("pvc_mounts"), "spec.runtime.pvc_mounts"
+        ),
+        artifact_directories=_runtime_artifact_directories_from_dict(
+            raw.get("artifact_directories"),
+            "spec.runtime.artifact_directories",
         ),
         service_account_name=str(raw.get("service_account_name", "") or "").strip(),
         node_selector=_string_mapping(

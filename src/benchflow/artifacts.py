@@ -9,7 +9,7 @@ from pathlib import Path
 from .benchmark import runtime as runtime_module
 from .benchmark import benchmark_version_from_plan
 from .cluster import CommandError, require_any_command, run_command, run_json_command
-from .models import ResolvedRunPlan
+from .models import ResolvedRunPlan, RuntimeArtifactDirectorySpec
 from .storage_offloading import storage_offloading_config
 from .ui import detail, step, success
 
@@ -365,6 +365,17 @@ def _pod_container_names(pod: dict) -> list[str]:
     ]
 
 
+def _model_runtime_container_name(pod: dict) -> str:
+    """Resolve BenchFlow's model runtime container without a profile knob."""
+    container_names = _pod_container_names(pod)
+    for preferred_name in ("main", "vllm"):
+        if preferred_name in container_names:
+            return preferred_name
+    if len(container_names) == 1:
+        return container_names[0]
+    return ""
+
+
 def _ensure_artifact_layout(artifacts_dir: Path) -> None:
     for relative in (
         "logs/pipeline",
@@ -377,6 +388,7 @@ def _ensure_artifact_layout(artifacts_dir: Path) -> None:
         "manifests",
         "platform-state",
         "profiling",
+        "runtime-artifacts",
     ):
         (artifacts_dir / relative).mkdir(parents=True, exist_ok=True)
 
@@ -638,6 +650,7 @@ def _collect_storage_offloading_dir_size(
     kubectl_cmd: str,
     namespace: str,
     pod_name: str,
+    container_name: str,
     artifacts_dir: Path,
     mount_path: str,
 ) -> bool:
@@ -744,6 +757,61 @@ def _collect_profiling_artifacts(
     )
     if copy_result.returncode != 0:
         detail(f"Failed to copy profiling artifacts from pod {pod_name}")
+        return 0
+    return sum(1 for path in target_dir.rglob("*") if path.is_file())
+
+
+def _collect_runtime_artifact_directory(
+    kubectl_cmd: str,
+    namespace: str,
+    pod_name: str,
+    container_name: str,
+    artifacts_dir: Path,
+    source: RuntimeArtifactDirectorySpec,
+) -> int:
+    """Copy one profile-declared directory from a model runtime pod."""
+    source_path = shlex.quote(source.path)
+    probe = run_command(
+        [
+            kubectl_cmd,
+            "exec",
+            pod_name,
+            "-c",
+            container_name,
+            "-n",
+            namespace,
+            "--",
+            "sh",
+            "-lc",
+            (f"test -d {source_path} && find {source_path} -type f -print -quit"),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode != 0 or not probe.stdout.strip():
+        return 0
+
+    target_dir = artifacts_dir / "runtime-artifacts" / source.name / pod_name
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copy_result = run_command(
+        [
+            kubectl_cmd,
+            "cp",
+            "-c",
+            container_name,
+            "-n",
+            namespace,
+            f"{pod_name}:{source.path}/.",
+            str(target_dir),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if copy_result.returncode != 0:
+        detail(
+            f"Failed to copy runtime artifact directory {source.name!r} "
+            f"from pod {pod_name}"
+        )
         return 0
     return sum(1 for path in target_dir.rglob("*") if path.is_file())
 
@@ -857,6 +925,7 @@ def collect_artifacts(
     gaie_count = 0
     infra_count = 0
     model_pod_names: list[str] = []
+    model_pod_containers: dict[str, str] = {}
     model_pod_nodes: set[str] = set()
     storage_offloading_log_count = 0
     cephfs_diagnostics: dict[str, object] = {"enabled": False}
@@ -877,6 +946,9 @@ def collect_artifacts(
             pod_type = _pod_type(pod_name)
             if pod_type == "model":
                 model_pod_names.append(pod_name)
+                runtime_container = _model_runtime_container_name(item)
+                if runtime_container:
+                    model_pod_containers[pod_name] = runtime_container
                 spec = item.get("spec") or {}
                 if isinstance(spec, dict):
                     node_name = str(spec.get("nodeName") or "").strip()
@@ -944,6 +1016,49 @@ def collect_artifacts(
             f"Collected {profiling_file_count} profiling artifact file(s) "
             f"from {len(profiling_pods)} pod(s)"
         )
+
+    runtime_artifacts: list[dict[str, object]] = []
+    if (
+        include_workload
+        and model_pod_names
+        and plan.deployment.runtime.artifact_directories
+    ):
+        for source in plan.deployment.runtime.artifact_directories:
+            source_pods: list[str] = []
+            source_file_count = 0
+            for pod_name in sorted(model_pod_names):
+                container_name = model_pod_containers.get(pod_name, "")
+                if not container_name:
+                    detail(
+                        f"Could not identify the model runtime container in pod "
+                        f"{pod_name}; skipping runtime artifact directory "
+                        f"{source.name!r}"
+                    )
+                    continue
+                collected = _collect_runtime_artifact_directory(
+                    kubectl_cmd,
+                    namespace,
+                    pod_name,
+                    container_name,
+                    artifacts_dir,
+                    source,
+                )
+                if collected <= 0:
+                    continue
+                source_pods.append(pod_name)
+                source_file_count += collected
+            runtime_artifacts.append(
+                {
+                    "name": source.name,
+                    "path": source.path,
+                    "pods": source_pods,
+                    "files": source_file_count,
+                }
+            )
+            detail(
+                f"Collected {source_file_count} runtime artifact file(s) "
+                f"for {source.name!r} from {len(source_pods)} pod(s)"
+            )
 
     manifest_root = artifacts_dir / "manifests"
     manifest_count = 0
@@ -1058,6 +1173,7 @@ def collect_artifacts(
         "infra_pods": infra_count,
         "profiling_pods": profiling_pods,
         "profiling_files": profiling_file_count,
+        "runtime_artifacts": runtime_artifacts,
         "storage_offloading_logs": storage_offloading_log_count,
         "cephfs_diagnostics": cephfs_diagnostics,
         "manifest_files": manifest_count,

@@ -755,6 +755,9 @@ def resolve_run_plan(
             else deepcopy(deployment_profile.spec.runtime.host_paths)
         ),
         pvc_mounts=deepcopy(deployment_profile.spec.runtime.pvc_mounts),
+        artifact_directories=deepcopy(
+            deployment_profile.spec.runtime.artifact_directories
+        ),
         service_account_name=str(
             overrides.runtime.service_account_name
             or deployment_profile.spec.runtime.service_account_name
