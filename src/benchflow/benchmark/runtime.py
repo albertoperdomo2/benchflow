@@ -792,100 +792,100 @@ def extract_metrics_from_benchmark(benchmark: Dict[str, Any]) -> Dict[str, Any]:
             "successful_requests": requests_made.get("successful"),
             "failed_requests": requests_made.get("errored"),
             "throughput_requests_per_sec": _get_nested(
-                all_metrics, "requests_per_second", "successful", "mean"
+                all_metrics, "requests_per_second", "total", "mean"
             ),
             "total_tokens_per_second": _get_nested(
-                all_metrics, "tokens_per_second", "successful", "mean"
+                all_metrics, "tokens_per_second", "total", "mean"
             ),
             "throughput_output_tokens_per_sec": _get_nested(
-                all_metrics, "output_tokens_per_second", "successful", "mean"
+                all_metrics, "output_tokens_per_second", "total", "mean"
             ),
             "request_concurrency_mean": _get_nested(
-                all_metrics, "request_concurrency", "successful", "mean"
+                all_metrics, "request_concurrency", "total", "mean"
             ),
             "latency_mean_sec": _get_nested(
-                all_metrics, "request_latency", "successful", "mean"
+                all_metrics, "request_latency", "total", "mean"
             ),
             "latency_median_sec": _get_nested(
-                all_metrics, "request_latency", "successful", "median"
+                all_metrics, "request_latency", "total", "median"
             ),
             "latency_p50_sec": _get_nested(
-                all_metrics, "request_latency", "successful", "percentiles", "p50"
+                all_metrics, "request_latency", "total", "percentiles", "p50"
             ),
             "latency_p90_sec": _get_nested(
-                all_metrics, "request_latency", "successful", "percentiles", "p90"
+                all_metrics, "request_latency", "total", "percentiles", "p90"
             ),
             "latency_p95_sec": _get_nested(
-                all_metrics, "request_latency", "successful", "percentiles", "p95"
+                all_metrics, "request_latency", "total", "percentiles", "p95"
             ),
             "latency_p99_sec": _get_nested(
-                all_metrics, "request_latency", "successful", "percentiles", "p99"
+                all_metrics, "request_latency", "total", "percentiles", "p99"
             ),
             "ttft_mean_ms": _get_nested(
-                all_metrics, "time_to_first_token_ms", "successful", "mean"
+                all_metrics, "time_to_first_token_ms", "total", "mean"
             ),
             "ttft_median_ms": _get_nested(
-                all_metrics, "time_to_first_token_ms", "successful", "median"
+                all_metrics, "time_to_first_token_ms", "total", "median"
             ),
             "ttft_p95_ms": _get_nested(
                 all_metrics,
                 "time_to_first_token_ms",
-                "successful",
+                "total",
                 "percentiles",
                 "p95",
             ),
             "ttft_p99_ms": _get_nested(
                 all_metrics,
                 "time_to_first_token_ms",
-                "successful",
+                "total",
                 "percentiles",
                 "p99",
             ),
             "itl_mean_ms": _get_nested(
-                all_metrics, "inter_token_latency_ms", "successful", "mean"
+                all_metrics, "inter_token_latency_ms", "total", "mean"
             ),
             "itl_median_ms": _get_nested(
-                all_metrics, "inter_token_latency_ms", "successful", "median"
+                all_metrics, "inter_token_latency_ms", "total", "median"
             ),
             "itl_p95_ms": _get_nested(
                 all_metrics,
                 "inter_token_latency_ms",
-                "successful",
+                "total",
                 "percentiles",
                 "p95",
             ),
             "itl_p99_ms": _get_nested(
                 all_metrics,
                 "inter_token_latency_ms",
-                "successful",
+                "total",
                 "percentiles",
                 "p99",
             ),
             "tpot_mean_ms": _get_nested(
-                all_metrics, "time_per_output_token_ms", "successful", "mean"
+                all_metrics, "time_per_output_token_ms", "total", "mean"
             ),
             "tpot_median_ms": _get_nested(
-                all_metrics, "time_per_output_token_ms", "successful", "median"
+                all_metrics, "time_per_output_token_ms", "total", "median"
             ),
             "tpot_p95_ms": _get_nested(
                 all_metrics,
                 "time_per_output_token_ms",
-                "successful",
+                "total",
                 "percentiles",
                 "p95",
             ),
             "tpot_p99_ms": _get_nested(
                 all_metrics,
                 "time_per_output_token_ms",
-                "successful",
+                "total",
                 "percentiles",
                 "p99",
             ),
             "total_input_tokens": _get_nested(
-                all_metrics, "prompt_token_count", "successful", "total_sum"
+                all_metrics, "prompt_token_count", "total", "total_sum"
             ),
             "total_output_tokens": _get_nested(
-                all_metrics, "output_token_count", "successful", "total_sum"
+                all_metrics, "output_token_count", "total", "total_sum"
             ),
         }
 

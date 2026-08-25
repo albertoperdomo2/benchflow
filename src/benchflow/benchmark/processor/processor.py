@@ -795,15 +795,15 @@ class BenchmarkProcessor:
 
         metrics = benchmark_run.get("metrics", {})
 
-        def successful_metrics(*keys: str) -> Dict[str, Any]:
-            return _get_nested(metrics, *keys, "successful", default={})
+        def total_metrics(*keys: str) -> Dict[str, Any]:
+            return _get_nested(metrics, *keys, "total", default={})
 
-        def sampled_successful_metrics(*keys: str) -> Dict[str, Any]:
-            values = successful_metrics(*keys)
+        def sampled_total_metrics(*keys: str) -> Dict[str, Any]:
+            values = total_metrics(*keys)
             return values if _has_metric_samples(values) else {}
 
-        measured_concurrency = successful_metrics("request_concurrency").get("mean")
-        measured_rps = successful_metrics("requests_per_second").get("mean")
+        measured_concurrency = total_metrics("request_concurrency").get("mean")
+        measured_rps = total_metrics("requests_per_second").get("mean")
         output_tok_per_sec = _get_nested(
             metrics, "output_tokens_per_second", "total", "mean", default=0
         )
@@ -826,12 +826,12 @@ class BenchmarkProcessor:
             "total", successful_reqs + incomplete_reqs + errored_reqs
         )
 
-        prompt_tok_metrics = sampled_successful_metrics("prompt_token_count")
-        output_tok_metrics = sampled_successful_metrics("output_token_count")
-        ttft_metrics = sampled_successful_metrics("time_to_first_token_ms")
-        tpot_metrics = sampled_successful_metrics("time_per_output_token_ms")
-        itl_metrics = sampled_successful_metrics("inter_token_latency_ms")
-        request_latency_metrics = sampled_successful_metrics("request_latency")
+        prompt_tok_metrics = sampled_total_metrics("prompt_token_count")
+        output_tok_metrics = sampled_total_metrics("output_token_count")
+        ttft_metrics = sampled_total_metrics("time_to_first_token_ms")
+        tpot_metrics = sampled_total_metrics("time_per_output_token_ms")
+        itl_metrics = sampled_total_metrics("inter_token_latency_ms")
+        request_latency_metrics = sampled_total_metrics("request_latency")
 
         row = {
             "run": full_model_name,

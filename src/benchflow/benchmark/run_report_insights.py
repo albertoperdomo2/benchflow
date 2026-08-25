@@ -189,11 +189,11 @@ def load_benchmarks(path: Path) -> list[dict]:
 
 
 def get_percentile(metric_blob: dict, percentile_name: str) -> float:
-    return float(metric_blob["successful"]["percentiles"][percentile_name])
+    return float(metric_blob["total"]["percentiles"][percentile_name])
 
 
 def get_mean(metric_blob: dict) -> float:
-    return float(metric_blob["successful"]["mean"])
+    return float(metric_blob["total"]["mean"])
 
 
 def parse_thresholds(raw: str) -> list[float]:
@@ -384,10 +384,10 @@ def summarize_benchmarks(
             requests, duration, *relaxed_slo
         )
 
-        request_rate_metrics = metrics["requests_per_second"]["successful"]
-        output_rate_metrics = metrics["output_tokens_per_second"]["successful"]
-        total_rate_metrics = metrics["tokens_per_second"]["successful"]
-        prompt_count_metrics = metrics["prompt_token_count"]["successful"]
+        request_rate_metrics = metrics["requests_per_second"]["total"]
+        output_rate_metrics = metrics["output_tokens_per_second"]["total"]
+        total_rate_metrics = metrics["tokens_per_second"]["total"]
+        prompt_count_metrics = metrics["prompt_token_count"]["total"]
 
         measured_rps = metric_mean(request_rate_metrics)
         output_tok_per_sec = metric_mean(output_rate_metrics)
@@ -395,14 +395,11 @@ def summarize_benchmarks(
         prompt_tok_mean = metric_mean(prompt_count_metrics)
         successful_prompt_toksps = prompt_tok_mean * measured_rps
 
-        successful_mean_output_tokens = metric_mean(
-            metrics["output_token_count"]["successful"]
-        )
+        mean_output_tokens = metric_mean(metrics["output_token_count"]["total"])
         incomplete_progress = [
-            request["output_tokens"] / successful_mean_output_tokens
+            request["output_tokens"] / mean_output_tokens
             for request in incomplete_requests
-            if request["output_tokens"] is not None
-            and successful_mean_output_tokens > 0
+            if request["output_tokens"] is not None and mean_output_tokens > 0
         ]
 
         rows.append(
@@ -1120,7 +1117,7 @@ def save_plot_cells(
         "(f) Throughput/Latency Frontier",
         "Up-left is better; frontier points are not dominated by another tested load point on both throughput and tail latency.",
     )
-    ax.set_ylabel("Successful req/s")
+    ax.set_ylabel("Total req/s")
     style_axes(ax)
     plot_cells.append(
         save_cell(fig, 6, "throughput_latency_frontier", "Throughput/Latency Frontier")
@@ -1963,7 +1960,7 @@ def create_overview_figure(
         )
     ax5.set_xscale("log")
     ax5.set_xlabel("TTFT p95 (ms)")
-    ax5.set_ylabel("Successful Throughput (req/s)")
+    ax5.set_ylabel("Total Throughput (req/s)")
     ax5.set_title(
         "(e) Throughput/Latency Pareto Frontier", fontweight="bold", pad=PANEL_TITLE_PAD
     )
@@ -2059,7 +2056,7 @@ def create_throughput_figure(rows: list[dict]) -> plt.Figure:
         color=COLORS["blue"],
         linewidth=2,
         markersize=6,
-        label="Successful req/s",
+        label="Total req/s",
         markeredgewidth=0.5,
         markeredgecolor="white",
     )
@@ -2623,7 +2620,7 @@ def create_all_plots_figure(
     ax5.set_title(
         "(f) Throughput/Latency Frontier", fontweight="bold", pad=PANEL_TITLE_PAD
     )
-    ax5.set_ylabel("Successful req/s")
+    ax5.set_ylabel("Total req/s")
     style_axes(ax5)
     add_panel_subtitle(
         ax5,

@@ -615,7 +615,7 @@ def build_throughput_latency_frontier(rows: list[dict]) -> go.Figure:
             "opacity": 0.8,
         },
         name="Tested points",
-        hovertemplate=f"{hover_label}=%{{text}}<br>TTFT p95=%{{x:.1f}} ms<br>Successful req/s=%{{y:.3f}}<extra></extra>",
+        hovertemplate=f"{hover_label}=%{{text}}<br>TTFT p95=%{{x:.1f}} ms<br>Total req/s=%{{y:.3f}}<extra></extra>",
     )
     fig.add_scatter(
         x=[row["ttft_p95_ms"] for row in frontier],
@@ -632,7 +632,7 @@ def build_throughput_latency_frontier(rows: list[dict]) -> go.Figure:
         gridcolor="rgba(0,0,0,0.08)",
     )
     fig.update_yaxes(
-        title_text="Successful request throughput (req/s)",
+        title_text="Total request throughput (req/s)",
         showgrid=True,
         gridcolor="rgba(0,0,0,0.08)",
     )
@@ -702,14 +702,14 @@ def build_request_throughput(rows: list[dict]) -> go.Figure:
         mode="lines+markers",
         line={"color": COLORS["blue"], "width": 2},
         marker={"size": 8},
-        name="Successful req/s",
-        hovertemplate=f"{hover_label}=%{{x}}<br>Successful req/s=%{{y:.3f}}<extra></extra>",
+        name="Total req/s",
+        hovertemplate=f"{hover_label}=%{{x}}<br>Total req/s=%{{y:.3f}}<extra></extra>",
         showlegend=False,
     )
     apply_log_concurrency_axis(fig, "x", concurrency)
     fig.update_xaxes(title_text=target_load_axis_title(rows))
     fig.update_yaxes(
-        title_text="Successful request throughput (req/s)",
+        title_text="Total request throughput (req/s)",
         showgrid=True,
         gridcolor="rgba(0,0,0,0.08)",
     )
@@ -1155,7 +1155,7 @@ def build_throughput_efficiency_per_gpu(rows: list[dict]) -> go.Figure:
     return apply_layout(
         fig,
         title="(s) Throughput Efficiency per GPU",
-        subtitle=f"Computed as x = successful output tok/s / target {axis_label_lower} and y = successful output tok/s / GPU count. Up-right is better.",
+        subtitle=f"Computed as x = total output tok/s / target {axis_label_lower} and y = total output tok/s / GPU count. Up-right is better.",
     )
 
 
