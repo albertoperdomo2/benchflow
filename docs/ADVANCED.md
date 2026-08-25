@@ -1363,21 +1363,43 @@ Normal pushes to `main` keep producing temporary `latest` and `main-<sha>`
 images. The image cleanup job prunes old automatic tags and should stay that
 way.
 
-For a permanent image, create a release tag from local `main`:
+Cut a full release from your laptop with:
 
 ```bash
-scripts/release-image.sh minor
+scripts/release-image.sh          # bump minor (default)
+scripts/release-image.sh patch
 scripts/release-image.sh major
 ```
 
-The script fetches tags, requires local `main` to match `origin/main`, requires
-a clean worktree, creates the next annotated `vMAJOR.MINOR` tag, and pushes it.
-Patch tags are intentionally unsupported. The existing image workflow then
-publishes the permanent image as:
+The script requires `git` and an authenticated `gh`. It reads the existing
+release tags and the release commit straight from the remote, then:
+
+1. creates the next annotated `vMAJOR.MINOR.PATCH` tag on `origin/main`
+2. creates the matching GitHub release with auto-generated notes
+3. makes sure the `build-images` workflow publishes the image and waits for it
+
+Everything is created on the remote from the current tip of `origin/main`, so
+the local branch, the worktree, and any staged or unstaged changes do not
+matter and are never part of the release. The script warns when local `HEAD`
+differs from `origin/main` or when there are uncommitted changes, so it is
+clear what is being released. Push first if local commits belong in the
+release.
+
+The very first release is always `v0.1.0`, whatever bump is requested. Useful
+options: `--yes` to skip the confirmation prompt, `--dry-run` to preview the
+next tag, `--no-wait` to return before the image build finishes, and `--draft`
+for a draft release.
+
+The permanent image is published as:
 
 ```text
-ghcr.io/<repository-owner>/benchflow:vMAJOR.MINOR
+ghcr.io/<repository-owner>/benchflow:vMAJOR.MINOR.PATCH
 ```
+
+Release images are never pruned: both cleanup jobs skip any package version
+tagged `vMAJOR.MINOR.PATCH`, including when that version also carries an
+automatic tag such as `main-<sha>` because the release commit produced an
+identical image.
 
 ## Monitoring and Results
 

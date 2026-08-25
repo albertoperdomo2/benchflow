@@ -38,6 +38,9 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_REPOSITORY: ${{ github.repository_owner }}/benchflow
+  # Permanent release images. Cleanup jobs never delete a package version
+  # carrying one of these tags, whatever else that version is tagged with.
+  RELEASE_TAG_PATTERN: '^v[0-9]+\.[0-9]+\.[0-9]+$'
 
 jobs:
   resolve-build:
@@ -309,8 +312,12 @@ jobs:
           gh api --paginate "${PACKAGE_BASE}?per_page=100" | jq -s 'add' > versions.json
 
           mapfile -t DELETE_IDS < <(
-            jq -r --arg regex "${CLEANUP_PATTERN}" --argjson keep "${CLEANUP_KEEP}" '
+            jq -r \
+              --arg regex "${CLEANUP_PATTERN}" \
+              --arg release_regex "${RELEASE_TAG_PATTERN}" \
+              --argjson keep "${CLEANUP_KEEP}" '
               map(select(any(.metadata.container.tags[]?; test($regex))))
+              | map(select(all(.metadata.container.tags[]?; test($release_regex) | not)))
               | sort_by(.created_at)
               | reverse
               | .[$keep:]
@@ -363,8 +370,11 @@ jobs:
           gh api --paginate "${PACKAGE_BASE}?per_page=100" | jq -s 'add' > versions.json
 
           mapfile -t DELETE_IDS < <(
-            jq -r --arg regex "^pr-${PR_NUMBER}-[0-9a-f]{7}$" '
+            jq -r \
+              --arg regex "^pr-${PR_NUMBER}-[0-9a-f]{7}$" \
+              --arg release_regex "${RELEASE_TAG_PATTERN}" '
               map(select(any(.metadata.container.tags[]?; test($regex))))
+              | map(select(all(.metadata.container.tags[]?; test($release_regex) | not)))
               | .[].id
             ' versions.json
           )
