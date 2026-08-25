@@ -1597,6 +1597,12 @@ bflow benchmark plot comparison \
 when the same MLflow experiment contains multiple product versions and you only
 want a specific subset in the final report.
 
+AIPerf comparison headers read model and dataset identity from either the legacy
+or current AIPerf summary schema, then fall back to MLflow metadata. BenchFlow
+logs tensor parallelism as `tp` and pipeline parallelism as `pp`; reports also
+accept `tp`, `tensor_parallelism`, `pp`, and `pipeline_parallelism` tags for
+older runs that do not contain those parameters.
+
 Rename versions in the report:
 
 ```bash

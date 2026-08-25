@@ -62,7 +62,6 @@ _PUBLIC_DATASET_LABELS = {
     "semianalysis_cc_traces_weka_with_subagents": (
         "semianalysisai/cc-traces-weka-with-subagents-052726"
     ),
-    "weka_hf": "semianalysisai/cc-traces-weka-061526",
 }
 _AIPERF_BASELINE_METRICS = (
     ("Successful requests", "request_count", "avg", "requests", True, 0),
@@ -423,6 +422,7 @@ def run_benchmark(
                 mlflow.log_param("target", benchmark_target)
                 mlflow.log_param("model", plan.model.name)
                 mlflow.log_param("tp", plan.deployment.runtime.tensor_parallelism)
+                mlflow.log_param("pp", plan.deployment.runtime.pipeline_parallelism)
                 mlflow.log_param("replicas", plan.deployment.runtime.replicas)
                 mlflow.log_param("version", benchmark_version_from_plan(plan))
                 _run_subprocess(command, env=benchmark_env)
@@ -655,15 +655,17 @@ def _full_label_for_run(run_payload: dict[str, Any]) -> str:
     version = str(run_payload.get("version") or "unknown").strip()
     accelerator = str(run_payload.get("accelerator") or "unknown").strip()
     tp = run_payload.get("tp")
+    pp = run_payload.get("pp")
     replicas = run_payload.get("replicas")
-    return f"{version} | {accelerator} | tp={tp} | r={replicas}"
+    return f"{version} | {accelerator} | tp={tp} | pp={pp} | r={replicas}"
 
 
 def _label_for_run(run_payload: dict[str, Any]) -> str:
     version = str(run_payload.get("version") or "unknown").strip()
     tp = run_payload.get("tp")
+    pp = run_payload.get("pp")
     replicas = run_payload.get("replicas")
-    return f"{version}<br>tp={tp} | r={replicas}"
+    return f"{version}<br>tp={tp} | pp={pp} | r={replicas}"
 
 
 def _ordered_unique_run_values(runs_data: list[dict[str, Any]], key: str) -> str:
@@ -678,10 +680,12 @@ def _ordered_unique_run_values(runs_data: list[dict[str, Any]], key: str) -> str
 def _comparison_shape_line(runs_data: list[dict[str, Any]]) -> str:
     accelerator = _ordered_unique_run_values(runs_data, "accelerator")
     tp = _ordered_unique_run_values(runs_data, "tp")
+    pp = _ordered_unique_run_values(runs_data, "pp")
     replicas = _ordered_unique_run_values(runs_data, "replicas")
     return (
         f"Accelerator: {html.escape(accelerator)} | "
         f"TP: {html.escape(tp)} | "
+        f"PP: {html.escape(pp)} | "
         f"R: {html.escape(replicas)}"
     )
 
@@ -728,10 +732,14 @@ def _comparison_run_links_line(runs_data: list[dict[str, Any]]) -> str:
     return "MLflow runs: " + ", ".join(links)
 
 
-def _composed_version_from_mlflow_run(run: mlflow.entities.Run) -> str:
-    base_version = str(
+def _base_version_from_mlflow_run(run: mlflow.entities.Run) -> str:
+    return str(
         run.data.params.get("version") or run.data.tags.get("version") or "unknown"
     ).strip()
+
+
+def _composed_version_from_mlflow_run(run: mlflow.entities.Run) -> str:
+    base_version = _base_version_from_mlflow_run(run)
     suffix = str(
         run.data.tags.get("epp")
         or run.data.tags.get("deployment_profile")
@@ -743,22 +751,73 @@ def _composed_version_from_mlflow_run(run: mlflow.entities.Run) -> str:
     return base_version
 
 
+def _mlflow_value(
+    run: mlflow.entities.Run,
+    *keys: str,
+    default: str = "",
+) -> str:
+    for values in (run.data.params, run.data.tags):
+        for key in keys:
+            value = str(values.get(key) or "").strip()
+            if value:
+                return value
+    return default
+
+
+def _matches_requested_version(
+    run: mlflow.entities.Run, requested_versions: set[str]
+) -> bool:
+    if not requested_versions:
+        return True
+    return bool(
+        requested_versions.intersection(
+            {
+                _base_version_from_mlflow_run(run),
+                _composed_version_from_mlflow_run(run),
+            }
+        )
+    )
+
+
 def _comparison_model_name(runs_data: list[dict[str, Any]]) -> str:
     if not runs_data:
         return "unknown"
     input_config = runs_data[0].get("summary", {}).get("input_config", {}) or {}
+    models = input_config.get("models") or {}
+    model_items = models.get("items") if isinstance(models, dict) else None
+    if isinstance(model_items, list):
+        for model_item in model_items:
+            if not isinstance(model_item, dict):
+                continue
+            model_name = str(model_item.get("name") or "").strip()
+            if model_name:
+                return model_name
     endpoint = input_config.get("endpoint", {}) or {}
     model_names = endpoint.get("model_names") or []
     if isinstance(model_names, list) and model_names:
         return str(model_names[0]).strip() or "unknown"
-    return "unknown"
+    return str(runs_data[0].get("model") or "unknown").strip() or "unknown"
 
 
 def _comparison_dataset_label(runs_data: list[dict[str, Any]]) -> str:
     if not runs_data:
         return "unknown"
     input_config = runs_data[0].get("summary", {}).get("input_config", {}) or {}
+    datasets = input_config.get("datasets") or []
+    if isinstance(datasets, list):
+        for dataset in datasets:
+            if not isinstance(dataset, dict):
+                continue
+            hf_weka_dataset = str(dataset.get("hf_weka_dataset") or "").strip()
+            if hf_weka_dataset:
+                return hf_weka_dataset
+            dataset_id = str(dataset.get("dataset") or "").strip()
+            if dataset_id:
+                return _PUBLIC_DATASET_LABELS.get(dataset_id, dataset_id)
     input_section = input_config.get("input", {}) or {}
+    hf_weka_dataset = str(input_section.get("hf_weka_dataset") or "").strip()
+    if hf_weka_dataset:
+        return hf_weka_dataset
     public_dataset = str(input_section.get("public_dataset") or "").strip()
     detected_loader = str(input_section.get("detected_loader") or "").strip()
     for dataset_id in (public_dataset, detected_loader):
@@ -774,6 +833,15 @@ def _comparison_dataset_label(runs_data: list[dict[str, Any]]) -> str:
         return dataset_name
     if dataset_type:
         return dataset_type
+    hf_weka_dataset = str(runs_data[0].get("hf_weka_dataset") or "").strip()
+    if hf_weka_dataset:
+        return hf_weka_dataset
+    public_dataset = str(runs_data[0].get("public_dataset") or "").strip()
+    if public_dataset:
+        return _PUBLIC_DATASET_LABELS.get(public_dataset, public_dataset)
+    dataset_url = str(runs_data[0].get("dataset_url") or "").strip()
+    if dataset_url:
+        return Path(urlparse(dataset_url).path).name or dataset_url
     return "unknown"
 
 
@@ -1855,6 +1923,7 @@ def generate_report(
     mlflow_tracking_uri: str | None,
     output_dir: Path | None,
     output_file: Path | None,
+    versions: list[str] | None = None,
     version_overrides: dict[str, str] | None = None,
     notes: list[str] | None = None,
     metrics_yaml_path: Path | None = None,
@@ -1872,9 +1941,14 @@ def generate_report(
     cache_dir = Path(tempfile.mkdtemp(prefix="benchflow-aiperf-report-"))
     runs_data: list[dict[str, Any]] = []
     overrides = dict(version_overrides or {})
+    requested_versions = {
+        str(version).strip() for version in (versions or []) if str(version).strip()
+    }
     try:
         for run_id in mlflow_run_ids:
             run = client.get_run(run_id)
+            if not _matches_requested_version(run, requested_versions):
+                continue
             resolved_run_id = str(run.info.run_id or run_id).strip()
             experiment_id = str(run.info.experiment_id or "").strip()
             composed_version = _composed_version_from_mlflow_run(run)
@@ -1933,17 +2007,25 @@ def generate_report(
                     "session_metrics": session_metrics,
                     "composed_version": composed_version,
                     "version": overrides.get(composed_version, composed_version),
-                    "accelerator": str(
-                        run.data.params.get("accelerator")
-                        or run.data.tags.get("accelerator")
-                        or "unknown"
-                    ),
-                    "tp": str(run.data.params.get("tp") or "1"),
-                    "replicas": str(run.data.params.get("replicas") or "1"),
+                    "model": _mlflow_value(run, "model", default="unknown"),
+                    "public_dataset": _mlflow_value(run, "public_dataset"),
+                    "hf_weka_dataset": _mlflow_value(run, "hf_weka_dataset"),
+                    "dataset_url": _mlflow_value(run, "dataset_url"),
+                    "accelerator": _mlflow_value(run, "accelerator", default="unknown"),
+                    "tp": _mlflow_value(run, "tp", "tensor_parallelism", default="1"),
+                    "pp": _mlflow_value(run, "pp", "pipeline_parallelism", default="1"),
+                    "replicas": _mlflow_value(run, "replicas", default="1"),
                 }
             )
     finally:
         shutil.rmtree(cache_dir, ignore_errors=True)
+
+    if not runs_data:
+        selected = ", ".join(sorted(requested_versions)) or "none"
+        raise ValidationError(
+            "no AIPerf MLflow runs matched the requested versions; "
+            f"requested values: {selected}"
+        )
 
     baseline_run = _resolve_baseline_run(runs_data, baseline_version)
     comparison_metric_panels = build_comparison_metric_panels(

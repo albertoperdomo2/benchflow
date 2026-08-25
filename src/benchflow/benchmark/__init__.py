@@ -163,6 +163,7 @@ def generate_report(
             mlflow_tracking_uri=mlflow_tracking_uri,
             output_dir=output_dir,
             output_file=output_file,
+            versions=versions,
             version_overrides=version_overrides,
             notes=notes,
             metrics_yaml_path=metrics_yaml_path,
