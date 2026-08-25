@@ -1,0 +1,19 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: inkling
+spec:
+  model:
+    name:
+      - thinkingmachines/Inkling-NVFP4
+  deployment_profile: inkling-raw-vllm-tp4-pp2
+  benchmark_profile: aiperf-agentx-inference
+  metrics_profile: detailed
+  namespace: benchflow
+  mlflow:
+    tags:
+      accelerator: H200
+      topology: tp4-pp2
+      workload: agentx-weka
+  execution:
+    timeout: 8h

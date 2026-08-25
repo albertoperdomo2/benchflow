@@ -1,0 +1,24 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: inkling-raw-vllm-tp4-pp2
+spec:
+  platform: rhaiis
+  mode: raw-vllm
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /mnt
+  runtime:
+    image: vllm/vllm-openai:v0.27.0
+    replicas: 1
+    tensor_parallelism: 4
+    pipeline_parallelism: 2
+    shared_memory_size: 10Gi
+    env:
+      USER: benchflow
+    vllm_args:
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --gpu-memory-utilization=0.92
