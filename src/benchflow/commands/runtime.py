@@ -919,30 +919,67 @@ def cmd_mlflow_finalize(args: argparse.Namespace) -> int:
     artifacts_dir = Path(args.artifacts_dir).resolve()
     benchmark_start_time = args.benchmark_start_time or args.run_start_time or ""
     benchmark_end_time = args.benchmark_end_time or args.run_end_time or _utc_now()
+    failures: list[str] = []
     if args.collect_artifacts:
-        collect_plan_artifacts(
-            plan,
-            context=_execution_context(
-                execution_name=args.execution_name or "",
-                artifacts_dir=artifacts_dir,
+        try:
+            collect_plan_artifacts(
+                plan,
+                context=_execution_context(
+                    execution_name=args.execution_name or "",
+                    artifacts_dir=artifacts_dir,
+                ),
+                mlflow_run_id=args.mlflow_run_id or "",
+                benchmark_start_time=benchmark_start_time,
+                benchmark_end_time=benchmark_end_time,
+            )
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"artifact collection: {exc}")
+            warning(
+                "Finalizer artifact collection failed; continuing with the "
+                f"durable workspace bundle: {exc}"
+            )
+
+    if failures:
+        metadata_dir = artifacts_dir / "metadata"
+        metadata_dir.mkdir(parents=True, exist_ok=True)
+        (metadata_dir / "finalization-errors.json").write_text(
+            json.dumps(
+                {
+                    "recorded_at": _utc_now(),
+                    "errors": failures,
+                },
+                indent=2,
             ),
-            mlflow_run_id=args.mlflow_run_id or "",
+            encoding="utf-8",
+        )
+
+    try:
+        upload_plan_results(
+            plan,
+            mlflow_run_id=args.mlflow_run_id,
             benchmark_start_time=benchmark_start_time,
             benchmark_end_time=benchmark_end_time,
+            context=_execution_context(artifacts_dir=artifacts_dir),
+            grafana_url=args.grafana_url or "",
         )
-    upload_plan_results(
-        plan,
-        mlflow_run_id=args.mlflow_run_id,
-        benchmark_start_time=benchmark_start_time,
-        benchmark_end_time=benchmark_end_time,
-        context=_execution_context(artifacts_dir=artifacts_dir),
-        grafana_url=args.grafana_url or "",
-    )
-    finish_mlflow_run(
-        mlflow_run_id=args.mlflow_run_id,
-        status=args.status,
-        reason=args.reason or "",
-    )
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"MLflow upload: {exc}")
+        warning(f"Finalizer MLflow upload failed; still terminating the run: {exc}")
+
+    try:
+        finish_mlflow_run(
+            mlflow_run_id=args.mlflow_run_id,
+            status=args.status,
+            reason=args.reason or "",
+        )
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"MLflow run termination: {exc}")
+        warning(f"Finalizer could not terminate the MLflow run: {exc}")
+
+    if failures:
+        raise ValidationError(
+            "MLflow finalization completed with errors: " + "; ".join(failures)
+        )
     print(args.mlflow_run_id)
     return 0
 

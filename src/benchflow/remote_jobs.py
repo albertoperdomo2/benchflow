@@ -6,7 +6,7 @@ import secrets
 import shutil
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 import yaml
@@ -27,6 +27,28 @@ DEFAULT_REMOTE_IMAGE = "ghcr.io/albertoperdomo2/benchflow:latest"
 REMOTE_RESULTS_PVC = "benchmark-results"
 REMOTE_RESULTS_MOUNT = "/benchmark-results"
 REMOTE_RESULTS_ROOT = f"{REMOTE_RESULTS_MOUNT}/remote-jobs"
+REMOTE_API_RETRY_TIMEOUT_SECONDS = 600
+REMOTE_API_RETRY_MAX_DELAY_SECONDS = 30
+
+_TRANSIENT_KUBERNETES_ERROR_MARKERS = (
+    "connection refused",
+    "connection reset",
+    "context deadline exceeded",
+    "end of file",
+    "error from server (internalerror)",
+    "error from server (serviceunavailable)",
+    "error from server (timeout)",
+    "failed calling webhook",
+    "i/o timeout",
+    "internal error occurred",
+    "no endpoints available for service",
+    "server was unable to return a response in the time allotted",
+    "service unavailable",
+    "temporarily unavailable",
+    "too many requests",
+    "tls handshake timeout",
+    "unexpected eof",
+)
 
 _PASSTHROUGH_ENV = (
     "HF_TOKEN",
@@ -57,6 +79,95 @@ class RemoteJobFailed(CommandError):
         super().__init__(f"remote job {job_name} failed")
         self.job_name = job_name
         self.pod_name = pod_name
+
+
+def is_transient_kubernetes_error(exc: BaseException) -> bool:
+    message = str(exc).strip().lower()
+    return any(marker in message for marker in _TRANSIENT_KUBERNETES_ERROR_MARKERS)
+
+
+def _retry_transient_kubernetes_operation(
+    operation: Callable[[], Any],
+    *,
+    description: str,
+    timeout_seconds: float = REMOTE_API_RETRY_TIMEOUT_SECONDS,
+) -> Any:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return operation()
+        except CommandError as exc:
+            if not is_transient_kubernetes_error(exc):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CommandError(
+                    f"{description} did not recover within {timeout_seconds:.0f}s: {exc}"
+                ) from exc
+            delay = min(
+                REMOTE_API_RETRY_MAX_DELAY_SECONDS,
+                2 ** min(attempt - 1, 5),
+                remaining,
+            )
+            detail(
+                f"Transient Kubernetes error while {description}; "
+                f"retrying in {delay:.0f}s: {exc}"
+            )
+            time.sleep(delay)
+
+
+def _resource_payload_or_none(
+    *, namespace: str, kind: str, name: str
+) -> dict[str, Any] | None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    result = run_command(
+        [kubectl_cmd, "get", kind, name, "-n", namespace, "-o", "json"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return json.loads(result.stdout or "{}")
+    details = (result.stderr or result.stdout or "command failed").strip()
+    if "notfound" in details.lower() or "not found" in details.lower():
+        return None
+    raise CommandError(
+        f"{kubectl_cmd} get {kind} {name} -n {namespace} -o json: {details}"
+    )
+
+
+def _create_manifest_idempotently(
+    manifest_yaml: str,
+    *,
+    namespace: str,
+    kind: str,
+    name: str,
+) -> None:
+    def create_or_confirm() -> None:
+        try:
+            create_manifest(manifest_yaml, namespace)
+            return
+        except CommandError as exc:
+            try:
+                existing = _resource_payload_or_none(
+                    namespace=namespace, kind=kind, name=name
+                )
+            except CommandError:
+                if is_transient_kubernetes_error(exc):
+                    raise exc
+                raise
+            if existing is not None:
+                detail(
+                    f"Confirmed {kind} {name} exists after an ambiguous create response"
+                )
+                return
+            raise
+
+    _retry_transient_kubernetes_operation(
+        create_or_confirm,
+        description=f"creating {kind} {name} in namespace {namespace}",
+    )
 
 
 def _remote_image() -> str:
@@ -143,8 +254,11 @@ def _create_remote_job(
         },
     }
     with use_kubeconfig(plan.target_cluster.kubeconfig):
-        create_manifest(
-            yaml.safe_dump(manifest, sort_keys=False), plan.deployment.namespace
+        _create_manifest_idempotently(
+            yaml.safe_dump(manifest, sort_keys=False),
+            namespace=plan.deployment.namespace,
+            kind="job",
+            name=job_name,
         )
     detail(f"Created remote {job_kind} job {job_name}")
 
@@ -154,6 +268,10 @@ def _generate_remote_job_name(plan: ResolvedRunPlan, job_kind: str) -> str:
     safe_name = sanitize_name(plan.metadata.name, max_length=20)
     suffix = secrets.token_hex(2)
     return f"benchflow-{safe_kind}-{safe_name}-{suffix}"
+
+
+def generate_remote_job_name(plan: ResolvedRunPlan, job_kind: str) -> str:
+    return _generate_remote_job_name(plan, job_kind)
 
 
 def remote_job_results_dir(job_name: str) -> str:
@@ -250,21 +368,38 @@ def wait_for_remote_job(
     last_pod_name = ""
     with use_kubeconfig(plan.target_cluster.kubeconfig):
         while deadline is None or time.time() < deadline:
-            payload = run_json_command(
-                [
-                    kubectl_cmd,
-                    "get",
-                    "job",
-                    job_name,
-                    "-n",
-                    plan.deployment.namespace,
-                    "-o",
-                    "json",
-                ]
+            remaining = (
+                REMOTE_API_RETRY_TIMEOUT_SECONDS
+                if deadline is None
+                else max(
+                    1.0, min(REMOTE_API_RETRY_TIMEOUT_SECONDS, deadline - time.time())
+                )
+            )
+            payload = _retry_transient_kubernetes_operation(
+                lambda: run_json_command(
+                    [
+                        kubectl_cmd,
+                        "get",
+                        "job",
+                        job_name,
+                        "-n",
+                        plan.deployment.namespace,
+                        "-o",
+                        "json",
+                    ]
+                ),
+                description=f"reading remote job {job_name}",
+                timeout_seconds=remaining,
             )
             status = payload.get("status", {}) or {}
-            pod_names = _list_job_pods(
-                plan.deployment.namespace, job_name, plan.target_cluster.kubeconfig
+            pod_names = _retry_transient_kubernetes_operation(
+                lambda: _list_job_pods(
+                    plan.deployment.namespace,
+                    job_name,
+                    plan.target_cluster.kubeconfig,
+                ),
+                description=f"listing pods for remote job {job_name}",
+                timeout_seconds=remaining,
             )
             if pod_names:
                 last_pod_name = pod_names[0]
@@ -318,8 +453,11 @@ def _create_reader_pod(plan: ResolvedRunPlan, *, pod_name: str) -> None:
         },
     }
     with use_kubeconfig(plan.target_cluster.kubeconfig):
-        create_manifest(
-            yaml.safe_dump(manifest, sort_keys=False), plan.deployment.namespace
+        _create_manifest_idempotently(
+            yaml.safe_dump(manifest, sort_keys=False),
+            namespace=plan.deployment.namespace,
+            kind="pod",
+            name=pod_name,
         )
 
 
@@ -330,17 +468,23 @@ def _wait_for_reader_pod(
     deadline = time.time() + timeout_seconds
     with use_kubeconfig(plan.target_cluster.kubeconfig):
         while time.time() < deadline:
-            payload = run_json_command(
-                [
-                    kubectl_cmd,
-                    "get",
-                    "pod",
-                    pod_name,
-                    "-n",
-                    plan.deployment.namespace,
-                    "-o",
-                    "json",
-                ]
+            payload = _retry_transient_kubernetes_operation(
+                lambda: run_json_command(
+                    [
+                        kubectl_cmd,
+                        "get",
+                        "pod",
+                        pod_name,
+                        "-n",
+                        plan.deployment.namespace,
+                        "-o",
+                        "json",
+                    ]
+                ),
+                description=f"reading remote reader pod {pod_name}",
+                timeout_seconds=max(
+                    1.0, min(REMOTE_API_RETRY_TIMEOUT_SECONDS, deadline - time.time())
+                ),
             )
             phase = str(payload.get("status", {}).get("phase") or "")
             conditions = payload.get("status", {}).get("conditions") or []
@@ -431,6 +575,56 @@ def _copy_remote_results_directory_with_oc_cp(
         )
 
 
+def _validated_remote_results_path(remote_path: str) -> str:
+    target = PurePosixPath(str(remote_path).strip())
+    root = PurePosixPath(REMOTE_RESULTS_ROOT)
+    if not target.is_absolute() or target == root or root not in target.parents:
+        raise CommandError(
+            f"refusing to delete path outside a remote job result directory: {remote_path}"
+        )
+    return target.as_posix()
+
+
+def _delete_remote_path_from_reader(
+    plan: ResolvedRunPlan,
+    *,
+    reader_pod: str,
+    remote_path: str,
+) -> None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    validated_path = _validated_remote_results_path(remote_path)
+
+    def delete_once() -> None:
+        with use_kubeconfig(plan.target_cluster.kubeconfig):
+            run_command(
+                [
+                    kubectl_cmd,
+                    "exec",
+                    "-n",
+                    plan.deployment.namespace,
+                    reader_pod,
+                    "-c",
+                    "main",
+                    "--",
+                    "sh",
+                    "-c",
+                    (
+                        "set -eu; target=$1; "
+                        '[ ! -e "$target" ] && exit 0; '
+                        '[ -d "$target" ] && [ ! -L "$target" ]; '
+                        'rm -rf -- "$target"'
+                    ),
+                    "benchflow-delete",
+                    validated_path,
+                ]
+            )
+
+    _retry_transient_kubernetes_operation(
+        delete_once,
+        description=f"deleting uploaded remote results at {validated_path}",
+    )
+
+
 def copy_remote_results_directory(
     plan: ResolvedRunPlan,
     *,
@@ -458,11 +652,14 @@ def copy_remote_results_directory(
                 detail(
                     f"Copying remote results from {reader_pod} with rsync over oc rsh"
                 )
-                _copy_remote_results_directory_with_rsync(
-                    plan,
-                    reader_pod=reader_pod,
-                    remote_path=remote_path,
-                    local_dir=local_dir,
+                _retry_transient_kubernetes_operation(
+                    lambda: _copy_remote_results_directory_with_rsync(
+                        plan,
+                        reader_pod=reader_pod,
+                        remote_path=remote_path,
+                        local_dir=local_dir,
+                    ),
+                    description=f"copying remote results from {reader_pod} with rsync",
                 )
                 used_rsync = True
             except CommandError as exc:
@@ -478,32 +675,56 @@ def copy_remote_results_directory(
                 )
             else:
                 detail("reader pod does not have rsync, falling back to oc cp")
-            _copy_remote_results_directory_with_oc_cp(
-                plan,
-                reader_pod=reader_pod,
-                remote_path=remote_path,
-                local_dir=local_dir,
+            _retry_transient_kubernetes_operation(
+                lambda: _copy_remote_results_directory_with_oc_cp(
+                    plan,
+                    reader_pod=reader_pod,
+                    remote_path=remote_path,
+                    local_dir=local_dir,
+                ),
+                description=f"copying remote results from {reader_pod} with oc cp",
             )
         kubectl_cmd = require_any_command("oc", "kubectl")
         with use_kubeconfig(plan.target_cluster.kubeconfig):
             if cleanup:
-                run_command(
-                    [
-                        kubectl_cmd,
-                        "exec",
-                        "-n",
-                        plan.deployment.namespace,
-                        reader_pod,
-                        "-c",
-                        "main",
-                        "--",
-                        "rm",
-                        "-rf",
-                        remote_path,
-                    ],
-                    check=False,
+                _delete_remote_path_from_reader(
+                    plan,
+                    reader_pod=reader_pod,
+                    remote_path=remote_path,
                 )
     finally:
+        with use_kubeconfig(plan.target_cluster.kubeconfig):
+            run_command(
+                [
+                    kubectl_cmd,
+                    "delete",
+                    "pod",
+                    reader_pod,
+                    "-n",
+                    plan.deployment.namespace,
+                    "--ignore-not-found",
+                    "--wait=false",
+                ],
+                check=False,
+            )
+
+
+def delete_remote_results_directory(
+    plan: ResolvedRunPlan,
+    *,
+    remote_path: str,
+) -> None:
+    reader_pod = _generate_remote_job_name(plan, "reader")
+    _create_reader_pod(plan, pod_name=reader_pod)
+    try:
+        _wait_for_reader_pod(plan, pod_name=reader_pod)
+        _delete_remote_path_from_reader(
+            plan,
+            reader_pod=reader_pod,
+            remote_path=remote_path,
+        )
+    finally:
+        kubectl_cmd = require_any_command("oc", "kubectl")
         with use_kubeconfig(plan.target_cluster.kubeconfig):
             run_command(
                 [
@@ -531,12 +752,15 @@ def run_remote_job(
     volumes: list[dict[str, Any]] | None = None,
     timeout_seconds: int | None = 3600,
     mount_results_pvc: bool = False,
+    job_name: str | None = None,
 ) -> RemoteJobResult:
     if (args is None) == (args_builder is None):
         raise CommandError(
             "provide exactly one of args or args_builder for remote jobs"
         )
-    job_name = _generate_remote_job_name(plan, job_kind)
+    job_name = str(job_name or _generate_remote_job_name(plan, job_kind)).strip()
+    if not job_name:
+        raise CommandError("remote job name must not be empty")
     resolved_args = list(
         args_builder(job_name) if args_builder is not None else args or []
     )
