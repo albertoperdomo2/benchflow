@@ -202,14 +202,26 @@ def _cap_dataset_entries(dataset_path: Path, *, dataset_cap: int | None) -> Path
 def _artifact_dir(output_dir: Path | None) -> Path:
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir
+        return output_dir.resolve()
     path = Path(tempfile.mkdtemp(prefix="benchflow-aiperf-"))
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def _run_subprocess(argv: list[str], *, env: dict[str, str]) -> None:
-    completed = subprocess.run(argv, env=env, text=True, check=False)
+    # Public dataset loaders currently cache downloads beneath a relative
+    # .cache directory. Remote benchmark containers do not have a writable
+    # default working directory, so give AIPerf a private writable workspace.
+    # Keep it separate from the artifact directory to avoid uploading cached
+    # dataset contents to MLflow.
+    with tempfile.TemporaryDirectory(prefix="benchflow-aiperf-work-") as work_dir:
+        completed = subprocess.run(
+            argv,
+            env=env,
+            text=True,
+            check=False,
+            cwd=work_dir,
+        )
     if completed.returncode != 0:
         raise CommandError(
             f"{' '.join(argv)} exited with status {completed.returncode}"

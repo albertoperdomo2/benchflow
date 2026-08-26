@@ -1,0 +1,16 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen3-06b-aiperf-smoke
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: rhoai-distributed-default
+  benchmark_profile: aiperf-smoke
+  metrics_profile: default
+  namespace: benchflow
+  model_overrides:
+    Qwen/Qwen3-0.6B:
+      scale:
+        tensor_parallelism: 1
+        replicas: 1

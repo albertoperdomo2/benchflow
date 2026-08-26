@@ -1,0 +1,21 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: aiperf-smoke
+spec:
+  tool: aiperf
+  env:
+    AIPERF_HTTP_SSL_VERIFY: "false"
+  aiperf:
+    # A small real workload that completes quickly while exercising AIPerf's
+    # summary and per-request artifact exporters.
+    public_dataset: sharegpt
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    request_count: 20
+    concurrency: 4
+    export_level: records
+    tokenizer_trust_remote_code: true
+    ui: simple
+    max_seconds: 600
