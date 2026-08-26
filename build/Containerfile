@@ -1,9 +1,10 @@
-# XXX: Temporary fix
-ARG GUIDELLM_IMAGE_REPOSITORY=ghcr.io/albertoperdomo2/guidellm
-ARG GUIDELLM_IMAGE_TAG=v0.7.0-aperdomo
+ARG GUIDELLM_IMAGE_REPOSITORY=ghcr.io/vllm-project/guidellm
+ARG GUIDELLM_IMAGE_TAG=v0.7.3
 FROM ${GUIDELLM_IMAGE_REPOSITORY}:${GUIDELLM_IMAGE_TAG}
 
-ARG GUIDELLM_VERSION_LABEL=v0.7.0-aperdomo
+ARG GUIDELLM_IMAGE_REPOSITORY
+ARG GUIDELLM_IMAGE_TAG
+ARG GUIDELLM_VERSION_LABEL=v0.7.3
 
 ARG HELM_VERSION=v3.17.1
 ARG HELMFILE_VERSION=v0.171.0
@@ -12,7 +13,6 @@ ARG OPENSHIFT_CLIENT_VERSION=4.19.5
 
 ENV PYTHONUNBUFFERED=1
 
-# XXX: For GuideLLM correct version
 ENV GUIDELLM_VERSION=${GUIDELLM_VERSION_LABEL}
 
 USER root
@@ -51,6 +51,12 @@ WORKDIR /opt/benchflow
 
 COPY pyproject.toml .
 COPY src/ src/
+
+RUN if [ "${GUIDELLM_IMAGE_REPOSITORY}:${GUIDELLM_IMAGE_TAG}" = \
+        "ghcr.io/vllm-project/guidellm:v0.7.3" ]; then \
+        python -c \
+        "from importlib.metadata import version; actual = version('guidellm'); assert actual == '0.7.3', f'GuideLLM contract mismatch: expected 0.7.3, found {actual}'"; \
+    fi
 
 # AIPerf and Inference Perf require incompatible exact Transformers versions.
 # BenchFlow only invokes their CLIs, so keep each tool in its own environment.
