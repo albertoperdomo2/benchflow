@@ -1042,7 +1042,7 @@ def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
     dataset_url = str(raw.get("dataset_url", "") or "").strip()
     dataset_type = str(args.get("dataset_type", "") or "").strip()
     args.setdefault("streaming", True)
-    if not public_dataset:
+    if not public_dataset and (dataset_url or dataset_type):
         args.setdefault("fixed_schedule", True)
         args.setdefault("fixed_schedule_auto_offset", True)
     missing = [
@@ -1068,14 +1068,18 @@ def _aiperf_benchmark_from_dict(raw: dict[str, Any]) -> AiperfBenchmarkSpec:
             )
     else:
         required_dataset_fields = []
-        if not dataset_url:
+        if dataset_type and not dataset_url:
             required_dataset_fields.append("spec.aiperf.dataset_url")
-        if not dataset_type:
+        if dataset_url and not dataset_type:
             required_dataset_fields.append("spec.aiperf.dataset_type")
         if required_dataset_fields:
             raise ValidationError(
                 "aiperf benchmark profile is missing "
                 + ", ".join(required_dataset_fields)
+            )
+        if raw.get("dataset_cap") is not None and not dataset_url:
+            raise ValidationError(
+                "spec.aiperf.dataset_cap requires spec.aiperf.dataset_url"
             )
 
     return AiperfBenchmarkSpec(

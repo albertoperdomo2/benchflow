@@ -368,7 +368,7 @@ def run_benchmark(
         benchmark_env["AIPERF_ARTIFACT_DIR"] = str(output_dir)
     dataset_path = Path("/tmp/benchflow-aiperf/public-dataset-placeholder.jsonl")
     public_dataset = str(aiperf.args.get("public_dataset", "") or "").strip()
-    if not public_dataset:
+    if aiperf.dataset_url:
         dataset_path = _cap_dataset_entries(
             _download_dataset(
                 dataset_url=aiperf.dataset_url,
@@ -395,8 +395,10 @@ def run_benchmark(
     detail(f"Target: {benchmark_target}")
     if public_dataset:
         detail(f"AIPerf public dataset: {public_dataset}")
-    else:
+    elif aiperf.dataset_url:
         detail(f"Dataset: {dataset_path}")
+    else:
+        detail("AIPerf dataset: synthetic")
     detail(f"Artifact directory: {artifact_dir}")
     detail(f"MLflow: {'enabled' if enable_mlflow else 'disabled'}")
     try:
@@ -421,10 +423,12 @@ def run_benchmark(
                 mlflow.log_param("backend_type", "openai_http")
                 if public_dataset:
                     mlflow.log_param("public_dataset", public_dataset)
-                else:
+                elif aiperf.dataset_url:
                     mlflow.log_param("dataset_url", aiperf.dataset_url)
                     if aiperf.dataset_cap is not None:
                         mlflow.log_param("dataset_cap", aiperf.dataset_cap)
+                else:
+                    mlflow.log_param("dataset_type", "synthetic")
                 mlflow.log_param("max_seconds", aiperf.max_seconds)
                 for key, value in aiperf.args.items():
                     mlflow.log_param(

@@ -7,14 +7,17 @@ spec:
   env:
     AIPERF_HTTP_SSL_VERIFY: "false"
   aiperf:
-    # A small real workload that completes quickly while exercising AIPerf's
-    # summary and per-request artifact exporters.
-    public_dataset: sharegpt
+    # A tiny synthetic workload avoids external dataset downloads while still
+    # exercising AIPerf's summary and per-request artifact exporters.
     endpoint_type: chat
     endpoint_path: /v1/chat/completions
     streaming: true
-    request_count: 20
-    concurrency: 4
+    synthetic_input_tokens_mean: 64
+    synthetic_input_tokens_stddev: 0
+    output_tokens_mean: 16
+    output_tokens_stddev: 0
+    request_count: 10
+    concurrency: 2
     export_level: records
     tokenizer_trust_remote_code: true
     ui: simple
