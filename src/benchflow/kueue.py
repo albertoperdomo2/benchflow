@@ -47,8 +47,6 @@ TARGET_KUBECONFIG_SECRET_LABEL = "benchflow.io/target-kubeconfig-secret"
 EXECUTION_NAME_LABEL = "benchflow.io/execution-name"
 SUBMISSION_CONFIGMAP_LABEL = "benchflow.io/submission-configmap"
 SUBMISSION_MANIFEST_KEY = "manifest.json"
-READY_REQUEUE_ANNOTATION = "benchflow.io/ready-requeue-at"
-READY_REQUEUE_COOLDOWN_SECONDS = 60
 
 
 def _now_rfc3339() -> str:
@@ -58,18 +56,6 @@ def _now_rfc3339() -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
-
-
-def _parse_rfc3339(value: str) -> datetime | None:
-    cleaned = str(value).strip()
-    if not cleaned:
-        return None
-    try:
-        if cleaned.endswith("Z"):
-            cleaned = cleaned[:-1] + "+00:00"
-        return datetime.fromisoformat(cleaned)
-    except ValueError:
-        return None
 
 
 def _duration_seconds(value: str) -> int:
@@ -454,7 +440,7 @@ def wait_for_reservation(
         if payload is None:
             raise CommandError(f"reservation workload {workload_name} disappeared")
         status = payload.get("status", {}) or {}
-        if status.get("admission"):
+        if _workload_is_admitted(payload):
             success(f"Kueue admitted reservation workload {workload_name}")
             return
         for check_state in status.get("admissionChecks", []) or []:
@@ -582,7 +568,7 @@ def reservation_workload_by_execution_name(
 
 def _workload_status_summary(workload: dict[str, Any]) -> tuple[str, bool, bool, str]:
     status = workload.get("status", {}) or {}
-    if status.get("admission"):
+    if _workload_is_admitted(workload):
         return ("Starting", False, False, "admitted; waiting for PipelineRun start")
     for check_state in status.get("admissionChecks", []) or []:
         state = str(check_state.get("state") or "")
@@ -921,6 +907,23 @@ def _workload_has_quota_reservation(workload: dict[str, Any]) -> bool:
     return bool(status.get("admission"))
 
 
+def _workload_is_admitted(workload: dict[str, Any]) -> bool:
+    """Return whether Kueue has admitted a workload after all checks passed."""
+    status = workload.get("status", {}) or {}
+    return any(
+        str(condition.get("type") or "") == "Admitted"
+        and str(condition.get("status") or "") == "True"
+        for condition in status.get("conditions", []) or []
+    )
+
+
+def _workload_needs_capacity_check(workload: dict[str, Any]) -> bool:
+    """Return whether a quota-reserved workload is awaiting admission checks."""
+    return _workload_has_quota_reservation(workload) and not _workload_is_admitted(
+        workload
+    )
+
+
 def _create_execution_from_workload(namespace: str, workload: dict[str, Any]) -> None:
     execution_name = _workload_execution_name(workload)
     if not execution_name:
@@ -1027,71 +1030,6 @@ def _patch_workload_check(
     )
 
 
-def _patch_workload_active(namespace: str, workload_name: str, *, active: bool) -> None:
-    kubectl_cmd = require_any_command("oc", "kubectl")
-    run_command(
-        [
-            kubectl_cmd,
-            "patch",
-            "workload",
-            workload_name,
-            "-n",
-            namespace,
-            "--type",
-            "merge",
-            "-p",
-            json.dumps({"spec": {"active": active}}),
-        ]
-    )
-
-
-def _patch_workload_annotations(
-    namespace: str,
-    workload_name: str,
-    annotations: dict[str, str],
-) -> None:
-    kubectl_cmd = require_any_command("oc", "kubectl")
-    run_command(
-        [
-            kubectl_cmd,
-            "patch",
-            "workload",
-            workload_name,
-            "-n",
-            namespace,
-            "--type",
-            "merge",
-            "-p",
-            json.dumps({"metadata": {"annotations": annotations}}),
-        ]
-    )
-
-
-def _requeue_ready_workload(namespace: str, workload: dict[str, Any]) -> None:
-    metadata = workload.get("metadata", {}) or {}
-    workload_name = str(metadata.get("name") or "")
-    if not workload_name:
-        return
-    annotations = metadata.get("annotations", {}) or {}
-    last_requeue_at = _parse_rfc3339(
-        str(annotations.get(READY_REQUEUE_ANNOTATION) or "")
-    )
-    if last_requeue_at is not None:
-        elapsed = (
-            datetime.now(timezone.utc) - last_requeue_at.astimezone(timezone.utc)
-        ).total_seconds()
-        if elapsed < READY_REQUEUE_COOLDOWN_SECONDS:
-            return
-    _patch_workload_active(namespace, workload_name, active=False)
-    _patch_workload_active(namespace, workload_name, active=True)
-    _patch_workload_annotations(
-        namespace,
-        workload_name,
-        {READY_REQUEUE_ANNOTATION: _now_rfc3339()},
-    )
-    detail(f"Requeued ready reservation workload {workload_name}")
-
-
 def _workload_creation_key(workload: dict[str, Any]) -> tuple[str, str]:
     metadata = workload.get("metadata", {}) or {}
     return (
@@ -1100,25 +1038,27 @@ def _workload_creation_key(workload: dict[str, Any]) -> tuple[str, str]:
     )
 
 
-def _cluster_active_setup_key(workloads: list[dict[str, Any]]) -> tuple[str, str]:
-    reserved_workloads = [
-        workload for workload in workloads if _workload_has_quota_reservation(workload)
+def _cluster_active_setup_key(
+    workloads: list[dict[str, Any]],
+) -> tuple[str | None, str]:
+    admitted_workloads = [
+        workload for workload in workloads if _workload_is_admitted(workload)
     ]
-    if not reserved_workloads:
-        return "", ""
-    active_keys = {_workload_setup_key(workload) for workload in reserved_workloads}
+    if not admitted_workloads:
+        return None, ""
+    active_keys = {_workload_setup_key(workload) for workload in admitted_workloads}
     non_empty_keys = {key for key in active_keys if key}
     if not non_empty_keys:
-        return "<unspecified>", ""
+        return "", ""
     if "" in active_keys:
         return (
-            "",
-            "cluster has quota-reserved workloads with mixed known and unknown setup keys",
+            None,
+            "cluster has admitted workloads with mixed known and unknown setup keys",
         )
     if len(non_empty_keys) == 1:
         return next(iter(non_empty_keys)), ""
     keys = ", ".join(sorted(non_empty_keys))
-    return "", f"cluster has mixed quota-reserved setup keys: {keys}"
+    return None, f"cluster has mixed admitted setup keys: {keys}"
 
 
 def _kubeconfig_path_for_secret(namespace: str, secret_name: str) -> Path:
@@ -1184,7 +1124,7 @@ def run_remote_capacity_controller(
                             delete_reservation_workload(namespace, workload_name)
                             continue
 
-                if _workload_has_quota_reservation(workload):
+                if _workload_is_admitted(workload):
                     if execution_name and payload is None:
                         try:
                             _create_execution_from_workload(namespace, workload)
@@ -1202,21 +1142,21 @@ def run_remote_capacity_controller(
                 workloads_by_cluster.setdefault(cluster_name, []).append(workload)
 
             for cluster_name, cluster_workloads in sorted(workloads_by_cluster.items()):
-                pending = [
+                awaiting_checks = [
                     workload
                     for workload in sorted(
                         cluster_workloads, key=_workload_creation_key
                     )
-                    if not _workload_has_quota_reservation(workload)
+                    if _workload_needs_capacity_check(workload)
                 ]
-                if not pending:
+                if not awaiting_checks:
                     continue
 
                 active_key, active_key_error = _cluster_active_setup_key(
                     cluster_workloads
                 )
                 if active_key_error:
-                    for workload in pending:
+                    for workload in awaiting_checks:
                         _patch_workload_check(
                             namespace,
                             workload,
@@ -1226,7 +1166,7 @@ def run_remote_capacity_controller(
                         )
                     continue
 
-                queue_head = pending[0]
+                queue_head = awaiting_checks[0]
                 queue_head_key = _workload_setup_key(queue_head)
                 queue_head_requested = _workload_requests_gpus(queue_head)
                 queue_head_labels = (queue_head.get("metadata", {}) or {}).get(
@@ -1244,7 +1184,7 @@ def run_remote_capacity_controller(
                     capacity = discover_cluster_gpu_capacity(kubeconfig_path)
                     usage = discover_live_gpu_usage(kubeconfig_path)
                 except CommandError as exc:
-                    for workload in pending:
+                    for workload in awaiting_checks:
                         _patch_workload_check(
                             namespace,
                             workload,
@@ -1258,15 +1198,15 @@ def run_remote_capacity_controller(
                         kubeconfig_path.unlink(missing_ok=True)
 
                 available = max(0, capacity - usage)
-                wave_key = active_key or queue_head_key
+                wave_key = active_key if active_key is not None else queue_head_key
                 wave_key_label = wave_key or "<unspecified>"
-                queue_head_fits = bool(active_key) or available >= queue_head_requested
+                queue_head_fits = available >= queue_head_requested
 
-                for workload in pending:
+                for workload in awaiting_checks:
                     requested = _workload_requests_gpus(workload)
                     workload_key = _workload_setup_key(workload)
 
-                    if not queue_head_fits:
+                    if active_key is None and not queue_head_fits:
                         if workload is queue_head:
                             message = (
                                 f"target cluster {cluster_name} currently has {available}/{capacity} GPU(s) "
@@ -1289,7 +1229,7 @@ def run_remote_capacity_controller(
                     if workload_key != wave_key:
                         reason = (
                             "is locked to"
-                            if active_key
+                            if active_key is not None
                             else "is waiting for head-of-line setup key"
                         )
                         _patch_workload_check(
@@ -1313,7 +1253,7 @@ def run_remote_capacity_controller(
                                 f"for a {requested}-GPU workload using setup key {wave_key_label}"
                             ),
                         )
-                        _requeue_ready_workload(namespace, workload)
+                        available -= requested
                         continue
 
                     _patch_workload_check(
