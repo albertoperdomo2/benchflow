@@ -202,4 +202,8 @@ def test_artifact_pipeline_tasks_have_bounded_retries() -> None:
 
     for task_name in ("collect-artifacts", "collect-metrics", "upload-to-mlflow"):
         assert tasks[task_name]["retries"] == 2
+    for task in tasks.values():
+        assert not (
+            task.get("onError") == "continue" and int(task.get("retries", 0)) > 0
+        )
     assert finally_tasks["finalize-mlflow-run"]["retries"] == 2

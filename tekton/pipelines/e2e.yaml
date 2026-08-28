@@ -182,7 +182,6 @@ spec:
 
     - name: collect-artifacts
       runAfter: [benchmark]
-      onError: continue
       retries: 2
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-collect)"
@@ -212,7 +211,6 @@ spec:
 
     - name: collect-metrics
       runAfter: [collect-artifacts]
-      onError: continue
       retries: 2
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-collect)"
