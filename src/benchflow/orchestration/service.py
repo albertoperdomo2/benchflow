@@ -318,12 +318,6 @@ def submit_execution_manifest(manifest: dict[str, Any], namespace: str) -> str:
         str(key): str(value)
         for key, value in (manifest.get("metadata", {}) or {}).get("labels", {}).items()
     }
-    annotations = {
-        str(key): str(value)
-        for key, value in (manifest.get("metadata", {}) or {})
-        .get("annotations", {})
-        .items()
-    }
     metadata = manifest.setdefault("metadata", {})
     metadata["namespace"] = namespace
     matrix_run_plans_configmap = ""
@@ -367,6 +361,17 @@ def submit_execution_manifest(manifest: dict[str, Any], namespace: str) -> str:
             execution_name=execution_name,
             manifest=manifest,
         )
+        materialized_metadata = manifest.get("metadata", {}) or {}
+        materialized_labels = {
+            str(key): str(value)
+            for key, value in (materialized_metadata.get("labels", {}) or {}).items()
+        }
+        materialized_annotations = {
+            str(key): str(value)
+            for key, value in (
+                materialized_metadata.get("annotations", {}) or {}
+            ).items()
+        }
         configmap_name = create_submission_configmap(
             namespace=namespace,
             execution_name=execution_name,
@@ -381,8 +386,8 @@ def submit_execution_manifest(manifest: dict[str, Any], namespace: str) -> str:
             requested_gpu_count=requested_gpus,
             priority=priority,
             execution_timeout=execution_timeout,
-            execution_labels=labels,
-            execution_annotations=annotations,
+            execution_labels=materialized_labels,
+            execution_annotations=materialized_annotations,
         )
         return execution_name
     except BaseException:

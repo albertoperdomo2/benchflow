@@ -31,6 +31,7 @@ from ..orchestration import (
     stream_execution_logs,
 )
 from ..orchestration.matrix_results import publish_matrix_result
+from ..orchestration.matrix_payloads import write_matrix_run_plans_file
 from ..remote_jobs import remote_run_plan_json, run_remote_job
 from ..install import (
     BootstrapOptions,
@@ -1114,6 +1115,16 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
         benchflow_image=os.environ.get("BENCHFLOW_IMAGE"),
     )
     print("completed")
+    return 0
+
+
+def cmd_task_materialize_matrix_run_plans(args: argparse.Namespace) -> int:
+    write_matrix_run_plans_file(
+        namespace=args.namespace,
+        configmap_name=args.configmap_name,
+        output_file=args.output_file,
+    )
+    print(args.output_file)
     return 0
 
 
@@ -2400,6 +2411,26 @@ def task_cleanup_run_plan_command(**kwargs: object) -> int:
 )
 def task_assert_status_command(**kwargs: object) -> int:
     return invoke_handler(cmd_task_assert_status, **kwargs)
+
+
+@task_group.command(
+    "materialize-matrix-run-plans",
+    help=(
+        "Internal command used by the execution backend to verify and decode "
+        "matrix RunPlans from a ConfigMap."
+    ),
+    short_help="Materialize matrix RunPlans",
+)
+@click.option("--configmap-name", required=True, help="RunPlans ConfigMap name.")
+@click.option("--namespace", default="", help="RunPlans ConfigMap namespace.")
+@click.option(
+    "--output-file",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="File that receives the decoded RunPlans JSON array.",
+)
+def task_materialize_matrix_run_plans_command(**kwargs: object) -> int:
+    return invoke_handler(cmd_task_materialize_matrix_run_plans, **kwargs)
 
 
 @task_group.command(

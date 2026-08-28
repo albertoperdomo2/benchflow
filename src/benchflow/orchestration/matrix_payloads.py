@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import copy
+import gzip
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 from ..cluster import (
@@ -18,11 +21,20 @@ RUN_PLANS_PARAM = "RUN_PLANS"
 RUN_PLANS_CONFIGMAP_PARAM = "RUN_PLANS_CONFIGMAP"
 RUN_PLANS_CONFIGMAP_LABEL = "benchflow.io/run-plans-configmap"
 RUN_PLANS_CONFIGMAP_KEY = "run-plans.json"
+RUN_PLANS_COMPRESSED_CONFIGMAP_KEY = "run-plans.json.gz"
 RUN_PLANS_ANNOTATION = "benchflow.io/run-plans-json"
+RUN_PLANS_ENCODING_ANNOTATION = "benchflow.io/run-plans-encoding"
+RUN_PLANS_CHECKSUM_ANNOTATION = "benchflow.io/run-plans-sha256"
+RUN_PLANS_GZIP_ENCODING = "gzip"
 MATRIX_RESULTS_CONFIGMAP_PARAM = "MATRIX_RESULTS_CONFIGMAP"
 MATRIX_RESULTS_CONFIGMAP_LABEL = "benchflow.io/matrix-results-configmap"
 MATRIX_PIPELINE_NAME = "benchflow-matrix"
 EXECUTION_NAME_LABEL = "benchflow.io/execution-name"
+
+# ConfigMaps are limited to 1 MiB. Keep enough room for Base64 expansion and
+# object metadata instead of relying on the API server to reject an oversized
+# matrix payload with an opaque RequestEntityTooLarge response.
+_MAX_COMPRESSED_RUN_PLANS_BYTES = 700 * 1024
 
 
 def matrix_run_plans_configmap_name(execution_name: str) -> str:
@@ -78,6 +90,14 @@ def create_matrix_run_plans_configmap(
     run_plans_json: str,
 ) -> str:
     configmap_name = matrix_run_plans_configmap_name(execution_name)
+    raw_payload = run_plans_json.encode("utf-8")
+    compressed_payload = gzip.compress(raw_payload, mtime=0)
+    if len(compressed_payload) > _MAX_COMPRESSED_RUN_PLANS_BYTES:
+        raise ValidationError(
+            "compressed matrix RunPlans exceed the safe ConfigMap payload limit "
+            f"({len(compressed_payload)} > {_MAX_COMPRESSED_RUN_PLANS_BYTES} bytes); "
+            "split the experiment into smaller matrices"
+        )
     payload = {
         "apiVersion": "v1",
         "kind": "ConfigMap",
@@ -90,13 +110,93 @@ def create_matrix_run_plans_configmap(
                 EXECUTION_NAME_LABEL: execution_name,
                 RUN_PLANS_CONFIGMAP_LABEL: configmap_name,
             },
+            "annotations": {
+                RUN_PLANS_ENCODING_ANNOTATION: RUN_PLANS_GZIP_ENCODING,
+                RUN_PLANS_CHECKSUM_ANNOTATION: hashlib.sha256(raw_payload).hexdigest(),
+            },
         },
-        "data": {RUN_PLANS_CONFIGMAP_KEY: run_plans_json},
+        "binaryData": {
+            RUN_PLANS_COMPRESSED_CONFIGMAP_KEY: base64.b64encode(
+                compressed_payload
+            ).decode("ascii")
+        },
     }
     create_manifest(
         json.dumps(payload, separators=(",", ":"), sort_keys=True), namespace
     )
     return configmap_name
+
+
+def decode_matrix_run_plans_configmap(payload: dict[str, Any]) -> str:
+    metadata = payload.get("metadata", {}) or {}
+    annotations = metadata.get("annotations", {}) or {}
+    encoding = str(annotations.get(RUN_PLANS_ENCODING_ANNOTATION) or "").strip()
+
+    if not encoding:
+        data = payload.get("data", {}) or {}
+        raw_payload = str(data.get(RUN_PLANS_CONFIGMAP_KEY) or "")
+        if not raw_payload:
+            raise ValidationError(
+                f"matrix RunPlans ConfigMap is missing data.{RUN_PLANS_CONFIGMAP_KEY}"
+            )
+    elif encoding == RUN_PLANS_GZIP_ENCODING:
+        binary_data = payload.get("binaryData", {}) or {}
+        encoded_payload = str(binary_data.get(RUN_PLANS_COMPRESSED_CONFIGMAP_KEY) or "")
+        if not encoded_payload:
+            raise ValidationError(
+                "compressed matrix RunPlans ConfigMap is missing "
+                f"binaryData.{RUN_PLANS_COMPRESSED_CONFIGMAP_KEY}"
+            )
+        try:
+            compressed_payload = base64.b64decode(encoded_payload, validate=True)
+            raw_bytes = gzip.decompress(compressed_payload)
+            raw_payload = raw_bytes.decode("utf-8")
+        except (ValueError, OSError, UnicodeDecodeError) as exc:
+            raise ValidationError(
+                "compressed matrix RunPlans ConfigMap payload is invalid"
+            ) from exc
+        expected_checksum = str(
+            annotations.get(RUN_PLANS_CHECKSUM_ANNOTATION) or ""
+        ).strip()
+        actual_checksum = hashlib.sha256(raw_bytes).hexdigest()
+        if not expected_checksum:
+            raise ValidationError(
+                "compressed matrix RunPlans ConfigMap is missing its SHA-256 checksum"
+            )
+        if actual_checksum != expected_checksum:
+            raise ValidationError(
+                "compressed matrix RunPlans ConfigMap checksum does not match"
+            )
+    else:
+        raise ValidationError(
+            f"unsupported matrix RunPlans ConfigMap encoding: {encoding!r}"
+        )
+
+    try:
+        decoded = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise ValidationError(
+            "matrix RunPlans ConfigMap contains invalid JSON"
+        ) from exc
+    if not isinstance(decoded, list) or not decoded:
+        raise ValidationError(
+            "matrix RunPlans ConfigMap must contain a non-empty JSON array"
+        )
+    return raw_payload
+
+
+def write_matrix_run_plans_file(
+    *, namespace: str, configmap_name: str, output_file: Path
+) -> None:
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    command = [kubectl_cmd, "get", "configmap", configmap_name]
+    if namespace:
+        command.extend(["-n", namespace])
+    command.extend(["-o", "json"])
+    payload = run_json_command(command)
+    raw_payload = decode_matrix_run_plans_configmap(payload)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(raw_payload, encoding="utf-8")
 
 
 def delete_matrix_run_plans_configmap(namespace: str, configmap_name: str) -> None:

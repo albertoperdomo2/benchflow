@@ -37,8 +37,10 @@ spec:
         - -ceu
         - |
           run_plans_path="/tmp/run-plans.json"
-          oc get configmap "$(params.RUN_PLANS_CONFIGMAP)" \
-            -o jsonpath='{.data.run-plans\.json}' > "${run_plans_path}"
+          bflow task materialize-matrix-run-plans \
+            --configmap-name "$(params.RUN_PLANS_CONFIGMAP)" \
+            --namespace "$(context.pipelineRun.namespace)" \
+            --output-file "${run_plans_path}"
 
           exec bflow task run-experiment-matrix \
             --run-plans-file "${run_plans_path}" \
