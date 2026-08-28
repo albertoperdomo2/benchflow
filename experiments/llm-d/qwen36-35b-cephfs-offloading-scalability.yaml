@@ -1,0 +1,33 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen36-35b-cephfs-offloading-scalability
+spec:
+  model:
+    name:
+      - Qwen/Qwen3.6-35B-A3B
+  deployment_profile:
+    - llm-d-optimized-baseline-scalability-cephfs-offload
+  benchmark_profile:
+    - aiperf-agentx-inference
+  overrides:
+    scale:
+      replicas: [1, 2, 4, 8]
+    benchmark:
+      concurrency: [4, 8, 16, 32, 64, 128, 256, 512, 1024]
+    runtime:
+      # Run one child at a time so each receives an isolated, empty CephFS cache.
+      placement:
+        mode: sequential
+  metrics_profile: detailed
+  target:
+    # Internal Istio gateway traffic still passes through the upstream EPP.
+    endpoint_scope: internal
+  mlflow:
+    tags:
+      benchmark_family: qwen35-offload-scalability
+      llm_d_release: v0.9.0
+      offload_type: cephfs
+  namespace: benchflow
+  execution:
+    timeout: 8h

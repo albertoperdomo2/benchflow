@@ -1,0 +1,46 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-optimized-baseline-scalability-cephfs-offload
+spec:
+  platform: llm-d
+  mode: inference-scheduling
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v0.9.0
+  gateway: istio
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /model-cache
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+      # Replicas must derive identical filesystem-tier block names.
+      PYTHONHASHSEED: "0"
+    shared_memory_size: 300Gi
+    resources:
+      requests:
+        memory: 300Gi
+      limits:
+        memory: 400Gi
+    pvc_mounts:
+      # BenchFlow creates a release-scoped PVC and deletes it during cleanup.
+      # The storage class must provide RWX CephFS storage on the target cluster.
+      - name: cephfs-kv-cache
+        claim_name: qwen35-cephfs-kv-cache
+        mount_path: /mnt/files-storage
+        create: true
+        storage_class_name: rook-cephfs-fast
+        size: 9000Gi
+        access_modes:
+          - ReadWriteMany
+    vllm_args:
+      - --gpu-memory-utilization=0.55
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"block_size":256,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/files-storage","n_read_threads":16,"n_write_threads":16}]}}
