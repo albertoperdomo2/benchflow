@@ -9,6 +9,7 @@ import yaml
 
 from benchflow.cluster import CommandError
 from benchflow.deploy.llmd import (
+    _llmd_router_httproute_gateway_override,
     _llmd_router_chart_settings,
     _llmd_router_epp_selectors_for_release,
     _patch_recipe_gateway,
@@ -187,6 +188,18 @@ metadata:
                 gateway["spec"]["infrastructure"]["labels"]["benchflow.io/release"],
                 "qwen36-35b-offloading-abc123",
             )
+
+    def test_router_uses_v010_httproute_values(self) -> None:
+        override = _llmd_router_httproute_gateway_override(
+            "qwen36-35b-offloading-abc123"
+        )
+
+        self.assertEqual(
+            override,
+            "httpRoute.inferenceGatewayName="
+            "infra-qwen36-35b-offloading-abc123-inference-gateway",
+        )
+        self.assertNotIn("experimentalHttpRoute", override)
 
 
 if __name__ == "__main__":

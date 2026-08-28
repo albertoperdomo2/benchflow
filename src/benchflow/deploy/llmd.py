@@ -316,6 +316,11 @@ def _llmd_recipe_gateway_name(release_name: str) -> str:
     return f"infra-{release_name}-inference-gateway"
 
 
+def _llmd_router_httproute_gateway_override(release_name: str) -> str:
+    """Return the v0.10 router chart value for this deployment's Gateway."""
+    return f"httpRoute.inferenceGatewayName={_llmd_recipe_gateway_name(release_name)}"
+
+
 def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"gaie-{plan.deployment.release_name}-envoy"
 
@@ -2626,8 +2631,9 @@ def deploy_llmd(
                             / "httproute-flags.yaml"
                         ),
                         "--set",
-                        "experimentalHttpRoute.inferenceGatewayName="
-                        + _llmd_recipe_gateway_name(plan.deployment.release_name),
+                        _llmd_router_httproute_gateway_override(
+                            plan.deployment.release_name
+                        ),
                     ]
                 )
         else:
