@@ -302,6 +302,11 @@ def _llmd_router_epp_selectors_for_release(
     return fallback
 
 
+def _llmd_recipe_gateway_route_prefix(release_name: str) -> str:
+    """Return the unique shared-Gateway path reserved for one release."""
+    return f"/benchflow/{release_name}"
+
+
 def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"gaie-{plan.deployment.release_name}-envoy"
 
@@ -2067,10 +2072,45 @@ def _capture_recipe_inputs(
                 shutil.copy2(path, target_dir / path.name)
 
 
-def _create_httproute(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+def _create_httproute(
+    plan: ResolvedRunPlan, kubectl_cmd: str, *, shared_recipe_gateway: bool = False
+) -> None:
     inference_pool_backend_group = _llmd_inference_pool_backend_group(
         plan.deployment.repo_ref
     )
+    route_rule: dict[str, Any] = {
+        "backendRefs": [
+            {
+                "group": inference_pool_backend_group,
+                "kind": "InferencePool",
+                "name": f"gaie-{plan.deployment.release_name}",
+                "port": 8000,
+                "weight": 1,
+            }
+        ],
+        "matches": [
+            {
+                "path": {
+                    "type": "PathPrefix",
+                    "value": (
+                        _llmd_recipe_gateway_route_prefix(plan.deployment.release_name)
+                        if shared_recipe_gateway
+                        else "/"
+                    ),
+                }
+            }
+        ],
+    }
+    if shared_recipe_gateway:
+        # Preserve the vLLM API path after selecting this release's EPP.
+        route_rule["filters"] = [
+            {
+                "type": "URLRewrite",
+                "urlRewrite": {
+                    "path": {"type": "ReplacePrefixMatch", "replacePrefixMatch": "/"}
+                },
+            }
+        ]
     route = {
         "apiVersion": "gateway.networking.k8s.io/v1",
         "kind": "HTTPRoute",
@@ -2088,23 +2128,14 @@ def _create_httproute(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
                 {
                     "group": "gateway.networking.k8s.io",
                     "kind": "Gateway",
-                    "name": f"infra-{plan.deployment.release_name}-inference-gateway",
+                    "name": (
+                        "llm-d-inference-gateway"
+                        if shared_recipe_gateway
+                        else f"infra-{plan.deployment.release_name}-inference-gateway"
+                    ),
                 }
             ],
-            "rules": [
-                {
-                    "backendRefs": [
-                        {
-                            "group": inference_pool_backend_group,
-                            "kind": "InferencePool",
-                            "name": f"gaie-{plan.deployment.release_name}",
-                            "port": 8000,
-                            "weight": 1,
-                        }
-                    ],
-                    "matches": [{"path": {"type": "PathPrefix", "value": "/"}}],
-                }
-            ],
+            "rules": [route_rule],
         },
     }
     run_command(
@@ -2288,7 +2319,11 @@ def _httproute_exists(
     recipe_layout: bool,
     router_chart: bool,
 ) -> bool:
-    route_name = f"gaie-{release_name}" if recipe_layout else f"llm-d-{release_name}"
+    route_name = (
+        f"llm-d-{release_name}"
+        if router_chart or not recipe_layout
+        else f"gaie-{release_name}"
+    )
     result = run_command(
         [
             kubectl_cmd,
@@ -2705,6 +2740,28 @@ def deploy_llmd(
         _apply_runtime_pvc_manifests(plan, kubectl_cmd)
         run_command(helm_args, cwd=guide_dir, env=env)
         _apply_recipe_epp_podmonitor(plan, kubectl_cmd, router_chart=router_chart)
+
+        if router_chart and gateway_mode != "standalone":
+            # The router recipe's optional HTTPRoute is a catch-all `/` route.
+            # BenchFlow keeps one Gateway for parallel matrix children, so
+            # replace that route with a release-prefixed route before traffic
+            # can be sent to the wrong EPP.
+            run_command(
+                [
+                    kubectl_cmd,
+                    "delete",
+                    "httproute",
+                    _llmd_recipe_scheduler_release_name(plan),
+                    "-n",
+                    plan.deployment.namespace,
+                    "--ignore-not-found=true",
+                ]
+            )
+            step(
+                "Applying isolated shared-Gateway HTTPRoute "
+                f"for {plan.deployment.release_name}"
+            )
+            _create_httproute(plan, kubectl_cmd, shared_recipe_gateway=True)
 
         if gateway_mode == "standalone" and not router_chart:
             # The official standalone chart renders the Envoy ConfigMap name from

@@ -9,6 +9,7 @@ from benchflow.cluster import CommandError
 from benchflow.deploy.llmd import (
     _llmd_router_chart_settings,
     _llmd_router_epp_selectors_for_release,
+    _llmd_recipe_gateway_route_prefix,
 )
 
 
@@ -134,6 +135,12 @@ export ROUTER_GATEWAY_CHART=oci://example.invalid/router-gateway
             "llm-d-router-gateway=gaie-very-long-release-na-epp",
         )
         self.assertIn("llm-d-router-gateway=gaie-very-long-release-name-epp", selectors)
+
+    def test_shared_gateway_route_prefix_is_release_specific(self) -> None:
+        self.assertEqual(
+            _llmd_recipe_gateway_route_prefix("qwen36-35b-offloading-abc123"),
+            "/benchflow/qwen36-35b-offloading-abc123",
+        )
 
 
 if __name__ == "__main__":
