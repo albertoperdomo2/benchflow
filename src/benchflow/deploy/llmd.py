@@ -184,6 +184,9 @@ def _llmd_router_chart_settings(
 
     values: dict[str, str] = {}
     assignment = re.compile(r"^export\s+(ROUTER_[A-Z_]+)=(.+?)\s*$")
+    shell_default = re.compile(
+        r"^\$\{(?P<name>[A-Z_][A-Z0-9_]*):-(?P<default>[^}]*)\}$"
+    )
     for line in env_path.read_text(encoding="utf-8").splitlines():
         match = assignment.match(line.strip())
         if match is None:
@@ -191,6 +194,11 @@ def _llmd_router_chart_settings(
         value = match.group(2).strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
+        default_match = shell_default.fullmatch(value)
+        if default_match is not None:
+            value = os.environ.get(default_match.group("name")) or default_match.group(
+                "default"
+            )
         values[match.group(1)] = value
 
     chart_key = (
@@ -203,6 +211,14 @@ def _llmd_router_chart_settings(
     if not chart_ref or not chart_version:
         raise CommandError(
             f"{env_path} must define {chart_key} and ROUTER_CHART_VERSION"
+        )
+    unresolved = [
+        value for value in (chart_ref, chart_version) if "${" in value or "$(" in value
+    ]
+    if unresolved:
+        raise CommandError(
+            f"{env_path} contains unsupported shell expressions in router chart settings: "
+            + ", ".join(unresolved)
         )
     return chart_ref, chart_version
 
