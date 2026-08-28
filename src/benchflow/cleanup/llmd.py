@@ -21,9 +21,6 @@ from ..storage_offloading import (
 )
 from ..ui import detail
 
-_SHARED_GATEWAY_NAME = "llm-d-inference-gateway"
-_SHARED_GATEWAY_INFRA_NAME = "llm-d-inference-gateway-istio"
-
 
 def _release_names(plan: ResolvedRunPlan) -> list[str]:
     release = plan.deployment.release_name
@@ -371,85 +368,6 @@ def _delete_runtime_host_path_contents(
         )
 
 
-def _shared_gateway_has_routes(kubectl_cmd: str, namespace: str) -> bool:
-    result = run_command(
-        [kubectl_cmd, "get", "httproute", "-n", namespace, "-o", "json"],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return False
-    payload = json.loads(result.stdout or "{}")
-    for item in payload.get("items", []):
-        if not isinstance(item, dict):
-            continue
-        parent_refs = item.get("spec", {}).get("parentRefs", [])
-        if not isinstance(parent_refs, list):
-            continue
-        for parent_ref in parent_refs:
-            if not isinstance(parent_ref, dict):
-                continue
-            if parent_ref.get("name") == _SHARED_GATEWAY_NAME:
-                return True
-    return False
-
-
-def _delete_shared_gateway_if_unused(
-    kubectl_cmd: str,
-    namespace: str,
-    *,
-    wait_for_deletion: bool,
-    timeout_seconds: int,
-) -> None:
-    if _shared_gateway_has_routes(kubectl_cmd, namespace):
-        return
-
-    for kind, name in (
-        ("gateway", _SHARED_GATEWAY_NAME),
-        ("configmap", _SHARED_GATEWAY_NAME),
-        ("deployment", _SHARED_GATEWAY_INFRA_NAME),
-        ("service", _SHARED_GATEWAY_INFRA_NAME),
-        ("serviceaccount", _SHARED_GATEWAY_INFRA_NAME),
-    ):
-        run_command(
-            [
-                kubectl_cmd,
-                "delete",
-                kind,
-                name,
-                "-n",
-                namespace,
-                "--ignore-not-found=true",
-            ],
-        )
-
-    if not wait_for_deletion:
-        return
-
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        result = run_command(
-            [
-                kubectl_cmd,
-                "get",
-                "deployment",
-                _SHARED_GATEWAY_INFRA_NAME,
-                "-n",
-                namespace,
-                "-o",
-                "name",
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode != 0 or not str(result.stdout or "").strip():
-            return
-        time.sleep(5)
-    raise CommandError(
-        f"timed out waiting for shared llm-d gateway deletion: {_SHARED_GATEWAY_INFRA_NAME}"
-    )
-
-
 def cleanup_llmd(
     plan: ResolvedRunPlan,
     *,
@@ -497,12 +415,6 @@ def cleanup_llmd(
                     timeout_seconds=timeout_seconds,
                 )
                 _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
-                _delete_shared_gateway_if_unused(
-                    kubectl_cmd,
-                    namespace,
-                    wait_for_deletion=wait_for_deletion,
-                    timeout_seconds=timeout_seconds,
-                )
                 return
             else:
                 pvc_deleted = _delete_storage_offloading_pvc(
@@ -513,12 +425,6 @@ def cleanup_llmd(
                 )
                 _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
                 if pvc_deleted:
-                    _delete_shared_gateway_if_unused(
-                        kubectl_cmd,
-                        namespace,
-                        wait_for_deletion=wait_for_deletion,
-                        timeout_seconds=timeout_seconds,
-                    )
                     return
                 raise CommandError(
                     f"no llm-d releases found for {plan.deployment.release_name}"
@@ -661,10 +567,3 @@ def cleanup_llmd(
     )
     _delete_runtime_pvcs(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
     _delete_stale_helm_release_secrets(kubectl_cmd, namespace, set(releases))
-    if recipe_layout:
-        _delete_shared_gateway_if_unused(
-            kubectl_cmd,
-            namespace,
-            wait_for_deletion=wait_for_deletion,
-            timeout_seconds=timeout_seconds,
-        )

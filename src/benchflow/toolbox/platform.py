@@ -8,7 +8,6 @@ from ..cleanup import cleanup_llmd, cleanup_rhaiis, cleanup_rhoai
 from ..cluster import require_any_command, resolve_target_base_url, use_kubeconfig
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
 from ..deploy import deploy_llmd, deploy_rhaiis, deploy_rhoai
-from ..llmd_layout import uses_recipe_layout
 from ..platform_state import (
     clear_cluster_platform_state,
     load_cluster_platform_state,
@@ -29,10 +28,6 @@ from ..setup import (
     setup_rhoai,
 )
 from ..ui import detail, step
-
-
-def _llmd_recipe_gateway_base_url(base_url: str, release_name: str) -> str:
-    return f"{base_url.rstrip('/')}/benchflow/{release_name}"
 
 
 def _write_state_path(state_path: Path | None, state: dict[str, Any]) -> None:
@@ -154,14 +149,6 @@ def resolve_target_url(
         base_url = target_url or resolve_target_base_url(
             plan.deployment.target, plan.deployment.namespace
         )
-    if (
-        target_url is None
-        and plan.deployment.platform == "llm-d"
-        and str(plan.deployment.gateway or "").strip() != "standalone"
-        and plan.deployment.target.discovery == "gateway-status-url"
-        and uses_recipe_layout(plan.deployment.repo_ref)
-    ):
-        base_url = _llmd_recipe_gateway_base_url(base_url, plan.deployment.release_name)
     resolved_path = endpoint_path or plan.deployment.target.path
     return base_url, resolved_path
 

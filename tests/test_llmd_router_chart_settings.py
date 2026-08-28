@@ -5,11 +5,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 from benchflow.cluster import CommandError
 from benchflow.deploy.llmd import (
     _llmd_router_chart_settings,
     _llmd_router_epp_selectors_for_release,
-    _llmd_recipe_gateway_route_prefix,
+    _patch_recipe_gateway,
 )
 
 
@@ -136,11 +138,55 @@ export ROUTER_GATEWAY_CHART=oci://example.invalid/router-gateway
         )
         self.assertIn("llm-d-router-gateway=gaie-very-long-release-name-epp", selectors)
 
-    def test_shared_gateway_route_prefix_is_release_specific(self) -> None:
-        self.assertEqual(
-            _llmd_recipe_gateway_route_prefix("qwen36-35b-offloading-abc123"),
-            "/benchflow/qwen36-35b-offloading-abc123",
-        )
+    def test_gateway_resources_are_release_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            gateway_dir = Path(directory)
+            (gateway_dir / "gateway.yaml").write_text(
+                """apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: llm-d-inference-gateway
+spec:
+  infrastructure:
+    parametersRef:
+      name: llm-d-inference-gateway
+""",
+                encoding="utf-8",
+            )
+            (gateway_dir / "configmap.yaml").write_text(
+                """apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-d-inference-gateway
+""",
+                encoding="utf-8",
+            )
+            plan = type(
+                "Plan",
+                (),
+                {
+                    "deployment": type(
+                        "Deployment",
+                        (),
+                        {"release_name": "qwen36-35b-offloading-abc123"},
+                    )()
+                },
+            )()
+
+            _patch_recipe_gateway(plan, gateway_dir)
+
+            gateway = yaml.safe_load((gateway_dir / "gateway.yaml").read_text())
+            configmap = yaml.safe_load((gateway_dir / "configmap.yaml").read_text())
+            name = "infra-qwen36-35b-offloading-abc123-inference-gateway"
+            self.assertEqual(gateway["metadata"]["name"], name)
+            self.assertEqual(configmap["metadata"]["name"], name)
+            self.assertEqual(
+                gateway["spec"]["infrastructure"]["parametersRef"]["name"], name
+            )
+            self.assertEqual(
+                gateway["spec"]["infrastructure"]["labels"]["benchflow.io/release"],
+                "qwen36-35b-offloading-abc123",
+            )
 
 
 if __name__ == "__main__":

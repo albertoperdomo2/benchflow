@@ -405,11 +405,7 @@ def _target_for(
                     f"http://ms-{release_name}.{namespace}.svc.cluster.local:8000"
                 )
         else:
-            gateway_name = (
-                "llm-d-inference-gateway"
-                if _llmd_uses_recipe_layout(repo_ref)
-                else f"infra-{release_name}-inference-gateway"
-            )
+            gateway_name = f"infra-{release_name}-inference-gateway"
             return TargetSpec(
                 discovery="gateway-status-url",
                 resource_kind="Gateway",

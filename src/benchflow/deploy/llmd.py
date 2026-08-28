@@ -302,9 +302,18 @@ def _llmd_router_epp_selectors_for_release(
     return fallback
 
 
-def _llmd_recipe_gateway_route_prefix(release_name: str) -> str:
-    """Return the unique shared-Gateway path reserved for one release."""
-    return f"/benchflow/{release_name}"
+def _llmd_recipe_gateway_name(release_name: str) -> str:
+    """Return the Gateway name owned by one llm-d recipe deployment."""
+    # The controller appends ``-istio`` for generated infrastructure. Keep the
+    # Gateway name at 57 characters so the generated Deployment/Service remain
+    # valid Kubernetes names too. Retain the release's random suffix to avoid
+    # collisions between matrix children.
+    max_release_length = 33
+    if len(release_name) > max_release_length:
+        suffix = release_name[-10:]
+        prefix_length = max_release_length - len(suffix) - 1
+        release_name = f"{release_name[:prefix_length].rstrip('-')}-{suffix}"
+    return f"infra-{release_name}-inference-gateway"
 
 
 def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
@@ -1699,13 +1708,10 @@ def _patch_recipe_modelserver_overlay(
 
 
 def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
-    gateway_config_name = "llm-d-inference-gateway"
-    shared_gateway_labels = {
+    gateway_name = _llmd_recipe_gateway_name(plan.deployment.release_name)
+    release_labels = {
         "app.kubernetes.io/name": "benchflow",
         "benchflow.io/platform": "llm-d",
-    }
-    release_labels = {
-        **shared_gateway_labels,
         _BENCHFLOW_RELEASE_LABEL: plan.deployment.release_name,
     }
     gateway_path = gateway_dir / "gateway.yaml"
@@ -1716,26 +1722,27 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
             raise CommandError(f"expected llm-d gateway manifest not found: {path}")
         kind = str(manifest.get("kind") or "")
         metadata = manifest.setdefault("metadata", {})
-        if kind == "ConfigMap":
-            metadata["name"] = gateway_config_name
+        if kind in {"Gateway", "ConfigMap"}:
+            metadata["name"] = gateway_name
         manifest_labels = metadata.setdefault("labels", {})
         if not isinstance(manifest_labels, dict):
             manifest_labels = {}
             metadata["labels"] = manifest_labels
-        # The recipe scheduler chart creates HTTPRoutes that target the upstream
-        # shared Gateway name. Keep the Gateway and its infrastructure
-        # ConfigMap shared so per-release cleanup does not break later runs.
-        manifest_labels.update(
-            shared_gateway_labels
-            if kind in {"Gateway", "ConfigMap"}
-            else release_labels
-        )
+        manifest_labels.update(release_labels)
         if kind == "Gateway":
             infrastructure = manifest.setdefault("spec", {}).setdefault(
                 "infrastructure", {}
             )
             parameters_ref = infrastructure.setdefault("parametersRef", {})
-            parameters_ref["name"] = gateway_config_name
+            parameters_ref["name"] = gateway_name
+            infrastructure_labels = infrastructure.setdefault("labels", {})
+            if not isinstance(infrastructure_labels, dict):
+                infrastructure_labels = {}
+                infrastructure["labels"] = infrastructure_labels
+            # The Gateway controller creates the Istio Deployment, Service, and
+            # ServiceAccount. Propagate ownership to those generated resources
+            # so deployment cleanup is release-scoped too.
+            infrastructure_labels.update(release_labels)
         path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
@@ -2072,9 +2079,7 @@ def _capture_recipe_inputs(
                 shutil.copy2(path, target_dir / path.name)
 
 
-def _create_httproute(
-    plan: ResolvedRunPlan, kubectl_cmd: str, *, shared_recipe_gateway: bool = False
-) -> None:
+def _create_httproute(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
     inference_pool_backend_group = _llmd_inference_pool_backend_group(
         plan.deployment.repo_ref
     )
@@ -2092,25 +2097,11 @@ def _create_httproute(
             {
                 "path": {
                     "type": "PathPrefix",
-                    "value": (
-                        _llmd_recipe_gateway_route_prefix(plan.deployment.release_name)
-                        if shared_recipe_gateway
-                        else "/"
-                    ),
+                    "value": "/",
                 }
             }
         ],
     }
-    if shared_recipe_gateway:
-        # Preserve the vLLM API path after selecting this release's EPP.
-        route_rule["filters"] = [
-            {
-                "type": "URLRewrite",
-                "urlRewrite": {
-                    "path": {"type": "ReplacePrefixMatch", "replacePrefixMatch": "/"}
-                },
-            }
-        ]
     route = {
         "apiVersion": "gateway.networking.k8s.io/v1",
         "kind": "HTTPRoute",
@@ -2128,11 +2119,7 @@ def _create_httproute(
                 {
                     "group": "gateway.networking.k8s.io",
                     "kind": "Gateway",
-                    "name": (
-                        "llm-d-inference-gateway"
-                        if shared_recipe_gateway
-                        else f"infra-{plan.deployment.release_name}-inference-gateway"
-                    ),
+                    "name": _llmd_recipe_gateway_name(plan.deployment.release_name),
                 }
             ],
             "rules": [route_rule],
@@ -2286,29 +2273,22 @@ def _pods_ready_any(
 def _gateway_exists(
     namespace: str, release_name: str, kubectl_cmd: str, *, recipe_layout: bool
 ) -> bool:
-    gateway_names = (
-        ["llm-d-inference-gateway", f"infra-{release_name}-inference-gateway"]
-        if recipe_layout
-        else [f"infra-{release_name}-inference-gateway"]
+    del recipe_layout
+    result = run_command(
+        [
+            kubectl_cmd,
+            "get",
+            "gateway",
+            _llmd_recipe_gateway_name(release_name),
+            "-n",
+            namespace,
+            "-o",
+            "name",
+        ],
+        capture_output=True,
+        check=False,
     )
-    for gateway_name in gateway_names:
-        result = run_command(
-            [
-                kubectl_cmd,
-                "get",
-                "gateway",
-                gateway_name,
-                "-n",
-                namespace,
-                "-o",
-                "name",
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            return True
-    return False
+    return result.returncode == 0
 
 
 def _httproute_exists(
@@ -2319,11 +2299,7 @@ def _httproute_exists(
     recipe_layout: bool,
     router_chart: bool,
 ) -> bool:
-    route_name = (
-        f"llm-d-{release_name}"
-        if router_chart or not recipe_layout
-        else f"gaie-{release_name}"
-    )
+    route_name = f"gaie-{release_name}" if recipe_layout else f"llm-d-{release_name}"
     result = run_command(
         [
             kubectl_cmd,
@@ -2649,6 +2625,9 @@ def deploy_llmd(
                             / "features"
                             / "httproute-flags.yaml"
                         ),
+                        "--set",
+                        "experimentalHttpRoute.inferenceGatewayName="
+                        + _llmd_recipe_gateway_name(plan.deployment.release_name),
                     ]
                 )
         else:
@@ -2693,7 +2672,8 @@ def deploy_llmd(
                         "--set",
                         "experimentalHttpRoute.enabled=true",
                         "--set",
-                        "experimentalHttpRoute.inferenceGatewayName=llm-d-inference-gateway",
+                        "experimentalHttpRoute.inferenceGatewayName="
+                        + _llmd_recipe_gateway_name(plan.deployment.release_name),
                     ]
                 )
             else:
@@ -2741,28 +2721,6 @@ def deploy_llmd(
         run_command(helm_args, cwd=guide_dir, env=env)
         _apply_recipe_epp_podmonitor(plan, kubectl_cmd, router_chart=router_chart)
 
-        if router_chart and gateway_mode != "standalone":
-            # The router recipe's optional HTTPRoute is a catch-all `/` route.
-            # BenchFlow keeps one Gateway for parallel matrix children, so
-            # replace that route with a release-prefixed route before traffic
-            # can be sent to the wrong EPP.
-            run_command(
-                [
-                    kubectl_cmd,
-                    "delete",
-                    "httproute",
-                    _llmd_recipe_scheduler_release_name(plan),
-                    "-n",
-                    plan.deployment.namespace,
-                    "--ignore-not-found=true",
-                ]
-            )
-            step(
-                "Applying isolated shared-Gateway HTTPRoute "
-                f"for {plan.deployment.release_name}"
-            )
-            _create_httproute(plan, kubectl_cmd, shared_recipe_gateway=True)
-
         if gateway_mode == "standalone" and not router_chart:
             # The official standalone chart renders the Envoy ConfigMap name from
             # values, but v1.5.0 still hard-codes the mounted volume reference to
@@ -2771,7 +2729,10 @@ def deploy_llmd(
             _patch_standalone_envoy_volume(plan, kubectl_cmd)
 
         if gateway_dir is not None:
-            step(f"Applying llm-d gateway resources from {gateway_dir}")
+            step(
+                "Applying release-scoped llm-d gateway resources for "
+                f"{plan.deployment.release_name} from {gateway_dir}"
+            )
             run_command(
                 [
                     kubectl_cmd,
