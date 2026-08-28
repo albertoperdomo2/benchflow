@@ -21,8 +21,8 @@ spec:
         mode: sequential
   metrics_profile: detailed
   target:
-    # Internal Istio gateway traffic still passes through the upstream EPP.
-    endpoint_scope: internal
+    # External Gateway traffic exercises the upstream EPP routing path.
+    endpoint_scope: external
   mlflow:
     tags:
       benchmark_family: qwen35-offload-scalability
