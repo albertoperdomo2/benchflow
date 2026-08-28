@@ -243,6 +243,35 @@ def _release_name_for(experiment: Experiment) -> str:
     return f"{prefix}-{suffix}"
 
 
+def _scope_target_release(
+    plan: ResolvedRunPlan,
+    *,
+    previous_release: str,
+    release_name: str,
+) -> TargetSpec:
+    """Return the target adjusted for a release scoped at submission time."""
+    target = plan.deployment.target
+    resource_name = target.resource_name.replace(previous_release, release_name)
+    if (
+        plan.deployment.platform == "llm-d"
+        and target.discovery == "gateway-status-url"
+    ):
+        # Recipe Gateway names truncate long releases. Rebuild the name from the
+        # final scoped release instead of attempting a string replacement on a
+        # name that may already have been truncated.
+        resource_name = _llmd_recipe_gateway_name(release_name)
+    return replace(
+        target,
+        base_url=target.base_url.replace(previous_release, release_name),
+        resource_name=resource_name,
+        metrics_release_name=(
+            release_name
+            if target.metrics_release_name == previous_release
+            else target.metrics_release_name
+        ),
+    )
+
+
 def scope_matrix_child_release(
     plan: ResolvedRunPlan,
     *,
@@ -270,19 +299,10 @@ def scope_matrix_child_release(
         max_length=max(1, _MATRIX_RELEASE_MAX_LENGTH - len(suffix)),
     )
     release_name = f"{prefix}{suffix}"
-    target = plan.deployment.target
-    scoped_target = replace(
-        target,
-        base_url=target.base_url.replace(previous_release, release_name),
-        # Gateways and services embed the release in a larger resource name.
-        # Matrix children must discover the release scoped by this submission,
-        # rather than the pre-scoped base resource.
-        resource_name=target.resource_name.replace(previous_release, release_name),
-        metrics_release_name=(
-            release_name
-            if target.metrics_release_name == previous_release
-            else target.metrics_release_name
-        ),
+    scoped_target = _scope_target_release(
+        plan,
+        previous_release=previous_release,
+        release_name=release_name,
     )
     labels = dict(plan.metadata.labels)
     labels[_MATRIX_RELEASE_SCOPE_LABEL] = scope
@@ -332,16 +352,10 @@ def scope_execution_release(
         max_length=max(1, _MATRIX_RELEASE_MAX_LENGTH - len(suffix)),
     )
     release_name = f"{prefix}{suffix}"
-    target = plan.deployment.target
-    scoped_target = replace(
-        target,
-        base_url=target.base_url.replace(previous_release, release_name),
-        resource_name=target.resource_name.replace(previous_release, release_name),
-        metrics_release_name=(
-            release_name
-            if target.metrics_release_name == previous_release
-            else target.metrics_release_name
-        ),
+    scoped_target = _scope_target_release(
+        plan,
+        previous_release=previous_release,
+        release_name=release_name,
     )
     labels[_EXECUTION_RELEASE_BASE_LABEL] = base_release
     labels[_EXECUTION_RELEASE_SCOPE_LABEL] = scope

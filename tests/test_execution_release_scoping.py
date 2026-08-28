@@ -195,6 +195,39 @@ class ExecutionReleaseScopingTest(unittest.TestCase):
             "infra-qwen36-35b-offloading-1cd6491028-inference-gateway",
         )
 
+    def test_execution_scoping_rebuilds_truncated_llmd_gateway_target(self) -> None:
+        release_name = "qwen36-35b-offloading-scalability-m1"
+        target = _target_for(
+            "llm-d",
+            "optimized-baseline",
+            release_name,
+            "benchflow",
+            "istio",
+            "/v1/models",
+            "v0.9.0",
+            "external",
+        )
+        base_plan = _smoke_plan()
+        plan = replace(
+            base_plan,
+            deployment=replace(
+                base_plan.deployment,
+                platform="llm-d",
+                release_name=release_name,
+                target=target,
+            ),
+        )
+
+        scoped = scope_execution_release(
+            plan,
+            execution_name="qwen36-35b-offloading-scalability-m1-a1b2c3",
+        )
+
+        self.assertEqual(
+            scoped.deployment.target.resource_name,
+            recipe_gateway_name(scoped.deployment.release_name),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
