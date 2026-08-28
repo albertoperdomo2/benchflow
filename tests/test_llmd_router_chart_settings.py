@@ -6,7 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from benchflow.cluster import CommandError
-from benchflow.deploy.llmd import _llmd_router_chart_settings
+from benchflow.deploy.llmd import (
+    _llmd_router_chart_settings,
+    _llmd_router_epp_selectors_for_release,
+)
 
 
 class LlmdRouterChartSettingsTest(unittest.TestCase):
@@ -99,6 +102,38 @@ export ROUTER_GATEWAY_CHART=oci://example.invalid/router-gateway
 
         with self.assertRaisesRegex(CommandError, "unsupported shell expressions"):
             _llmd_router_chart_settings(Path(checkout.name), gateway_mode="istio")
+
+    @patch("benchflow.deploy.llmd.run_json_command")
+    def test_epp_selector_uses_helm_deployment_selector(self, run_json_command) -> None:
+        run_json_command.return_value = {
+            "items": [
+                {
+                    "metadata": {
+                        "annotations": {
+                            "meta.helm.sh/release-name": "gaie-very-long-release-name",
+                            "meta.helm.sh/release-namespace": "benchflow",
+                        }
+                    },
+                    "spec": {
+                        "selector": {
+                            "matchLabels": {
+                                "llm-d-router-gateway": "gaie-very-long-release-na-epp"
+                            }
+                        }
+                    },
+                }
+            ]
+        }
+
+        selectors = _llmd_router_epp_selectors_for_release(
+            "benchflow", "very-long-release-name", "istio", "oc"
+        )
+
+        self.assertEqual(
+            selectors[0],
+            "llm-d-router-gateway=gaie-very-long-release-na-epp",
+        )
+        self.assertIn("llm-d-router-gateway=gaie-very-long-release-name-epp", selectors)
 
 
 if __name__ == "__main__":

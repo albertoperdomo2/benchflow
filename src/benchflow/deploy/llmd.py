@@ -259,6 +259,49 @@ def _llmd_router_epp_selectors(release_name: str, gateway_mode: str) -> list[str
     return selectors
 
 
+def _llmd_router_epp_selectors_for_release(
+    namespace: str, release_name: str, gateway_mode: str, kubectl_cmd: str
+) -> list[str]:
+    """Return the actual EPP pod selector for a Helm-installed router.
+
+    The router chart truncates generated resource names to satisfy Kubernetes'
+    63-character name limit.  The Helm release name itself is not truncated, so
+    find the owned Deployment by its Helm annotation and use its pod selector.
+    Keep the deterministic selector as a fallback for older chart layouts and
+    during the short interval before Helm has created the Deployment.
+    """
+    helm_release_name = _llmd_recipe_scheduler_release_name_for(release_name)
+    fallback = _llmd_router_epp_selectors(release_name, gateway_mode)
+    try:
+        payload = run_json_command(
+            [kubectl_cmd, "get", "deployments", "-n", namespace, "-o", "json"]
+        )
+    except CommandError:
+        return fallback
+
+    for deployment in payload.get("items", []):
+        metadata = deployment.get("metadata") or {}
+        annotations = metadata.get("annotations") or {}
+        if (
+            annotations.get("meta.helm.sh/release-name") != helm_release_name
+            or annotations.get("meta.helm.sh/release-namespace") != namespace
+        ):
+            continue
+        match_labels = (
+            deployment.get("spec", {}).get("selector", {}).get("matchLabels") or {}
+        )
+        if not isinstance(match_labels, dict) or not match_labels:
+            continue
+        selector_parts = [
+            f"{key}={value}"
+            for key, value in match_labels.items()
+            if isinstance(key, str) and isinstance(value, (str, int, float, bool))
+        ]
+        if selector_parts:
+            return [",".join(selector_parts), *fallback]
+    return fallback
+
+
 def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
     return f"gaie-{plan.deployment.release_name}-envoy"
 
@@ -2306,7 +2349,9 @@ def _verify_deployment(
 
     while time.time() < deadline:
         epp_selectors = (
-            _llmd_router_epp_selectors(release_name, gateway_mode)
+            _llmd_router_epp_selectors_for_release(
+                namespace, release_name, gateway_mode, kubectl_cmd
+            )
             if router_chart
             else [f"inferencepool=gaie-{release_name}-epp"]
         )
