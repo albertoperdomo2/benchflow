@@ -19,6 +19,9 @@ spec:
     - name: TEARDOWN
       type: string
       default: "false"
+    - name: WAIT_FOR_ARTIFACTS
+      type: string
+      default: "false"
   workspaces:
     - name: state-storage
       description: Workspace that may contain setup-state.json
@@ -26,21 +29,32 @@ spec:
     - name: target-kubeconfig
       description: Optional kubeconfig for remote target-cluster operations
       optional: true
+    - name: artifacts
+      description: Per-run artifact workspace used to coordinate final collection
+      optional: true
   steps:
     - name: cleanup
       image: $(params.IMAGE)
       imagePullPolicy: Always
       env:
+        - name: BENCHFLOW_RUN_PLAN_JSON
+          value: $(params.RUN_PLAN)
         - name: BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE
           value: $(workspaces.target-kubeconfig.path)
-      command:
-        - bflow
+      command: [sh, -ec]
       args:
-        - task
-        - cleanup-run-plan
-        - --run-plan-json
-        - $(params.RUN_PLAN)
-        - --setup-state-path
-        - $(workspaces.state-storage.path)/setup-state.json
-        - --teardown-text
-        - $(params.TEARDOWN)
+        - |
+          if [ "$(params.WAIT_FOR_ARTIFACTS)" = "true" ]; then
+            marker="$(workspaces.artifacts.path)/.benchflow-artifacts-ready"
+            deadline=$(( $(date +%s) + 900 ))
+            while [ ! -f "$marker" ] && [ "$(date +%s)" -lt "$deadline" ]; do
+              sleep 5
+            done
+            if [ ! -f "$marker" ]; then
+              echo "Artifact finalization did not signal completion within 900 seconds; cleaning up" >&2
+            fi
+          fi
+          exec bflow task cleanup-run-plan \
+            --run-plan-json "$BENCHFLOW_RUN_PLAN_JSON" \
+            --setup-state-path '$(workspaces.state-storage.path)/setup-state.json' \
+            --teardown-text '$(params.TEARDOWN)'

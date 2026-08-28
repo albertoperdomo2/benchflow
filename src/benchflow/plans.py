@@ -271,11 +271,10 @@ def scope_matrix_child_release(
     scoped_target = replace(
         target,
         base_url=target.base_url.replace(previous_release, release_name),
-        resource_name=(
-            release_name
-            if target.resource_name == previous_release
-            else target.resource_name
-        ),
+        # Gateways and services embed the release in a larger resource name.
+        # Matrix children must discover the release scoped by this submission,
+        # rather than the pre-scoped base resource.
+        resource_name=target.resource_name.replace(previous_release, release_name),
         metrics_release_name=(
             release_name
             if target.metrics_release_name == previous_release
@@ -334,11 +333,7 @@ def scope_execution_release(
     scoped_target = replace(
         target,
         base_url=target.base_url.replace(previous_release, release_name),
-        resource_name=(
-            release_name
-            if target.resource_name == previous_release
-            else target.resource_name
-        ),
+        resource_name=target.resource_name.replace(previous_release, release_name),
         metrics_release_name=(
             release_name
             if target.metrics_release_name == previous_release

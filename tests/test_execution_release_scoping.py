@@ -146,6 +146,30 @@ class ExecutionReleaseScopingTest(unittest.TestCase):
         )
         self.assertLessEqual(len(scoped.deployment.release_name), 42)
 
+    def test_scoping_updates_release_embedded_target_resource_name(self) -> None:
+        plan = _smoke_plan()
+        target = replace(
+            plan.deployment.target,
+            resource_name=(
+                f"infra-{plan.deployment.release_name}-inference-gateway"
+            ),
+        )
+        plan = replace(plan, deployment=replace(plan.deployment, target=target))
+
+        matrix_plan = scope_matrix_child_release(
+            plan,
+            matrix_execution_name="qwen3-06b-matrix-a1b2c3",
+        )
+        scoped = scope_execution_release(
+            matrix_plan,
+            execution_name="qwen3-06b-child-d4e5f6",
+        )
+
+        self.assertEqual(
+            scoped.deployment.target.resource_name,
+            f"infra-{scoped.deployment.release_name}-inference-gateway",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

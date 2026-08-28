@@ -42,6 +42,8 @@ spec:
       image: $(params.IMAGE)
       imagePullPolicy: Always
       env:
+        - name: BENCHFLOW_RUN_PLAN_JSON
+          value: $(params.RUN_PLAN)
         - name: BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE
           value: $(workspaces.target-kubeconfig.path)
         - name: MLFLOW_TRACKING_URI
@@ -88,23 +90,17 @@ spec:
               optional: true
         - name: MLFLOW_TRACKING_INSECURE_TLS
           value: "true"
-      command:
-        - bflow
+      command: [sh, -ec]
       args:
-        - mlflow
-        - finalize
-        - --run-plan-json
-        - $(params.RUN_PLAN)
-        - --mlflow-run-id
-        - $(params.MLFLOW_RUN_ID)
-        - --artifacts-dir
-        - $(workspaces.artifacts.path)
-        - --execution-name
-        - $(params.PIPELINE_RUN_NAME)
-        - --run-start-time
-        - $(params.RUN_START_TIME)
-        - --status
-        - $(params.STATUS)
-        - --reason
-        - $(params.REASON)
-        - --collect-artifacts
+        - |
+          marker="$(workspaces.artifacts.path)/.benchflow-artifacts-ready"
+          trap 'status=$?; touch "$marker"; exit "$status"' EXIT
+          bflow mlflow finalize \
+            --run-plan-json "$BENCHFLOW_RUN_PLAN_JSON" \
+            --mlflow-run-id '$(params.MLFLOW_RUN_ID)' \
+            --artifacts-dir '$(workspaces.artifacts.path)' \
+            --execution-name '$(params.PIPELINE_RUN_NAME)' \
+            --run-start-time '$(params.RUN_START_TIME)' \
+            --status '$(params.STATUS)' \
+            --reason '$(params.REASON)' \
+            --collect-artifacts

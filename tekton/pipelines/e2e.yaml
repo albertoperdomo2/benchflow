@@ -334,9 +334,8 @@ spec:
         - name: target-kubeconfig
           workspace: target-kubeconfig
     - name: cleanup
-      # Finalization collects failed deployment pod state and logs. It must
-      # complete before cleanup deletes those workload pods.
-      runAfter: [finalize-mlflow-run]
+      # Tekton finally tasks run concurrently. The cleanup task waits for the
+      # upload/finalizer marker before deleting target workload pods.
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-cleanup)"
           operator: in
@@ -350,12 +349,17 @@ spec:
           value: $(params.RUN_PLAN)
         - name: TEARDOWN
           value: $(params.TEARDOWN)
+        - name: WAIT_FOR_ARTIFACTS
+          value: "$(tasks.resolve-run-plan.results.stage-collect)"
       workspaces:
         - name: state-storage
           workspace: results
           subPath: $(context.pipelineRun.name)/platform-state
         - name: target-kubeconfig
           workspace: target-kubeconfig
+        - name: artifacts
+          workspace: results
+          subPath: $(context.pipelineRun.name)
     - name: assert-benchmark-status
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-benchmark)"
