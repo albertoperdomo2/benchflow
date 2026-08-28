@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from ..benchmark import (
     benchmark_version_from_plan,
 )
 from ..cluster import (
+    CommandError,
     TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION,
     get_current_namespace,
     require_any_command,
@@ -610,18 +612,34 @@ def cmd_wait_endpoint(args: argparse.Namespace) -> int:
 
     target_url = args.target_url
     endpoint_path = args.endpoint_path
+    deadline = time.monotonic() + args.timeout_seconds
     if not target_url:
         if plan is None:
             plan = load_runtime_plan(args)
-        target_url, endpoint_path = resolve_target_url(
-            plan,
-            target_url=args.target_url,
-            endpoint_path=args.endpoint_path,
-        )
+        last_error = ""
+        while True:
+            try:
+                target_url, endpoint_path = resolve_target_url(
+                    plan,
+                    target_url=args.target_url,
+                    endpoint_path=args.endpoint_path,
+                )
+                break
+            except CommandError as exc:
+                if time.monotonic() >= deadline:
+                    raise CommandError(
+                        "timed out resolving the deployment endpoint before probing it"
+                    ) from exc
+                message = str(exc)
+                if message != last_error:
+                    detail(f"Endpoint target is not available yet: {message}")
+                    last_error = message
+                time.sleep(args.retry_interval)
+    remaining_timeout_seconds = max(1, int(deadline - time.monotonic()))
     wait_for_endpoint(
         target_url=target_url,
         endpoint_path=endpoint_path or "/v1/models",
-        timeout_seconds=args.timeout_seconds,
+        timeout_seconds=remaining_timeout_seconds,
         retry_interval_seconds=args.retry_interval,
         verify_tls=args.verify_tls,
     )
