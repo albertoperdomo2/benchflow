@@ -141,7 +141,23 @@ export ROUTER_GATEWAY_CHART=oci://example.invalid/router-gateway
 
     def test_gateway_resources_are_release_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            gateway_dir = Path(directory)
+            gateway_dir = Path(directory) / "istio"
+            gateway_dir.mkdir()
+            base_dir = gateway_dir.parent / "base"
+            base_dir.mkdir()
+            (base_dir / "gateway.yaml").write_text(
+                """apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: llm-d-inference-gateway
+spec:
+  listeners:
+    - name: default
+      port: 80
+      protocol: HTTP
+""",
+                encoding="utf-8",
+            )
             (gateway_dir / "gateway.yaml").write_text(
                 """apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -159,6 +175,19 @@ spec:
 kind: ConfigMap
 metadata:
   name: llm-d-inference-gateway
+""",
+                encoding="utf-8",
+            )
+            (gateway_dir / "kustomization.yaml").write_text(
+                """apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - configmap.yaml
+patches:
+  - path: gateway.yaml
+    target:
+      kind: Gateway
 """,
                 encoding="utf-8",
             )
@@ -188,6 +217,15 @@ metadata:
                 gateway["spec"]["infrastructure"]["labels"]["benchflow.io/release"],
                 "qwen36-35b-offloading-abc123",
             )
+            self.assertEqual(
+                configmap["metadata"]["labels"]["app.kubernetes.io/gateway"],
+                name,
+            )
+            kustomization = yaml.safe_load(
+                (gateway_dir / "kustomization.yaml").read_text()
+            )
+            self.assertEqual(kustomization["resources"], ["gateway.yaml", "configmap.yaml"])
+            self.assertNotIn("patches", kustomization)
 
     def test_router_uses_v010_httproute_values(self) -> None:
         override = _llmd_router_httproute_gateway_override(

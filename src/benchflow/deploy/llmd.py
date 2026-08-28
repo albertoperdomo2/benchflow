@@ -1721,6 +1721,23 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
     }
     gateway_path = gateway_dir / "gateway.yaml"
     configmap_path = gateway_dir / "configmap.yaml"
+    # In the upstream recipe gateway.yaml is a strategic-merge patch over
+    # ../base/gateway.yaml. A patch cannot rename its target: Kustomize keeps
+    # the base object's llm-d-inference-gateway name. Materialize the base
+    # Gateway as a release-owned resource instead, so concurrent deployments
+    # each create their own Gateway and generated Istio infrastructure.
+    base_gateway_path = gateway_dir.parent / "base" / "gateway.yaml"
+    if not base_gateway_path.is_file():
+        raise CommandError(
+            f"expected llm-d base gateway manifest not found: {base_gateway_path}"
+        )
+    gateway = yaml.safe_load(base_gateway_path.read_text(encoding="utf-8"))
+    if not isinstance(gateway, dict) or gateway.get("kind") != "Gateway":
+        raise CommandError(
+            f"expected llm-d Gateway manifest not found: {base_gateway_path}"
+        )
+    gateway_path.write_text(yaml.safe_dump(gateway, sort_keys=False), encoding="utf-8")
+
     for path in (gateway_path, configmap_path):
         manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(manifest, dict):
@@ -1734,6 +1751,10 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
             manifest_labels = {}
             metadata["labels"] = manifest_labels
         manifest_labels.update(release_labels)
+        if kind == "ConfigMap":
+            # Keep Istio's infrastructure ConfigMap associated with the
+            # release-owned Gateway as well as referencing it directly below.
+            manifest_labels["app.kubernetes.io/gateway"] = gateway_name
         if kind == "Gateway":
             infrastructure = manifest.setdefault("spec", {}).setdefault(
                 "infrastructure", {}
@@ -1749,6 +1770,20 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
             # so deployment cleanup is release-scoped too.
             infrastructure_labels.update(release_labels)
         path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    kustomization_path = gateway_dir / "kustomization.yaml"
+    kustomization = yaml.safe_load(kustomization_path.read_text(encoding="utf-8"))
+    if not isinstance(kustomization, dict):
+        raise CommandError(
+            f"expected llm-d gateway kustomization not found: {kustomization_path}"
+        )
+    # Replace the upstream base-plus-patch composition with the fully rendered
+    # release Gateway. Retain only the resources BenchFlow needs to apply.
+    kustomization["resources"] = ["gateway.yaml", "configmap.yaml"]
+    kustomization.pop("patches", None)
+    kustomization_path.write_text(
+        yaml.safe_dump(kustomization, sort_keys=False), encoding="utf-8"
+    )
 
 
 def _runtime_vllm_arg_value(plan: ResolvedRunPlan, flag: str) -> str:
