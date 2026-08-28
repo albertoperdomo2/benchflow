@@ -5,7 +5,10 @@ from dataclasses import replace
 import hashlib
 
 from .loaders import ProfileCatalog
-from .llmd_layout import uses_recipe_layout as _llmd_uses_recipe_layout
+from .llmd_layout import (
+    recipe_gateway_name as _llmd_recipe_gateway_name,
+    uses_recipe_layout as _llmd_uses_recipe_layout,
+)
 from .models import (
     Experiment,
     MlflowSpec,
@@ -400,7 +403,7 @@ def _target_for(
                     f"http://ms-{release_name}.{namespace}.svc.cluster.local:8000"
                 )
         else:
-            gateway_name = f"infra-{release_name}-inference-gateway"
+            gateway_name = _llmd_recipe_gateway_name(release_name)
             return TargetSpec(
                 discovery="gateway-status-url",
                 resource_kind="Gateway",

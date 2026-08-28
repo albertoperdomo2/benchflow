@@ -6,11 +6,16 @@ from dataclasses import replace
 from pathlib import Path
 
 from benchflow.loaders import ProfileCatalog, load_experiment
+from benchflow.llmd_layout import recipe_gateway_name
 from benchflow.matrix import resolve_experiment_matrix
 from benchflow.models import RuntimePVCMountSpec
 from benchflow.orchestration.service import _materialize_execution_name
 from benchflow.orchestration.tekton import render_pipelinerun
-from benchflow.plans import scope_execution_release, scope_matrix_child_release
+from benchflow.plans import (
+    _target_for,
+    scope_execution_release,
+    scope_matrix_child_release,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -168,6 +173,26 @@ class ExecutionReleaseScopingTest(unittest.TestCase):
         self.assertEqual(
             scoped.deployment.target.resource_name,
             f"infra-{scoped.deployment.release_name}-inference-gateway",
+        )
+
+    def test_llmd_gateway_target_uses_recipe_name_for_long_releases(self) -> None:
+        release_name = "qwen36-35b-offloading-scalability-1cd6491028"
+
+        target = _target_for(
+            "llm-d",
+            "optimized-baseline",
+            release_name,
+            "benchflow",
+            "istio",
+            "/v1/models",
+            "v0.9.0",
+            "external",
+        )
+
+        self.assertEqual(target.resource_name, recipe_gateway_name(release_name))
+        self.assertEqual(
+            target.resource_name,
+            "infra-qwen36-35b-offloading-1cd6491028-inference-gateway",
         )
 
 

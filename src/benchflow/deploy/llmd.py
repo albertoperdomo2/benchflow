@@ -21,6 +21,7 @@ from ..cluster import (
     run_command,
     run_json_command,
 )
+from ..llmd_layout import recipe_gateway_name as _llmd_recipe_gateway_name
 from ..models import ResolvedRunPlan, model_storage_relative_path, sanitize_name
 from ..renderers.deployment import render_runtime_pvc_manifests
 from ..platform_state import (
@@ -300,20 +301,6 @@ def _llmd_router_epp_selectors_for_release(
         if selector_parts:
             return [",".join(selector_parts), *fallback]
     return fallback
-
-
-def _llmd_recipe_gateway_name(release_name: str) -> str:
-    """Return the Gateway name owned by one llm-d recipe deployment."""
-    # The controller appends ``-istio`` for generated infrastructure. Keep the
-    # Gateway name at 57 characters so the generated Deployment/Service remain
-    # valid Kubernetes names too. Retain the release's random suffix to avoid
-    # collisions between matrix children.
-    max_release_length = 33
-    if len(release_name) > max_release_length:
-        suffix = release_name[-10:]
-        prefix_length = max_release_length - len(suffix) - 1
-        release_name = f"{release_name[:prefix_length].rstrip('-')}-{suffix}"
-    return f"infra-{release_name}-inference-gateway"
 
 
 def _llmd_router_httproute_gateway_override(release_name: str) -> str:
