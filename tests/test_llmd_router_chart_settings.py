@@ -164,9 +164,12 @@ kind: Gateway
 metadata:
   name: llm-d-inference-gateway
 spec:
+  gatewayClassName: istio
   infrastructure:
     parametersRef:
       name: llm-d-inference-gateway
+      group: ''
+      kind: ConfigMap
 """,
                 encoding="utf-8",
             )
@@ -209,9 +212,15 @@ patches:
             configmap = yaml.safe_load((gateway_dir / "configmap.yaml").read_text())
             name = "infra-qwen36-35b-offloading-abc123-inference-gateway"
             self.assertEqual(gateway["metadata"]["name"], name)
+            self.assertEqual(gateway["spec"]["gatewayClassName"], "istio")
+            self.assertEqual(gateway["spec"]["listeners"][0]["name"], "default")
             self.assertEqual(configmap["metadata"]["name"], name)
             self.assertEqual(
                 gateway["spec"]["infrastructure"]["parametersRef"]["name"], name
+            )
+            self.assertEqual(
+                gateway["spec"]["infrastructure"]["parametersRef"]["kind"],
+                "ConfigMap",
             )
             self.assertEqual(
                 gateway["spec"]["infrastructure"]["labels"]["benchflow.io/release"],

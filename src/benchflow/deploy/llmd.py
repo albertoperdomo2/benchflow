@@ -1726,16 +1726,23 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
     # the base object's llm-d-inference-gateway name. Materialize the base
     # Gateway as a release-owned resource instead, so concurrent deployments
     # each create their own Gateway and generated Istio infrastructure.
+    gateway_patch = yaml.safe_load(gateway_path.read_text(encoding="utf-8"))
+    if not isinstance(gateway_patch, dict) or gateway_patch.get("kind") != "Gateway":
+        raise CommandError(
+            f"expected llm-d Gateway patch not found: {gateway_path}"
+        )
+
     base_gateway_path = gateway_dir.parent / "base" / "gateway.yaml"
     if not base_gateway_path.is_file():
         raise CommandError(
             f"expected llm-d base gateway manifest not found: {base_gateway_path}"
         )
-    gateway = yaml.safe_load(base_gateway_path.read_text(encoding="utf-8"))
-    if not isinstance(gateway, dict) or gateway.get("kind") != "Gateway":
+    base_gateway = yaml.safe_load(base_gateway_path.read_text(encoding="utf-8"))
+    if not isinstance(base_gateway, dict) or base_gateway.get("kind") != "Gateway":
         raise CommandError(
             f"expected llm-d Gateway manifest not found: {base_gateway_path}"
         )
+    gateway = _merge_recipe_gateway_manifest(base_gateway, gateway_patch)
     gateway_path.write_text(yaml.safe_dump(gateway, sort_keys=False), encoding="utf-8")
 
     for path in (gateway_path, configmap_path):
@@ -1784,6 +1791,20 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
     kustomization_path.write_text(
         yaml.safe_dump(kustomization, sort_keys=False), encoding="utf-8"
     )
+
+
+def _merge_recipe_gateway_manifest(
+    base: dict[str, Any], overlay: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge the recipe's Gateway patch into its base Gateway resource."""
+    merged = dict(base)
+    for key, value in overlay.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(value, dict):
+            merged[key] = _merge_recipe_gateway_manifest(base_value, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _runtime_vllm_arg_value(plan: ResolvedRunPlan, flag: str) -> str:
