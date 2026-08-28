@@ -137,9 +137,16 @@ class MatrixPayloadConfigMapTest(unittest.TestCase):
         task_path = REPO_ROOT / "tekton/tasks/common/run-experiment-matrix.yaml"
         task = yaml.safe_load(task_path.read_text())
         script = task["spec"]["steps"][0]["args"][1]
+        env = {entry["name"]: entry for entry in task["spec"]["steps"][0]["env"]}
 
         self.assertIn("bflow task materialize-matrix-run-plans", script)
+        self.assertIn('--namespace "${BENCHFLOW_NAMESPACE}"', script)
+        self.assertNotIn("context.pipelineRun.namespace", script)
         self.assertNotIn("jsonpath='{.data.run-plans", script)
+        self.assertEqual(
+            env["BENCHFLOW_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"],
+            "metadata.namespace",
+        )
 
     def test_kueue_workload_receives_only_materialized_metadata(self) -> None:
         manifest = {
