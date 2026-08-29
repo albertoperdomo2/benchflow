@@ -34,6 +34,7 @@ from .models import (
 
 _MATRIX_CHILD_INDEX_LABEL = "benchflow.io/matrix-child-index"
 _MATRIX_RELEASE_SCOPE_LABEL = "benchflow.io/matrix-release-scope"
+_MATRIX_RELEASE_BASE_LABEL = "benchflow.io/matrix-release-base"
 _EXECUTION_RELEASE_BASE_LABEL = "benchflow.io/execution-release-base"
 _EXECUTION_RELEASE_SCOPE_LABEL = "benchflow.io/execution-release-scope"
 _MATRIX_RELEASE_MAX_LENGTH = 42
@@ -272,6 +273,56 @@ def _scope_target_release(
     )
 
 
+def reset_matrix_child_release_for_rerun(plan: ResolvedRunPlan) -> ResolvedRunPlan:
+    """Restore a recorded matrix child to its pre-matrix release for rerunning."""
+    labels = dict(plan.metadata.labels)
+    matrix_scope = str(labels.get(_MATRIX_RELEASE_SCOPE_LABEL) or "").strip()
+    if not matrix_scope:
+        raise ValidationError(
+            "recorded matrix child RunPlan is missing its matrix release scope"
+        )
+
+    base_release = str(labels.get(_MATRIX_RELEASE_BASE_LABEL) or "").strip()
+    child_index = str(labels.get(_MATRIX_CHILD_INDEX_LABEL) or "").strip()
+    if not base_release and child_index:
+        suffix = f"m{child_index}"
+        prefix = sanitize_name(
+            plan.metadata.name,
+            max_length=max(1, 42 - len(suffix) - 1),
+        )
+        base_release = f"{prefix}-{suffix}"
+    if not base_release:
+        execution_base = str(
+            labels.get(_EXECUTION_RELEASE_BASE_LABEL) or ""
+        ).strip()
+        matrix_suffix = f"-{matrix_scope}"
+        if execution_base.endswith(matrix_suffix):
+            base_release = execution_base[: -len(matrix_suffix)]
+    if not base_release:
+        raise ValidationError(
+            "recorded matrix child RunPlan is missing its original release identity"
+        )
+
+    target = _scope_target_release(
+        plan,
+        previous_release=plan.deployment.release_name,
+        release_name=base_release,
+    )
+    labels.pop(_MATRIX_RELEASE_SCOPE_LABEL, None)
+    labels.pop(_MATRIX_RELEASE_BASE_LABEL, None)
+    labels.pop(_EXECUTION_RELEASE_BASE_LABEL, None)
+    labels.pop(_EXECUTION_RELEASE_SCOPE_LABEL, None)
+    return replace(
+        plan,
+        metadata=replace(plan.metadata, labels=labels),
+        deployment=replace(
+            plan.deployment,
+            release_name=base_release,
+            target=target,
+        ),
+    )
+
+
 def scope_matrix_child_release(
     plan: ResolvedRunPlan,
     *,
@@ -305,6 +356,7 @@ def scope_matrix_child_release(
         release_name=release_name,
     )
     labels = dict(plan.metadata.labels)
+    labels[_MATRIX_RELEASE_BASE_LABEL] = previous_release
     labels[_MATRIX_RELEASE_SCOPE_LABEL] = scope
     return replace(
         plan,

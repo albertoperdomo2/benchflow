@@ -13,6 +13,7 @@ from benchflow.orchestration.service import _materialize_execution_name
 from benchflow.orchestration.tekton import render_pipelinerun
 from benchflow.plans import (
     _target_for,
+    reset_matrix_child_release_for_rerun,
     scope_execution_release,
     scope_matrix_child_release,
 )
@@ -226,6 +227,57 @@ class ExecutionReleaseScopingTest(unittest.TestCase):
         self.assertEqual(
             scoped.deployment.target.resource_name,
             recipe_gateway_name(scoped.deployment.release_name),
+        )
+
+    def test_matrix_rerun_resets_scoped_llmd_release(self) -> None:
+        release_name = "qwen36-35b-offloading-scalability-m1"
+        target = _target_for(
+            "llm-d",
+            "optimized-baseline",
+            release_name,
+            "benchflow",
+            "istio",
+            "/v1/models",
+            "v0.9.0",
+            "external",
+        )
+        base_plan = _smoke_plan()
+        plan = replace(
+            base_plan,
+            deployment=replace(
+                base_plan.deployment,
+                platform="llm-d",
+                release_name=release_name,
+                target=target,
+            ),
+        )
+        original_matrix_plan = scope_matrix_child_release(
+            plan,
+            matrix_execution_name="qwen36-35b-matrix-original-a1b2c3",
+        )
+        recorded_child = scope_execution_release(
+            original_matrix_plan,
+            execution_name="qwen36-35b-child-original-d4e5f6",
+        )
+
+        reset_plan = reset_matrix_child_release_for_rerun(recorded_child)
+        rerun_plan = scope_matrix_child_release(
+            reset_plan,
+            matrix_execution_name="qwen36-35b-matrix-rerun-0f1e2d",
+        )
+
+        self.assertEqual(reset_plan.deployment.release_name, release_name)
+        self.assertEqual(
+            reset_plan.deployment.target.resource_name,
+            recipe_gateway_name(release_name),
+        )
+        self.assertNotEqual(
+            rerun_plan.deployment.release_name,
+            original_matrix_plan.deployment.release_name,
+        )
+        self.assertEqual(
+            rerun_plan.deployment.target.resource_name,
+            recipe_gateway_name(rerun_plan.deployment.release_name),
         )
 
 

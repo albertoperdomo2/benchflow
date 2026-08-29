@@ -26,6 +26,7 @@ from ..orchestration import (
     summarize_execution,
     get_execution,
 )
+from ..plans import reset_matrix_child_release_for_rerun
 from ..renderers.deployment import write_deployment_assets
 from ..rhoai_gateway import (
     load_rhoai_gateway_configuration,
@@ -321,7 +322,10 @@ def _rerun_execution(args: argparse.Namespace) -> int:
     child_pipeline_name = (
         _pipeline_param_value(payload, "CHILD_PIPELINE_NAME") or "benchflow-e2e"
     )
-    plans = [plan for _, plan in matching_children]
+    plans = [
+        reset_matrix_child_release_for_rerun(plan)
+        for _, plan in matching_children
+    ]
     for plan in plans:
         _apply_rerun_target_cluster(plan, target_kubeconfig_secret)
     if len(plans) == 1:
