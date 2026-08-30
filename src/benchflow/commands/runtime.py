@@ -1131,6 +1131,7 @@ def cmd_task_run_experiment_matrix(args: argparse.Namespace) -> int:
         child_execution_name=args.child_pipeline_name,
         parent_execution_name=args.parent_execution_name or "",
         benchflow_image=os.environ.get("BENCHFLOW_IMAGE"),
+        target_kubeconfig=str(args.target_kubeconfig or ""),
     )
     print("completed")
     return 0
@@ -2480,6 +2481,12 @@ def task_materialize_matrix_run_plans_command(**kwargs: object) -> int:
     "--parent-execution-name",
     default="",
     help="Owning matrix execution name used to label child executions.",
+)
+@click.option(
+    "--target-kubeconfig",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Target-cluster kubeconfig used only for target-side matrix operations.",
 )
 def task_run_experiment_matrix_command(**kwargs: object) -> int:
     return invoke_handler(cmd_task_run_experiment_matrix, **kwargs)

@@ -7,7 +7,13 @@ import hashlib
 import json
 import time
 
-from .cluster import CommandError, require_any_command, run_command, run_json_command
+from .cluster import (
+    CommandError,
+    require_any_command,
+    run_command,
+    run_json_command,
+    use_kubeconfig,
+)
 from .models import ResolvedRunPlan
 from .ui import detail, step
 
@@ -43,7 +49,17 @@ def release_nodes(plan: ResolvedRunPlan) -> None:
     )
 
 
-def allocate_nodes(plan: ResolvedRunPlan, timeout_seconds: int) -> ResolvedRunPlan:
+def allocate_nodes(
+    plan: ResolvedRunPlan,
+    timeout_seconds: int,
+    *,
+    kubeconfig: str = "",
+) -> ResolvedRunPlan:
+    with use_kubeconfig(kubeconfig):
+        return _allocate_nodes(plan, timeout_seconds)
+
+
+def _allocate_nodes(plan: ResolvedRunPlan, timeout_seconds: int) -> ResolvedRunPlan:
     if plan.deployment.runtime.placement.mode != "node-exclusive":
         return plan
     kubectl = require_any_command("oc", "kubectl")

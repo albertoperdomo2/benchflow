@@ -141,6 +141,8 @@ class MatrixPayloadConfigMapTest(unittest.TestCase):
 
         self.assertIn("bflow task materialize-matrix-run-plans", script)
         self.assertIn('--namespace "${BENCHFLOW_NAMESPACE}"', script)
+        self.assertIn('--target-kubeconfig "${target_kubeconfig}"', script)
+        self.assertNotIn("export KUBECONFIG", script)
         self.assertNotIn("context.pipelineRun.namespace", script)
         self.assertNotIn("jsonpath='{.data.run-plans", script)
         self.assertEqual(

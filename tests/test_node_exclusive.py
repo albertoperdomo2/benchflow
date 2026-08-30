@@ -54,7 +54,10 @@ class NodeExclusiveTest(unittest.TestCase):
     @patch("benchflow.node_exclusive.run_command")
     @patch("benchflow.node_exclusive.run_json_command", return_value=_nodes())
     @patch("benchflow.node_exclusive.require_any_command", return_value="oc")
-    def test_allocate_injects_hostname_affinity(self, _, __, run_command) -> None:
+    @patch("benchflow.node_exclusive.use_kubeconfig")
+    def test_allocate_injects_hostname_affinity(
+        self, use_kubeconfig, _, __, run_command
+    ) -> None:
         plan = _plan()
         runtime = replace(
             plan.deployment.runtime,
@@ -65,11 +68,16 @@ class NodeExclusiveTest(unittest.TestCase):
         plan = replace(plan, deployment=replace(plan.deployment, runtime=runtime))
         run_command.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        allocated = allocate_nodes(plan, timeout_seconds=1)
+        allocated = allocate_nodes(
+            plan,
+            timeout_seconds=1,
+            kubeconfig="/workspace/target-kubeconfig/config",
+        )
 
         terms = allocated.deployment.runtime.affinity["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
         self.assertEqual(terms[-1]["matchExpressions"][0]["values"], ["gpu-a"])
         self.assertEqual(run_command.call_count, 1)
+        use_kubeconfig.assert_called_once_with("/workspace/target-kubeconfig/config")
 
     @patch("benchflow.node_exclusive.run_command")
     @patch("benchflow.node_exclusive.run_json_command", return_value=_dra_nodes())

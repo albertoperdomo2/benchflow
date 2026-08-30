@@ -48,9 +48,9 @@ spec:
 
           target_kubeconfig="$(find "${BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE}" -type f | head -n 1)"
           test -n "${target_kubeconfig}"
-          export KUBECONFIG="${target_kubeconfig}"
 
           exec bflow task run-experiment-matrix \
             --run-plans-file "${run_plans_path}" \
             --child-pipeline-name "$(params.CHILD_PIPELINE_NAME)" \
-            --parent-execution-name "$(params.PARENT_EXECUTION_NAME)"
+            --parent-execution-name "$(params.PARENT_EXECUTION_NAME)" \
+            --target-kubeconfig "${target_kubeconfig}"
