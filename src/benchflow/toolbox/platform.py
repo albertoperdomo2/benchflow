@@ -8,7 +8,7 @@ from ..cleanup import cleanup_llmd, cleanup_rhaiis, cleanup_rhoai
 from ..cluster import require_any_command, resolve_target_base_url, use_kubeconfig
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
 from ..deploy import deploy_llmd, deploy_rhaiis, deploy_rhoai
-from ..node_exclusive import allocate_nodes, release_nodes
+from ..node_exclusive import release_nodes
 from ..platform_state import (
     clear_cluster_platform_state,
     load_cluster_platform_state,
@@ -307,7 +307,6 @@ def deploy_platform(
     execution_name = context.execution_name if context is not None else ""
 
     with use_kubeconfig(plan.target_cluster.kubeconfig):
-        plan = allocate_nodes(plan, verify_timeout_seconds)
         if plan.deployment.platform == "llm-d":
             return deploy_llmd(
                 plan,

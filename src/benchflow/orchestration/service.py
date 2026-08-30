@@ -26,6 +26,7 @@ from ..kueue import (
 )
 from ..loaders import load_run_plan_data, load_run_plan_file
 from ..models import sanitize_name
+from ..node_exclusive import allocate_nodes
 from ..plans import scope_execution_release, scope_matrix_child_release
 from ..platform_state import setup_key_for_plan
 from .matrix_payloads import (
@@ -521,6 +522,9 @@ def run_matrix_supervisor(
 
     try:
         for index, plan in enumerate(plans, start=1):
+            # Acquire target nodes before submitting this child. This is the
+            # matrix admission gate for node-exclusive placement.
+            plan = allocate_nodes(plan, timeout_seconds=1800)
             descriptor = (
                 f"deployment={plan.profiles.deployment}, "
                 f"benchmark={plan.profiles.benchmark}, "

@@ -40,6 +40,9 @@ spec:
       args:
         - -ceu
         - |
+          target_kubeconfig="$(find "${BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE}" -type f | head -n 1)"
+          test -n "${target_kubeconfig}"
+          export KUBECONFIG="${target_kubeconfig}"
           run_plans_path="/tmp/run-plans.json"
           bflow task materialize-matrix-run-plans \
             --configmap-name "$(params.RUN_PLANS_CONFIGMAP)" \
