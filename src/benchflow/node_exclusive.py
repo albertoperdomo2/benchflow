@@ -38,6 +38,7 @@ def release_nodes(plan: ResolvedRunPlan) -> None:
             f"{_LABEL}={plan.deployment.release_name}",
             "--ignore-not-found=true",
         ],
+        capture_output=True,
         check=False,
     )
 
@@ -78,6 +79,13 @@ def allocate_nodes(plan: ResolvedRunPlan, timeout_seconds: int) -> ResolvedRunPl
                 )
             except (TypeError, ValueError):
                 gpus = 0
+            if not gpus:
+                # NVIDIA DRA clusters advertise physical GPU count through GFD
+                # labels while the legacy extended resource remains zero.
+                try:
+                    gpus = int(labels.get("nvidia.com/gpu.count", 0))
+                except (TypeError, ValueError):
+                    gpus = 0
             if not gpus:
                 continue
             doc = {

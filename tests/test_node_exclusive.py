@@ -38,6 +38,14 @@ def _nodes():
     }
 
 
+def _dra_nodes():
+    payload = _nodes()
+    payload["items"][0]["metadata"]["labels"]["nvidia.com/gpu.count"] = "8"
+    payload["items"][0]["status"]["allocatable"]["nvidia.com/gpu"] = "0"
+    payload["items"] = payload["items"][:1]
+    return payload
+
+
 class NodeExclusiveTest(unittest.TestCase):
     def test_loader_requires_pool(self) -> None:
         with self.assertRaisesRegex(ValidationError, "spread_pool"):
@@ -62,6 +70,25 @@ class NodeExclusiveTest(unittest.TestCase):
         terms = allocated.deployment.runtime.affinity["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
         self.assertEqual(terms[-1]["matchExpressions"][0]["values"], ["gpu-a"])
         self.assertEqual(run_command.call_count, 1)
+
+    @patch("benchflow.node_exclusive.run_command")
+    @patch("benchflow.node_exclusive.run_json_command", return_value=_dra_nodes())
+    @patch("benchflow.node_exclusive.require_any_command", return_value="oc")
+    def test_allocate_uses_dra_gpu_count_label(self, _, __, run_command) -> None:
+        plan = _plan()
+        runtime = replace(
+            plan.deployment.runtime,
+            placement=RuntimePlacementSpec(mode="node-exclusive", spread_pool="h100"),
+            replicas=4,
+            tensor_parallelism=2,
+        )
+        plan = replace(plan, deployment=replace(plan.deployment, runtime=runtime))
+        run_command.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        allocated = allocate_nodes(plan, timeout_seconds=1)
+
+        values = allocated.deployment.runtime.affinity["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"][-1]["matchExpressions"][0]["values"]
+        self.assertEqual(values, ["gpu-a"])
 
     @patch("benchflow.node_exclusive.run_command")
     @patch("benchflow.node_exclusive.require_any_command", return_value="oc")
