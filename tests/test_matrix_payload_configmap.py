@@ -167,7 +167,7 @@ class MatrixPayloadConfigMapTest(unittest.TestCase):
             plan,
             target_cluster=replace(
                 plan.target_cluster,
-                kubeconfig_secret="psap-h100-diadochos",
+                kubeconfig_secret="psap-h100-diadochos",  # notsecret
             ),
         )
 
