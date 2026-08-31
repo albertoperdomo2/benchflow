@@ -48,7 +48,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
     outputs:
       should_build: ${{ steps.resolve.outputs.should_build }}
       checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
@@ -101,12 +101,14 @@ jobs:
               PR_STATE="$(jq -r '.state' <<< "${PR_JSON}")"
 
               if [[ "${PR_STATE}" == "open" ]]; then
-                gh api \
+                if ! gh api \
                   --method POST \
                   -H "Accept: application/vnd.github+json" \
                   "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
                   -f content='+1' \
-                  >/dev/null
+                  >/dev/null; then
+                  echo "::warning::Could not acknowledge /build comment ${COMMENT_ID}"
+                fi
                 SHOULD_BUILD=true
                 CHECKOUT_REPOSITORY="$(jq -r '.head.repo.full_name' <<< "${PR_JSON}")"
                 CHECKOUT_REF="$(jq -r '.head.sha' <<< "${PR_JSON}")"
@@ -177,6 +179,7 @@ jobs:
       contents: read
       issues: write
       packages: write
+      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
