@@ -103,7 +103,7 @@ jobs:
                 CHECKOUT_REF="$(jq -r '.head.sha' <<< "${PR_JSON}")"
                 BUILD_CHANNEL="pr"
                 TAG_PREFIX="pr-${PR_NUMBER}"
-                CLEANUP_PATTERN="^pr-${PR_NUMBER}-[0-9a-f]{7}$"
+                CLEANUP_PATTERN="^pr-${PR_NUMBER}(-[0-9a-f]{7})?$"
                 CLEANUP_KEEP=3
               fi
             fi
@@ -121,6 +121,7 @@ jobs:
               fi
               if [[ "${PERSISTENT_TAG}" =~ ^main-[0-9a-f]{7}$ ]] \
                 || [[ "${PERSISTENT_TAG}" =~ ^manual-[0-9a-f]{7}$ ]] \
+                || [[ "${PERSISTENT_TAG}" =~ ^pr-[0-9]+$ ]] \
                 || [[ "${PERSISTENT_TAG}" =~ ^pr-[0-9]+-[0-9a-f]{7}$ ]]; then
                 echo "Manual tag ${PERSISTENT_TAG} uses a reserved automatic tag pattern" >&2
                 exit 1
@@ -196,6 +197,9 @@ jobs:
               TAGS+=("main-${SHORT_SHA}")
               ;;
             pr)
+              # Keep a stable tag for consumers and an immutable tag for
+              # identifying the exact PR revision that was built.
+              TAGS+=("${TAG_PREFIX}")
               TAGS+=("${TAG_PREFIX}-${SHORT_SHA}")
               ;;
             manual)
@@ -371,7 +375,7 @@ jobs:
 
           mapfile -t DELETE_IDS < <(
             jq -r \
-              --arg regex "^pr-${PR_NUMBER}-[0-9a-f]{7}$" \
+              --arg regex "^pr-${PR_NUMBER}(-[0-9a-f]{7})?$" \
               --arg release_regex "${RELEASE_TAG_PATTERN}" '
               map(select(any(.metadata.container.tags[]?; test($regex))))
               | map(select(all(.metadata.container.tags[]?; test($release_regex) | not)))
