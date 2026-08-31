@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -66,13 +67,18 @@ class LlmdOffloadingScalabilityTest(unittest.TestCase):
             kv_arg = self._kv_transfer_arg(plan)
             self.assertIn('"cpu_bytes_to_use":274877906944', kv_arg)
             self.assertIn('"type":"fs"', kv_arg)
+            self._assert_native_chunk_size(kv_arg)
             self.assertEqual(plan.deployment.runtime.shared_memory_size, "300Gi")
 
     def test_nvme_matrix(self) -> None:
         plans = self._plans("qwen36-35b-nvme-offloading-scalability.yaml")
 
         self.assertEqual(len(plans), len(REPLICAS) * len(CONCURRENCIES))
-        self._assert_common_matrix(plans, placement_mode="sequential")
+        self._assert_common_matrix(plans, placement_mode="node-exclusive")
+        self.assertEqual(
+            {plan.deployment.runtime.placement.spread_pool for plan in plans},
+            {"h100-benchflow"},
+        )
         for plan in plans:
             self.assertEqual(
                 plan.profiles.deployment,
@@ -88,17 +94,13 @@ class LlmdOffloadingScalabilityTest(unittest.TestCase):
             kv_arg = self._kv_transfer_arg(plan)
             self.assertIn('"cpu_bytes_to_use":274877906944', kv_arg)
             self.assertIn('"type":"fs"', kv_arg)
+            self._assert_native_chunk_size(kv_arg)
             self.assertEqual(plan.deployment.runtime.shared_memory_size, "300Gi")
 
     def _assert_common_matrix(self, plans, *, placement_mode: str) -> None:
+        self.assertEqual({plan.deployment.runtime.replicas for plan in plans}, REPLICAS)
         self.assertEqual(
-            {plan.deployment.runtime.replicas for plan in plans}, REPLICAS
-        )
-        self.assertEqual(
-            {
-                int(plan.benchmark.aiperf.args["concurrency"])
-                for plan in plans
-            },
+            {int(plan.benchmark.aiperf.args["concurrency"]) for plan in plans},
             CONCURRENCIES,
         )
         for plan in plans:
@@ -108,14 +110,14 @@ class LlmdOffloadingScalabilityTest(unittest.TestCase):
             self.assertEqual(plan.deployment.repo_ref, "v0.9.0")
             self.assertEqual(plan.deployment.gateway, "istio")
             self.assertEqual(plan.deployment.runtime.tensor_parallelism, 2)
-            self.assertEqual(
-                plan.deployment.runtime.placement.mode, placement_mode
-            )
+            self.assertEqual(plan.deployment.runtime.image, "vllm/vllm-openai:v0.27.0")
+            self.assertEqual(plan.deployment.runtime.placement.mode, placement_mode)
             self.assertNotIn("epp_config", plan.deployment.options)
             self.assertIn(
                 "--gpu-memory-utilization=0.55",
                 plan.deployment.runtime.vllm_args,
             )
+            self.assertIn("--max-num-seqs=256", plan.deployment.runtime.vllm_args)
 
     @staticmethod
     def _kv_transfer_arg(plan) -> str:
@@ -124,6 +126,12 @@ class LlmdOffloadingScalabilityTest(unittest.TestCase):
             for arg in plan.deployment.runtime.vllm_args
             if arg.startswith("--kv-transfer-config=")
         )
+
+    def _assert_native_chunk_size(self, kv_arg: str) -> None:
+        config = json.loads(kv_arg.split("=", 1)[1])
+        extra = config["kv_connector_extra_config"]
+        self.assertNotIn("block_size", extra)
+        self.assertNotIn("blocks_per_chunk", extra)
 
 
 if __name__ == "__main__":

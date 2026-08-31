@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..cluster import CommandError, create_manifest, use_kubeconfig
+from ..cluster import CommandError, create_manifest
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
 from ..kueue import (
     create_reservation_workload,
@@ -26,7 +26,7 @@ from ..kueue import (
 )
 from ..loaders import load_run_plan_data, load_run_plan_file
 from ..models import sanitize_name
-from ..node_exclusive import allocate_nodes, release_nodes
+from ..node_exclusive import NODE_EXCLUSIVE_RELEASE_LABEL
 from ..plans import scope_execution_release, scope_matrix_child_release
 from ..platform_state import setup_key_for_plan
 from .matrix_payloads import (
@@ -91,6 +91,9 @@ def _scope_manifest_run_plan(manifest: dict[str, Any], execution_name: str) -> N
         param["value"] = json.dumps(
             scoped_plan.to_dict(), separators=(",", ":"), sort_keys=True
         )
+        if scoped_plan.deployment.runtime.placement.mode == "node-exclusive":
+            labels = manifest.setdefault("metadata", {}).setdefault("labels", {})
+            labels[NODE_EXCLUSIVE_RELEASE_LABEL] = scoped_plan.deployment.release_name
         return
 
 
@@ -407,7 +410,6 @@ def run_matrix_supervisor(
     child_execution_name: str,
     parent_execution_name: str = "",
     benchflow_image: str | None = None,
-    target_kubeconfig: str = "",
 ) -> list[str]:
     if not plans:
         raise ValidationError("matrix execution requires at least one RunPlan")
@@ -457,11 +459,10 @@ def run_matrix_supervisor(
         setup_state_dir = tempfile.TemporaryDirectory(prefix="benchflow-matrix-setup-")
         setup_state_path = Path(setup_state_dir.name) / "setup-state.json"
         setup_hoisted = True
-        with use_kubeconfig(target_kubeconfig):
-            setup_platform(
-                plans[0],
-                context=ExecutionContext(state_path=setup_state_path),
-            )
+        setup_platform(
+            plans[0],
+            context=ExecutionContext(state_path=setup_state_path),
+        )
     sequential_placement = any(
         plan.deployment.runtime.placement.mode == "sequential" for plan in plans
     )
@@ -524,26 +525,6 @@ def run_matrix_supervisor(
 
     try:
         for index, plan in enumerate(plans, start=1):
-            # Materialize the child name before target-node admission so its
-            # lease identity is the same execution-scoped release that the
-            # submitted RunPlan will deploy and later clean up.
-            manifest = render_execution_manifest(
-                plan,
-                execution_name=child_execution_name,
-                setup_mode="skip" if setup_hoisted else "auto",
-                teardown=False,
-                skip_kueue_reservation=False,
-                benchflow_image=benchflow_image,
-            )
-            manifest, execution_name = _materialize_execution_name(manifest)
-            plan = scope_execution_release(plan, execution_name=execution_name)
-            # Acquire target nodes before submitting this child. This is the
-            # matrix admission gate for node-exclusive placement.
-            plan = allocate_nodes(
-                plan,
-                timeout_seconds=1800,
-                kubeconfig=target_kubeconfig,
-            )
             descriptor = (
                 f"deployment={plan.profiles.deployment}, "
                 f"benchmark={plan.profiles.benchmark}, "
@@ -563,9 +544,6 @@ def run_matrix_supervisor(
                 skip_kueue_reservation=False,
                 benchflow_image=benchflow_image,
             )
-            manifest_metadata = manifest.setdefault("metadata", {})
-            manifest_metadata["name"] = execution_name
-            manifest_metadata.pop("generateName", None)
             if parent_execution_name:
                 metadata = manifest.setdefault("metadata", {})
                 labels = metadata.setdefault("labels", {})
@@ -584,8 +562,6 @@ def run_matrix_supervisor(
             try:
                 name = submit_execution_manifest(manifest, plan.deployment.namespace)
             except Exception as exc:  # noqa: BLE001 - one failed child must not abort a matrix.
-                with use_kubeconfig(target_kubeconfig):
-                    release_nodes(plan)
                 failure = f"[{index}/{total}] {descriptor}: submission failed ({exc})"
                 failures.append(failure)
                 warning(failure)

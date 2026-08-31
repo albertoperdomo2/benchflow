@@ -20,7 +20,7 @@ spec:
       default: ""
   workspaces:
     - name: target-kubeconfig
-      description: Optional kubeconfig for remote target-cluster operations
+      description: Compatibility binding for remote matrix PipelineRuns
       optional: true
   steps:
     - name: run
@@ -33,8 +33,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        - name: BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE
-          value: $(workspaces.target-kubeconfig.path)
       command:
         - sh
       args:
@@ -46,11 +44,7 @@ spec:
             --namespace "${BENCHFLOW_NAMESPACE}" \
             --output-file "${run_plans_path}"
 
-          target_kubeconfig="$(find "${BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE}" -type f | head -n 1)"
-          test -n "${target_kubeconfig}"
-
           exec bflow task run-experiment-matrix \
             --run-plans-file "${run_plans_path}" \
             --child-pipeline-name "$(params.CHILD_PIPELINE_NAME)" \
-            --parent-execution-name "$(params.PARENT_EXECUTION_NAME)" \
-            --target-kubeconfig "${target_kubeconfig}"
+            --parent-execution-name "$(params.PARENT_EXECUTION_NAME)"

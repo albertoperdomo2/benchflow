@@ -14,6 +14,7 @@ spec:
     cache_dir: /models
     mount_path: /model-cache
   runtime:
+    image: vllm/vllm-openai:v0.27.0
     replicas: 1
     tensor_parallelism: 2
     env:
@@ -39,8 +40,11 @@ spec:
           - ReadWriteMany
     vllm_args:
       - --gpu-memory-utilization=0.55
+      - --max-num-seqs=256
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching
       - --enable-prompt-tokens-details
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"block_size":256,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/files-storage","n_read_threads":16,"n_write_threads":16}]}}
+      # Let vLLM derive the native chunk size from every KV cache group. A fixed
+      # token block size is invalid for Qwen3.6's hybrid attention layout.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/files-storage","n_read_threads":16,"n_write_threads":16}]}}

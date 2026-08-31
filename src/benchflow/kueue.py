@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
 import json
 import math
 import tempfile
@@ -20,7 +21,13 @@ from .cluster import (
     use_kubeconfig,
 )
 from .contracts import ExecutionSummary, ResolvedRunPlan, ValidationError
+from .loaders import load_run_plan_data
 from .models import sanitize_name
+from .node_exclusive import (
+    NODE_EXCLUSIVE_RELEASE_LABEL,
+    release_reservation,
+    reserve_nodes,
+)
 from .platform_state import SETUP_KEY_ANNOTATION
 from .orchestration.matrix_payloads import (
     adopt_matrix_run_plans_configmap,
@@ -47,6 +54,8 @@ TARGET_KUBECONFIG_SECRET_LABEL = "benchflow.io/target-kubeconfig-secret"
 EXECUTION_NAME_LABEL = "benchflow.io/execution-name"
 SUBMISSION_CONFIGMAP_LABEL = "benchflow.io/submission-configmap"
 SUBMISSION_MANIFEST_KEY = "manifest.json"
+NODE_EXCLUSIVE_FINALIZER = "benchflow.io/node-exclusive-reservation"
+_RUN_PLAN_PARAM = "RUN_PLAN"
 
 
 def _now_rfc3339() -> str:
@@ -334,6 +343,9 @@ def _workload_json(
         cleaned_value = str(value).strip()
         if cleaned_key and cleaned_value:
             labels[cleaned_key] = cleaned_value
+    finalizers = (
+        [NODE_EXCLUSIVE_FINALIZER] if labels.get(NODE_EXCLUSIVE_RELEASE_LABEL) else []
+    )
     return {
         "apiVersion": KUEUE_API_VERSION,
         "kind": "Workload",
@@ -341,6 +353,7 @@ def _workload_json(
             "name": name,
             "namespace": namespace,
             "labels": labels,
+            **({"finalizers": finalizers} if finalizers else {}),
             "annotations": {
                 str(key): str(value)
                 for key, value in (execution_annotations or {}).items()
@@ -518,6 +531,57 @@ def _submission_configmap_payload(namespace: str, name: str) -> dict[str, Any] |
     if result.returncode != 0:
         return None
     return json.loads(result.stdout or "{}")
+
+
+def _manifest_from_submission_configmap(configmap: dict[str, Any]) -> dict[str, Any]:
+    manifest_text = str(
+        (configmap.get("data", {}) or {}).get(SUBMISSION_MANIFEST_KEY) or ""
+    ).strip()
+    if not manifest_text:
+        raise CommandError(f"submission ConfigMap is missing {SUBMISSION_MANIFEST_KEY}")
+    try:
+        manifest = json.loads(manifest_text)
+    except json.JSONDecodeError as exc:
+        raise CommandError(
+            "submission ConfigMap contains invalid manifest JSON"
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise CommandError("submission ConfigMap manifest must be a JSON object")
+    return manifest
+
+
+def _run_plan_param(manifest: dict[str, Any]) -> tuple[dict[str, Any], ResolvedRunPlan]:
+    params = (manifest.get("spec", {}) or {}).get("params", []) or []
+    for param in params:
+        if str((param or {}).get("name") or "") != _RUN_PLAN_PARAM:
+            continue
+        raw = str((param or {}).get("value") or "").strip()
+        if not raw:
+            break
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise CommandError("queued execution has invalid RunPlan JSON") from exc
+        return param, load_run_plan_data(payload)
+    raise CommandError("queued execution manifest has no RunPlan")
+
+
+def _replace_submission_manifest(
+    namespace: str,
+    configmap: dict[str, Any],
+    manifest: dict[str, Any],
+) -> None:
+    payload = dict(configmap)
+    data = dict(payload.get("data", {}) or {})
+    data[SUBMISSION_MANIFEST_KEY] = json.dumps(
+        manifest, separators=(",", ":"), sort_keys=True
+    )
+    payload["data"] = data
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    run_command(
+        [kubectl_cmd, "replace", "-n", namespace, "-f", "-"],
+        input_text=json.dumps(payload, separators=(",", ":"), sort_keys=True),
+    )
 
 
 def delete_submission_configmap(namespace: str, configmap_name: str) -> None:
@@ -1078,6 +1142,100 @@ def _kubeconfig_path_for_secret(namespace: str, secret_name: str) -> Path:
         return Path(handle.name)
 
 
+def _target_kubeconfig_for_workload(
+    namespace: str, workload: dict[str, Any]
+) -> Path | None:
+    labels = (workload.get("metadata", {}) or {}).get("labels", {}) or {}
+    secret_name = target_secret_from_labels(labels)
+    if not secret_name:
+        return None
+    return _kubeconfig_path_for_secret(namespace, secret_name)
+
+
+def _reserve_node_exclusive_workload(
+    namespace: str, workload: dict[str, Any]
+) -> bool | None:
+    """Reserve and persist target affinity; None means standard placement."""
+    configmap_name = _workload_submission_configmap_name(workload)
+    configmap = _submission_configmap_payload(namespace, configmap_name)
+    if configmap is None:
+        raise CommandError(
+            f"submission ConfigMap {configmap_name} was not found for node placement"
+        )
+    manifest = _manifest_from_submission_configmap(configmap)
+    param, plan = _run_plan_param(manifest)
+    if plan.deployment.runtime.placement.mode != "node-exclusive":
+        return None
+
+    kubeconfig_path = _target_kubeconfig_for_workload(namespace, workload)
+    original_target = plan.target_cluster
+    try:
+        target_plan = replace(
+            plan,
+            target_cluster=replace(
+                plan.target_cluster,
+                kubeconfig=str(kubeconfig_path or ""),
+            ),
+        )
+        allocated = reserve_nodes(target_plan)
+    finally:
+        if kubeconfig_path is not None:
+            kubeconfig_path.unlink(missing_ok=True)
+    if allocated is None:
+        return False
+
+    allocated = replace(allocated, target_cluster=original_target)
+    param["value"] = json.dumps(
+        allocated.to_dict(), separators=(",", ":"), sort_keys=True
+    )
+    _replace_submission_manifest(namespace, configmap, manifest)
+    return True
+
+
+def _release_node_exclusive_workload(namespace: str, workload: dict[str, Any]) -> None:
+    labels = (workload.get("metadata", {}) or {}).get("labels", {}) or {}
+    release = str(labels.get(NODE_EXCLUSIVE_RELEASE_LABEL) or "").strip()
+    if not release:
+        return
+    kubeconfig_path = _target_kubeconfig_for_workload(namespace, workload)
+    try:
+        release_reservation(
+            namespace=namespace,
+            release=release,
+            kubeconfig=str(kubeconfig_path or ""),
+        )
+    finally:
+        if kubeconfig_path is not None:
+            kubeconfig_path.unlink(missing_ok=True)
+
+
+def _remove_node_exclusive_finalizer(namespace: str, workload: dict[str, Any]) -> None:
+    metadata = workload.get("metadata", {}) or {}
+    finalizers = list(metadata.get("finalizers", []) or [])
+    if NODE_EXCLUSIVE_FINALIZER not in finalizers:
+        return
+    finalizers = [item for item in finalizers if item != NODE_EXCLUSIVE_FINALIZER]
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    run_command(
+        [
+            kubectl_cmd,
+            "patch",
+            "workload",
+            str(metadata.get("name") or ""),
+            "-n",
+            namespace,
+            "--type=merge",
+            "-p",
+            json.dumps({"metadata": {"finalizers": finalizers}}),
+        ]
+    )
+
+
+def _release_and_unfinalize_workload(namespace: str, workload: dict[str, Any]) -> None:
+    _release_node_exclusive_workload(namespace, workload)
+    _remove_node_exclusive_finalizer(namespace, workload)
+
+
 def run_remote_capacity_controller(
     *,
     namespace: str,
@@ -1095,6 +1253,9 @@ def run_remote_capacity_controller(
                 metadata = workload.get("metadata", {}) or {}
                 workload_name = str(metadata.get("name") or "")
                 labels = metadata.get("labels", {}) or {}
+                if metadata.get("deletionTimestamp"):
+                    _release_and_unfinalize_workload(namespace, workload)
+                    continue
                 execution_name = _workload_execution_name(workload)
                 payload = None
                 if execution_name:
@@ -1106,6 +1267,7 @@ def run_remote_capacity_controller(
                         delete_submission_configmap(
                             namespace, _workload_submission_configmap_name(workload)
                         )
+                        _release_and_unfinalize_workload(namespace, workload)
                         delete_reservation_workload(namespace, workload_name)
                         continue
 
@@ -1121,6 +1283,7 @@ def run_remote_capacity_controller(
                                 f"{workload_name}: PipelineRun {execution_name} and its "
                                 "submission ConfigMap are both absent"
                             )
+                            _release_and_unfinalize_workload(namespace, workload)
                             delete_reservation_workload(namespace, workload_name)
                             continue
 
@@ -1244,6 +1407,21 @@ def run_remote_capacity_controller(
                         continue
 
                     if available >= requested:
+                        placement_reserved = _reserve_node_exclusive_workload(
+                            namespace, workload
+                        )
+                        if placement_reserved is False:
+                            _patch_workload_check(
+                                namespace,
+                                workload,
+                                state="Retry",
+                                message=(
+                                    "target cluster has insufficient free whole nodes "
+                                    "in the requested BenchFlow placement pool"
+                                ),
+                                requeue_after_seconds=30,
+                            )
+                            continue
                         _patch_workload_check(
                             namespace,
                             workload,

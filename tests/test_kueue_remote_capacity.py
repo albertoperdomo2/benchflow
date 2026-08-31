@@ -9,14 +9,18 @@ from benchflow.assets import render_yaml_documents
 # imported by orchestration.service.
 from benchflow.orchestration import tekton as _tekton  # noqa: F401
 from benchflow.kueue import (
+    NODE_EXCLUSIVE_FINALIZER,
     SETUP_KEY_ANNOTATION,
     _cluster_active_setup_key,
+    _release_and_unfinalize_workload,
+    _workload_json,
     _workload_has_quota_reservation,
     _workload_is_admitted,
     _workload_needs_capacity_check,
     _workload_status_summary,
     run_remote_capacity_controller,
 )
+from benchflow.node_exclusive import NODE_EXCLUSIVE_RELEASE_LABEL
 
 
 def _workload(*, admitted: bool, setup_key: str = "rhoai:raw-vllm") -> dict:
@@ -88,6 +92,10 @@ class KueueRemoteCapacityTest(unittest.TestCase):
             ),
             patch("benchflow.kueue.discover_cluster_gpu_capacity", return_value=8),
             patch("benchflow.kueue.discover_live_gpu_usage", return_value=0),
+            patch(
+                "benchflow.kueue._reserve_node_exclusive_workload",
+                return_value=None,
+            ),
             patch("benchflow.kueue._patch_workload_check") as patch_check,
             patch("benchflow.kueue._create_execution_from_workload") as create,
             patch("benchflow.kueue.time.sleep", side_effect=StopController),
@@ -97,6 +105,74 @@ class KueueRemoteCapacityTest(unittest.TestCase):
 
         create.assert_not_called()
         self.assertEqual(patch_check.call_args.kwargs["state"], "Ready")
+
+    def test_node_exclusive_workload_retries_until_whole_nodes_are_reserved(
+        self,
+    ) -> None:
+        reserved = _workload(admitted=False)
+
+        with (
+            patch("benchflow.kueue._patch_admission_check_active"),
+            patch(
+                "benchflow.kueue.list_reservation_workloads", return_value=[reserved]
+            ),
+            patch("benchflow.kueue._pipeline_run_payload", return_value=None),
+            patch(
+                "benchflow.kueue._submission_configmap_payload",
+                return_value={"data": {"manifest.json": "{}"}},
+            ),
+            patch("benchflow.kueue.discover_cluster_gpu_capacity", return_value=8),
+            patch("benchflow.kueue.discover_live_gpu_usage", return_value=0),
+            patch(
+                "benchflow.kueue._reserve_node_exclusive_workload",
+                return_value=False,
+            ),
+            patch("benchflow.kueue._patch_workload_check") as patch_check,
+            patch("benchflow.kueue._create_execution_from_workload") as create,
+            patch("benchflow.kueue.time.sleep", side_effect=StopController),
+            self.assertRaises(StopController),
+        ):
+            run_remote_capacity_controller(namespace="benchflow")
+
+        create.assert_not_called()
+        self.assertEqual(patch_check.call_args.kwargs["state"], "Retry")
+        self.assertIn("whole nodes", patch_check.call_args.kwargs["message"])
+
+    def test_node_exclusive_workload_carries_cleanup_finalizer(self) -> None:
+        workload = _workload_json(
+            namespace="benchflow",
+            cluster_name="target-cluster",
+            execution_prefix="exclusive-smoke",
+            execution_name="exclusive-smoke-a1b2c3",
+            submission_configmap_name="exclusive-smoke-a1b2c3-submission",
+            requested_gpu_count=8,
+            priority=100,
+            max_execution_seconds=3600,
+            execution_labels={NODE_EXCLUSIVE_RELEASE_LABEL: "exclusive-smoke-a1b2c3"},
+        )
+
+        self.assertEqual(
+            workload["metadata"]["finalizers"],
+            [NODE_EXCLUSIVE_FINALIZER],
+        )
+
+    def test_finalizer_is_kept_when_target_release_fails(self) -> None:
+        workload = _workload(admitted=False)
+        workload["metadata"]["finalizers"] = [NODE_EXCLUSIVE_FINALIZER]
+
+        with (
+            patch(
+                "benchflow.kueue._release_node_exclusive_workload",
+                side_effect=RuntimeError("target unavailable"),
+            ),
+            patch(
+                "benchflow.kueue._remove_node_exclusive_finalizer"
+            ) as remove_finalizer,
+            self.assertRaisesRegex(RuntimeError, "target unavailable"),
+        ):
+            _release_and_unfinalize_workload("benchflow", workload)
+
+        remove_finalizer.assert_not_called()
 
     def test_admitted_workload_creates_pipelinerun(self) -> None:
         admitted = _workload(admitted=True)
@@ -144,6 +220,7 @@ class KueueRemoteCapacityTest(unittest.TestCase):
         expected = {"get", "list", "watch"}
         self.assertGreaterEqual(verbs_for("", "nodes"), expected)
         self.assertGreaterEqual(verbs_for("", "pods"), expected)
+        self.assertIn("update", verbs_for("", "configmaps"))
         self.assertGreaterEqual(verbs_for("resource.k8s.io", "deviceclasses"), expected)
         self.assertGreaterEqual(
             verbs_for("resource.k8s.io", "resourceclaims"), expected

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import tempfile
 import unittest
@@ -9,6 +10,8 @@ from unittest.mock import patch
 import yaml
 
 from benchflow.contracts import ValidationError
+from benchflow.loaders import ProfileCatalog, load_experiment
+from benchflow.matrix import resolve_experiment_matrix
 from benchflow.orchestration.matrix_payloads import (
     RUN_PLANS_CHECKSUM_ANNOTATION,
     RUN_PLANS_COMPRESSED_CONFIGMAP_KEY,
@@ -20,6 +23,7 @@ from benchflow.orchestration.matrix_payloads import (
     write_matrix_run_plans_file,
 )
 from benchflow.orchestration.service import submit_execution_manifest
+from benchflow.orchestration.tekton import render_matrix_pipelinerun
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -141,13 +145,53 @@ class MatrixPayloadConfigMapTest(unittest.TestCase):
 
         self.assertIn("bflow task materialize-matrix-run-plans", script)
         self.assertIn('--namespace "${BENCHFLOW_NAMESPACE}"', script)
-        self.assertIn('--target-kubeconfig "${target_kubeconfig}"', script)
+        self.assertNotIn("--target-kubeconfig", script)
+        self.assertNotIn("BENCHFLOW_TARGET_KUBECONFIG_WORKSPACE", script)
         self.assertNotIn("export KUBECONFIG", script)
         self.assertNotIn("context.pipelineRun.namespace", script)
         self.assertNotIn("jsonpath='{.data.run-plans", script)
         self.assertEqual(
             env["BENCHFLOW_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"],
             "metadata.namespace",
+        )
+
+    def test_remote_matrix_keeps_compatible_kubeconfig_workspace(self) -> None:
+        experiment = load_experiment(
+            REPO_ROOT
+            / "experiments/llm-d/qwen36-35b-cephfs-offloading-scalability.yaml"
+        )
+        plan = resolve_experiment_matrix(
+            experiment, ProfileCatalog.load(REPO_ROOT / "profiles")
+        )[0]
+        plan = replace(
+            plan,
+            target_cluster=replace(
+                plan.target_cluster,
+                kubeconfig_secret="psap-h100-diadochos",
+            ),
+        )
+
+        manifest = render_matrix_pipelinerun(
+            [plan],
+            pipeline_name="benchflow-matrix",
+            child_pipeline_name="benchflow-e2e",
+        )
+        self.assertEqual(
+            manifest["spec"]["workspaces"],
+            [
+                {
+                    "name": "target-kubeconfig",
+                    "secret": {"secretName": "psap-h100-diadochos"},
+                }
+            ],
+        )
+
+        pipeline = yaml.safe_load(
+            (REPO_ROOT / "tekton/pipelines/matrix.yaml").read_text()
+        )
+        self.assertIn(
+            "target-kubeconfig",
+            {workspace["name"] for workspace in pipeline["spec"]["workspaces"]},
         )
 
     def test_kueue_workload_receives_only_materialized_metadata(self) -> None:

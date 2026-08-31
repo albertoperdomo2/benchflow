@@ -10,7 +10,7 @@ spec:
     child RunPlans and submits child PipelineRuns for Kueue admission.
   workspaces:
     - name: target-kubeconfig
-      description: Optional kubeconfig for remote target-cluster operations
+      description: Compatibility binding for remote matrix PipelineRuns
   params:
     - name: RUN_PLANS_CONFIGMAP
       type: string

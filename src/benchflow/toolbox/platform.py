@@ -346,33 +346,33 @@ def cleanup_deployment(
     skip_if_not_exists: bool,
 ) -> None:
     with use_kubeconfig(plan.target_cluster.kubeconfig):
-        if plan.deployment.platform == "llm-d":
-            cleanup_llmd(
-                plan,
-                wait_for_deletion=wait_for_deletion,
-                timeout_seconds=timeout_seconds,
-                skip_if_not_exists=skip_if_not_exists,
+        try:
+            if plan.deployment.platform == "llm-d":
+                cleanup_llmd(
+                    plan,
+                    wait_for_deletion=wait_for_deletion,
+                    timeout_seconds=timeout_seconds,
+                    skip_if_not_exists=skip_if_not_exists,
+                )
+                return
+            if plan.deployment.platform == "rhoai":
+                cleanup_rhoai(
+                    plan,
+                    wait_for_deletion=wait_for_deletion,
+                    timeout_seconds=timeout_seconds,
+                    skip_if_not_exists=skip_if_not_exists,
+                )
+                return
+            if plan.deployment.platform == "rhaiis":
+                cleanup_rhaiis(
+                    plan,
+                    wait_for_deletion=wait_for_deletion,
+                    timeout_seconds=timeout_seconds,
+                    skip_if_not_exists=skip_if_not_exists,
+                )
+                return
+            raise ValidationError(
+                f"unsupported deployment platform: {plan.deployment.platform}"
             )
+        finally:
             release_nodes(plan)
-            return
-        if plan.deployment.platform == "rhoai":
-            cleanup_rhoai(
-                plan,
-                wait_for_deletion=wait_for_deletion,
-                timeout_seconds=timeout_seconds,
-                skip_if_not_exists=skip_if_not_exists,
-            )
-            release_nodes(plan)
-            return
-        if plan.deployment.platform == "rhaiis":
-            cleanup_rhaiis(
-                plan,
-                wait_for_deletion=wait_for_deletion,
-                timeout_seconds=timeout_seconds,
-                skip_if_not_exists=skip_if_not_exists,
-            )
-            release_nodes(plan)
-            return
-        raise ValidationError(
-            f"unsupported deployment platform: {plan.deployment.platform}"
-        )
