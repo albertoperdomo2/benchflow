@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read
+      issues: write
       pull-requests: read
     outputs:
       should_build: ${{ steps.resolve.outputs.should_build }}
@@ -57,6 +57,7 @@ jobs:
       tag_prefix: ${{ steps.resolve.outputs.tag_prefix }}
       cleanup_pattern: ${{ steps.resolve.outputs.cleanup_pattern }}
       cleanup_keep: ${{ steps.resolve.outputs.cleanup_keep }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
       persistent_tag: ${{ steps.resolve.outputs.persistent_tag }}
       base_image_repository: ${{ steps.resolve.outputs.base_image_repository }}
       base_image_tag: ${{ steps.resolve.outputs.base_image_tag }}
@@ -81,6 +82,7 @@ jobs:
           TAG_PREFIX=""
           CLEANUP_PATTERN=""
           CLEANUP_KEEP=0
+          PR_NUMBER=""
           PERSISTENT_TAG=""
           BASE_IMAGE_REPOSITORY=""
           BASE_IMAGE_TAG=""
@@ -90,6 +92,7 @@ jobs:
             ASSOCIATION="$(jq -r '.comment.author_association // ""' "${GITHUB_EVENT_PATH}")"
             IS_PR="$(jq -r 'has("issue") and (.issue | has("pull_request"))' "${GITHUB_EVENT_PATH}")"
             PR_NUMBER="$(jq -r '.issue.number // ""' "${GITHUB_EVENT_PATH}")"
+            COMMENT_ID="$(jq -r '.comment.id // ""' "${GITHUB_EVENT_PATH}")"
 
             if [[ "${IS_PR}" == "true" ]] \
               && [[ "${BODY}" =~ ^/build([[:space:]]|$) ]] \
@@ -98,6 +101,12 @@ jobs:
               PR_STATE="$(jq -r '.state' <<< "${PR_JSON}")"
 
               if [[ "${PR_STATE}" == "open" ]]; then
+                gh api \
+                  --method POST \
+                  -H "Accept: application/vnd.github+json" \
+                  "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+                  -f content='+1' \
+                  >/dev/null
                 SHOULD_BUILD=true
                 CHECKOUT_REPOSITORY="$(jq -r '.head.repo.full_name' <<< "${PR_JSON}")"
                 CHECKOUT_REF="$(jq -r '.head.sha' <<< "${PR_JSON}")"
@@ -154,6 +163,7 @@ jobs:
             echo "tag_prefix=${TAG_PREFIX}"
             echo "cleanup_pattern=${CLEANUP_PATTERN}"
             echo "cleanup_keep=${CLEANUP_KEEP}"
+            echo "pr_number=${PR_NUMBER}"
             echo "persistent_tag=${PERSISTENT_TAG}"
             echo "base_image_repository=${BASE_IMAGE_REPOSITORY}"
             echo "base_image_tag=${BASE_IMAGE_TAG}"
@@ -165,6 +175,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
       packages: write
     steps:
       - name: Checkout code
@@ -277,6 +288,29 @@ jobs:
             [[ -z "${tag}" ]] && continue
             echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}:${tag}\`" >> "$GITHUB_STEP_SUMMARY"
           done <<< "${{ steps.tags.outputs.tags }}"
+
+      - name: Comment built PR images
+        if: needs.resolve-build.outputs.build_channel == 'pr'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ needs.resolve-build.outputs.pr_number }}
+          IMAGE_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          set -euo pipefail
+
+          BODY='✅ Built PR images:'
+          while IFS= read -r tag; do
+            [[ -z "${tag}" ]] && continue
+            IMAGE_URL="${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}:${tag}"
+            printf -v IMAGE_LINE "\n\n- \`%s\`" "${IMAGE_URL}"
+            BODY+="${IMAGE_LINE}"
+          done <<< "${IMAGE_TAGS}"
+
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            -f body="${BODY}" \
+            >/dev/null
 
   cleanup-automatic-images:
     needs:
