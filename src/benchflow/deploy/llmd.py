@@ -1715,9 +1715,7 @@ def _patch_recipe_gateway(plan: ResolvedRunPlan, gateway_dir: Path) -> None:
     # each create their own Gateway and generated Istio infrastructure.
     gateway_patch = yaml.safe_load(gateway_path.read_text(encoding="utf-8"))
     if not isinstance(gateway_patch, dict) or gateway_patch.get("kind") != "Gateway":
-        raise CommandError(
-            f"expected llm-d Gateway patch not found: {gateway_path}"
-        )
+        raise CommandError(f"expected llm-d Gateway patch not found: {gateway_path}")
 
     base_gateway_path = gateway_dir.parent / "base" / "gateway.yaml"
     if not base_gateway_path.is_file():

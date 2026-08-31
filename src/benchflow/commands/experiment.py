@@ -323,8 +323,7 @@ def _rerun_execution(args: argparse.Namespace) -> int:
         _pipeline_param_value(payload, "CHILD_PIPELINE_NAME") or "benchflow-e2e"
     )
     plans = [
-        reset_matrix_child_release_for_rerun(plan)
-        for _, plan in matching_children
+        reset_matrix_child_release_for_rerun(plan) for _, plan in matching_children
     ]
     for plan in plans:
         _apply_rerun_target_cluster(plan, target_kubeconfig_secret)

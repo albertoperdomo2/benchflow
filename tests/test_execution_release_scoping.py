@@ -156,9 +156,7 @@ class ExecutionReleaseScopingTest(unittest.TestCase):
         plan = _smoke_plan()
         target = replace(
             plan.deployment.target,
-            resource_name=(
-                f"infra-{plan.deployment.release_name}-inference-gateway"
-            ),
+            resource_name=(f"infra-{plan.deployment.release_name}-inference-gateway"),
         )
         plan = replace(plan, deployment=replace(plan.deployment, target=target))
 

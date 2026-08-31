@@ -233,7 +233,9 @@ patches:
             kustomization = yaml.safe_load(
                 (gateway_dir / "kustomization.yaml").read_text()
             )
-            self.assertEqual(kustomization["resources"], ["gateway.yaml", "configmap.yaml"])
+            self.assertEqual(
+                kustomization["resources"], ["gateway.yaml", "configmap.yaml"]
+            )
             self.assertNotIn("patches", kustomization)
 
     def test_router_uses_v010_httproute_values(self) -> None:

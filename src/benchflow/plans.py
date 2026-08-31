@@ -253,10 +253,7 @@ def _scope_target_release(
     """Return the target adjusted for a release scoped at submission time."""
     target = plan.deployment.target
     resource_name = target.resource_name.replace(previous_release, release_name)
-    if (
-        plan.deployment.platform == "llm-d"
-        and target.discovery == "gateway-status-url"
-    ):
+    if plan.deployment.platform == "llm-d" and target.discovery == "gateway-status-url":
         # Recipe Gateway names truncate long releases. Rebuild the name from the
         # final scoped release instead of attempting a string replacement on a
         # name that may already have been truncated.
@@ -292,9 +289,7 @@ def reset_matrix_child_release_for_rerun(plan: ResolvedRunPlan) -> ResolvedRunPl
         )
         base_release = f"{prefix}-{suffix}"
     if not base_release:
-        execution_base = str(
-            labels.get(_EXECUTION_RELEASE_BASE_LABEL) or ""
-        ).strip()
+        execution_base = str(labels.get(_EXECUTION_RELEASE_BASE_LABEL) or "").strip()
         matrix_suffix = f"-{matrix_scope}"
         if execution_base.endswith(matrix_suffix):
             base_release = execution_base[: -len(matrix_suffix)]
@@ -866,10 +861,7 @@ def resolve_run_plan(
             "runtime.placement.mode 'sequential' is currently supported only for "
             "llm-d and rhoai matrix executions"
         )
-    if (
-        runtime.placement.mode == "same-node"
-        and deployment_profile.spec.mode == "isvc"
-    ):
+    if runtime.placement.mode == "same-node" and deployment_profile.spec.mode == "isvc":
         raise ValidationError(
             "runtime.placement.mode 'same-node' is not supported for rhoai isvc "
             "deployments"
