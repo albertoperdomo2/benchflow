@@ -45,6 +45,7 @@ from .models import (
     RuntimeSpec,
     StageSpec,
     TargetSpec,
+    TracingSpec,
     ValidationError,
     _require,
     _as_bool,
@@ -1318,6 +1319,34 @@ def load_benchmark_profile(path: Path) -> BenchmarkProfile:
     )
 
 
+def _tracing_spec_from_dict(raw: object, field_name: str) -> TracingSpec:
+    if raw is None:
+        return TracingSpec()
+    if not isinstance(raw, dict):
+        raise ValidationError(f"{field_name} must be a mapping")
+
+    unknown = set(raw) - {"mode", "sample_ratio"}
+    if unknown:
+        names = ", ".join(sorted(str(item) for item in unknown))
+        raise ValidationError(f"{field_name} contains unsupported fields: {names}")
+
+    mode = str(raw.get("mode", "off") or "off").strip().lower()
+    if mode not in {"off", "standard", "detailed"}:
+        raise ValidationError(
+            f"{field_name}.mode must be one of off, standard, or detailed"
+        )
+    raw_ratio = raw.get("sample_ratio", 0.1)
+    if isinstance(raw_ratio, bool):
+        raise ValidationError(f"{field_name}.sample_ratio must be a number")
+    try:
+        sample_ratio = float(raw_ratio)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"{field_name}.sample_ratio must be a number") from exc
+    if not 0.0 <= sample_ratio <= 1.0:
+        raise ValidationError(f"{field_name}.sample_ratio must be between 0.0 and 1.0")
+    return TracingSpec(mode=mode, sample_ratio=sample_ratio)
+
+
 def load_metrics_profile(path: Path) -> MetricsProfile:
     raw = load_yaml_file(path)
     if raw.get("kind") != "MetricsProfile":
@@ -1325,6 +1354,7 @@ def load_metrics_profile(path: Path) -> MetricsProfile:
 
     metadata = parse_metadata(raw)
     spec = raw.get("spec") or {}
+    tracing = _tracing_spec_from_dict(spec.get("tracing"), "spec.tracing")
     profile_spec = MetricsProfileSpec(
         prometheus_url=str(spec.get("prometheus_url", "")),
         query_step=str(spec.get("query_step", "15s")),
@@ -1333,6 +1363,7 @@ def load_metrics_profile(path: Path) -> MetricsProfile:
         queries={
             str(key): str(value) for key, value in (spec.get("queries") or {}).items()
         },
+        tracing=tracing,
     )
     if not profile_spec.prometheus_url:
         raise ValidationError(f"{path} is missing spec.prometheus_url")
@@ -1416,6 +1447,7 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
             str(key): str(value)
             for key, value in (metrics_raw.get("queries") or {}).items()
         },
+        tracing=_tracing_spec_from_dict(metrics_raw.get("tracing"), "metrics.tracing"),
     )
 
     return ResolvedRunPlan(

@@ -28,6 +28,7 @@ from ..setup import (
     setup_llmd,
     setup_rhoai,
 )
+from ..tracing import ensure_tracing_plane, remove_tracing_plane
 from ..ui import detail, step
 
 
@@ -97,6 +98,8 @@ def _reset_platform_for_state(
             ).strip(),
             workspace_dir=workspace_dir,
         )
+        kubectl_cmd = require_any_command("oc", "kubectl")
+        remove_tracing_plane(kubectl_cmd, plan.deployment.namespace)
     if platform in {"mixed", "rhoai"}:
         reset_rhoai_platform()
 
@@ -210,6 +213,7 @@ def setup_platform(
                     detail(
                         f"Platform prerequisites already match setup key {requested_key}"
                     )
+                    ensure_tracing_plane(plan, kubectl_cmd)
                     _write_state_path(state_path, installed_setup_state)
                     return installed_setup_state
 
@@ -235,6 +239,8 @@ def setup_platform(
                     )
                 else:
                     state = setup_rhoai(plan, state_path=state_path)
+
+                ensure_tracing_plane(plan, kubectl_cmd)
 
                 persist_cluster_platform_state(
                     kubectl_cmd,

@@ -539,12 +539,25 @@ class BenchmarkProfile:
 
 
 @dataclass(slots=True)
+class TracingSpec:
+    mode: str = "off"
+    sample_ratio: float = 0.1
+
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    def detailed(self) -> bool:
+        return self.mode == "detailed"
+
+
+@dataclass(slots=True)
 class MetricsProfileSpec:
     prometheus_url: str
     query_step: str
     query_timeout: str
     verify_tls: bool = False
     queries: dict[str, str] = field(default_factory=dict)
+    tracing: TracingSpec = field(default_factory=TracingSpec)
 
 
 @dataclass(slots=True)

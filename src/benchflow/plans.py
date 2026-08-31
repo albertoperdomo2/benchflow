@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
+import re
 
 from .loaders import ProfileCatalog
 from .llmd_layout import (
@@ -751,6 +752,18 @@ def resolve_run_plan(
     deployment_profile = catalog.require_deployment(deployment_profile_names[0])
     benchmark_profile = catalog.require_benchmark(benchmark_profile_names[0])
     metrics_profile = catalog.require_metrics(metrics_profile_names[0])
+    if (
+        metrics_profile.spec.tracing.enabled()
+        and deployment_profile.spec.platform != "llm-d"
+    ):
+        raise ValidationError(
+            "metrics profile tracing is currently supported only for llm-d deployments"
+        )
+    if metrics_profile.spec.tracing.enabled() and experiment.spec.target.enabled():
+        raise ValidationError(
+            "metrics profile tracing requires a BenchFlow-managed llm-d deployment; "
+            "an existing target URL cannot be instrumented automatically"
+        )
     model_names = normalize_model_names(experiment.spec.model.name, "spec.model.name")
     if len(model_names) != 1:
         raise ValidationError("resolve_run_plan requires exactly one model name")
@@ -925,6 +938,15 @@ def resolve_run_plan(
             repo_ref = str(repo_ref_override)
         if not platform_version:
             platform_version = repo_ref
+        tracing_version = re.fullmatch(
+            r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", str(repo_ref).strip()
+        )
+        if (
+            metrics_profile.spec.tracing.enabled()
+            and tracing_version is not None
+            and tuple(int(part) for part in tracing_version.groups()) < (0, 9, 0)
+        ):
+            raise ValidationError("llm-d tracing requires repo_ref v0.9.0 or newer")
     elif deployment_profile.spec.platform == "rhaiis" and not platform_version:
         platform_version = _rhaiis_platform_version(runtime.image)
 
@@ -1073,6 +1095,11 @@ def resolve_run_plan(
     tags.setdefault("deployment_profile", deployment_profile.metadata.name)
     tags.setdefault("benchmark_profile", benchmark_profile.metadata.name)
     tags.setdefault("metrics_profile", metrics_profile.metadata.name)
+    if metrics_profile.spec.tracing.enabled():
+        tags.setdefault("tracing_mode", metrics_profile.spec.tracing.mode)
+        tags.setdefault(
+            "tracing_sample_ratio", str(metrics_profile.spec.tracing.sample_ratio)
+        )
 
     model_name_fragment = (
         model_name.lower().replace("/", "-").replace(".", "").strip("-")

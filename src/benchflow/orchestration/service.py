@@ -29,6 +29,7 @@ from ..models import sanitize_name
 from ..node_exclusive import NODE_EXCLUSIVE_RELEASE_LABEL
 from ..plans import scope_execution_release, scope_matrix_child_release
 from ..platform_state import setup_key_for_plan
+from ..tracing import tracing_enabled
 from .matrix_payloads import (
     adopt_matrix_run_plans_configmap,
     create_matrix_results_configmap,
@@ -459,8 +460,9 @@ def run_matrix_supervisor(
         setup_state_dir = tempfile.TemporaryDirectory(prefix="benchflow-matrix-setup-")
         setup_state_path = Path(setup_state_dir.name) / "setup-state.json"
         setup_hoisted = True
+        setup_plan = next((plan for plan in plans if tracing_enabled(plan)), plans[0])
         setup_platform(
-            plans[0],
+            setup_plan,
             context=ExecutionContext(state_path=setup_state_path),
         )
     sequential_placement = any(

@@ -992,6 +992,9 @@ spec:
   query_step: 15s # no CLI override
   query_timeout: 30s # no CLI override
   verify_tls: false # no CLI override
+  tracing:
+    mode: off # off, standard, or detailed; llm-d only; no CLI override
+    sample_ratio: 0.1 # 0.0 through 1.0; no CLI override
   queries:
     request_success_total: sum(rate(vllm:request_success_total[5m])) # no CLI override
 ```
@@ -1413,6 +1416,48 @@ Today the live path is:
 - collected metrics go to MLflow
 - collected logs and manifests go to MLflow
 - MLflow runs get a `grafana_url` tag for the live dashboard window
+
+### llm-d distributed tracing
+
+Select the packaged `llm-d-tracing` metrics profile to capture distributed
+traces from llm-d:
+
+```yaml
+spec:
+  deployment_profile: llm-d-optimized-baseline-scalability
+  benchmark_profile: aiperf-smoke
+  metrics_profile: llm-d-tracing
+```
+
+Tracing is profile-owned; there are no experiment or CLI overrides for OTLP
+endpoints, exporters, sampler names, or service names. `standard` captures the
+EPP and vLLM request spans, plus P/D routing-proxy spans when the selected
+supported guide contains that sidecar. This instrumentation does not add a new
+P/D deployment mode. `detailed` additionally passes
+`--collect-detailed-traces=all` to vLLM. llm-d supports only the
+`parentbased_traceidratio` sampler, so the public tuning surface is limited to
+`sample_ratio`.
+
+When a resolved llm-d RunPlan enables tracing, platform setup idempotently
+ensures one namespaced OpenTelemetry Collector and Jaeger instance on the
+target cluster. Matrix children share that telemetry plane. Deployment
+generates release-scoped service names so concurrently running children remain
+distinguishable. Normal child cleanup leaves the shared plane in place; full
+llm-d platform teardown removes it.
+
+Artifact collection queries Jaeger for the benchmark window before deployment
+cleanup and uploads these files through the normal MLflow artifact path:
+
+```text
+traces/traces.jsonl.gz
+traces/trace-summary.json
+traces/services.json
+```
+
+`traces.jsonl.gz` contains one normalized span per line. The summary records
+the trace/span counts, services, sampling configuration, and whether collection
+was successful. The packaged Jaeger instance is intentionally an ephemeral
+run-time buffer; MLflow artifacts are the durable output.
 
 The archive dashboard and Infinity datasource were intentionally removed. The
 current supported Grafana path is the live Prometheus-backed dashboard only.

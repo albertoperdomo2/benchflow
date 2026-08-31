@@ -11,6 +11,7 @@ from .benchmark import benchmark_version_from_plan
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .models import ResolvedRunPlan, RuntimeArtifactDirectorySpec
 from .storage_offloading import storage_offloading_config
+from .tracing import collect_traces
 from .ui import detail, step, success
 
 RHOAI_PROFILER_OUTPUT_DIR = "/tmp/benchflow-profiler"
@@ -1131,6 +1132,13 @@ def collect_artifacts(
         else {}
     )
 
+    trace_summary = collect_traces(
+        plan,
+        artifacts_dir=artifacts_dir,
+        benchmark_start_time=benchmark_start_time,
+        benchmark_end_time=benchmark_end_time,
+    )
+
     metadata = {
         "namespace": namespace,
         "release": plan.deployment.release_name,
@@ -1178,6 +1186,7 @@ def collect_artifacts(
         "cephfs_diagnostics": cephfs_diagnostics,
         "manifest_files": manifest_count,
         "platform_state_files": platform_state_count,
+        "tracing": trace_summary,
         "timestamp": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
