@@ -509,8 +509,8 @@ def _metadata_lines(metadata: dict[str, Any], summary: dict[str, Any]) -> list[s
     ]
 
 
-def _summary_cards(summary: dict[str, Any], metric_count: int) -> str:
-    cards = (
+def _summary_strip(summary: dict[str, Any], metric_count: int) -> str:
+    items = (
         ("Traces", summary.get("trace_count", 0)),
         ("Spans", summary.get("span_count", 0)),
         ("Services", len(summary.get("services") or [])),
@@ -518,13 +518,13 @@ def _summary_cards(summary: dict[str, Any], metric_count: int) -> str:
         ("Metric series", metric_count),
     )
     return (
-        "<div class='summary-cards'>"
+        "<div class='summary-strip'>"
         + "".join(
-            "<div class='summary-card'>"
+            "<div class='summary-item'>"
             f"<span class='summary-value'>{html.escape(str(value))}</span>"
             f"<span class='summary-label'>{html.escape(label)}</span>"
             "</div>"
-            for label, value in cards
+            for label, value in items
         )
         + "</div>"
     )
@@ -581,10 +581,11 @@ def generate_trace_distribution_report(
   .report-shell { overflow-x: auto; }
   .report-table { border-collapse: separate; border-spacing: 12px; }
   .section-title { margin: 28px 0 6px; font-size: 20px; font-weight: 700; }
-  .summary-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 10px 0 22px; }
-  .summary-card { border: 1px solid #cfcfcf; padding: 14px 16px; background: #fafafa; }
-  .summary-value { display: block; font: 29px/1.1 "Times New Roman", Georgia, serif; }
-  .summary-label { display: block; margin-top: 5px; color: #666; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .summary-strip { display: flex; align-items: baseline; margin: 2px 0 14px; padding: 5px 0 7px; border-bottom: 1px solid #d8d8d8; }
+  .summary-item { display: inline-flex; align-items: baseline; gap: 6px; padding: 0 22px; border-left: 1px solid #d8d8d8; }
+  .summary-item:first-child { padding-left: 0; border-left: 0; }
+  .summary-value { font: 21px/1 "Times New Roman", Georgia, serif; }
+  .summary-label { color: #666; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
   .metric-cell { width: 696px; vertical-align: top; }
   .metric-panel { width: 696px; margin: 20px 0 28px; background: white; }
   .metric-panel h2 { margin: 0 0 6px; color: #222; font-size: 21px; font-weight: 700; line-height: 1.2; }
@@ -601,7 +602,7 @@ def generate_trace_distribution_report(
   .methodology { width: 1396px; margin: 18px 0 8px; padding-top: 10px; border-top: 1px solid #d8d8d8; color: #666; font-size: 11px; line-height: 1.45; }
   .methodology p { margin: 0; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
-  @media (max-width: 900px) { .summary-cards { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 900px) { .summary-strip { flex-wrap: wrap; gap: 8px 0; } }
 </style>
 """,
         "</head>",
@@ -615,7 +616,7 @@ def generate_trace_distribution_report(
     ).to_html(include_plotlyjs=False, full_html=False, config=_PLOTLY_CONFIG)
     parts.append(f"<tr><td colspan='2'>{header_html}</td></tr>")
     parts.append(
-        f"<tr><td colspan='2'>{_summary_cards(summary, len(metrics))}</td></tr>"
+        f"<tr><td colspan='2'>{_summary_strip(summary, len(metrics))}</td></tr>"
     )
     grouped_metrics: list[tuple[str, list[tuple[int, TraceMetric]]]] = []
     for index, metric in enumerate(metrics):
