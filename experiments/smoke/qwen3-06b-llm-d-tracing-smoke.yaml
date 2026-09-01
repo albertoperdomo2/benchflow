@@ -1,0 +1,16 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen3-06b-llm-d-tracing-smoke
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: llm-d-optimized-baseline-scalability
+  benchmark_profile: aiperf-smoke
+  metrics_profile: llm-d-tracing
+  namespace: benchflow
+  model_overrides:
+    Qwen/Qwen3-0.6B:
+      scale:
+        tensor_parallelism: 1
+        replicas: 1
