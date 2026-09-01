@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: MetricsProfile
 metadata:
-  name: llm-d-tracing
+  name: detailed-tracing
 spec:
   prometheus_url: https://thanos-querier.openshift-monitoring.svc:9091
   query_step: 15s

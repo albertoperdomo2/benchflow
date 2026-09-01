@@ -752,17 +752,35 @@ def resolve_run_plan(
     deployment_profile = catalog.require_deployment(deployment_profile_names[0])
     benchmark_profile = catalog.require_benchmark(benchmark_profile_names[0])
     metrics_profile = catalog.require_metrics(metrics_profile_names[0])
-    if (
-        metrics_profile.spec.tracing.enabled()
-        and deployment_profile.spec.platform != "llm-d"
-    ):
-        raise ValidationError(
-            "metrics profile tracing is currently supported only for llm-d deployments"
-        )
+    if metrics_profile.spec.tracing.enabled():
+        tracing_platform = deployment_profile.spec.platform
+        if tracing_platform not in {"llm-d", "rhoai"}:
+            raise ValidationError(
+                "metrics profile tracing is currently supported only for llm-d "
+                "and the explicit RHOAI tracing deployment profile"
+            )
+        if tracing_platform == "rhoai":
+            tracing_provider = str(
+                deployment_profile.spec.options.get("tracing_provider") or ""
+            ).strip()
+            epp_config = str(
+                deployment_profile.spec.options.get("epp_config") or ""
+            ).strip()
+            if (
+                deployment_profile.spec.mode != "distributed-default"
+                or tracing_provider != "explicit-epp"
+                or not epp_config
+                or str(deployment_profile.spec.platform_version).strip()
+                != "RHOAI-3.5.0"
+            ):
+                raise ValidationError(
+                    "RHOAI tracing is currently supported only by deployment "
+                    "profile rhoai-distributed-default-tracing"
+                )
     if metrics_profile.spec.tracing.enabled() and experiment.spec.target.enabled():
         raise ValidationError(
-            "metrics profile tracing requires a BenchFlow-managed llm-d deployment; "
-            "an existing target URL cannot be instrumented automatically"
+            "metrics profile tracing requires a BenchFlow-managed deployment; an "
+            "existing target URL cannot be instrumented automatically"
         )
     model_names = normalize_model_names(experiment.spec.model.name, "spec.model.name")
     if len(model_names) != 1:

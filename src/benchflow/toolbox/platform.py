@@ -98,10 +98,11 @@ def _reset_platform_for_state(
             ).strip(),
             workspace_dir=workspace_dir,
         )
-        kubectl_cmd = require_any_command("oc", "kubectl")
-        remove_tracing_plane(kubectl_cmd, plan.deployment.namespace)
     if platform in {"mixed", "rhoai"}:
         reset_rhoai_platform()
+    if platform in {"mixed", "llm-d", "rhoai"}:
+        kubectl_cmd = require_any_command("oc", "kubectl")
+        remove_tracing_plane(kubectl_cmd, plan.deployment.namespace)
 
 
 def _ensure_llmd_main_repo_head(

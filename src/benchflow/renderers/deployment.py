@@ -18,6 +18,7 @@ from ..rhoai_mooncake import (
     render_rhoai_mooncake_manifests,
 )
 from ..rhoai_gateway import rhoai_release_gateway_reference
+from ..tracing import tracing_enabled, tracing_environment, vllm_tracing_args
 
 RHOAI_PROFILER_CONFIGMAP_SUFFIX = "vllm-profiler"
 RHOAI_PROFILER_MOUNT_PATH = "/home/vllm/profiler"
@@ -289,6 +290,8 @@ def _rhoai_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     env.update(
         {entry["name"]: entry["value"] for entry in rhoai_mooncake_model_env(plan)}
     )
+    if tracing_enabled(plan):
+        env.update(tracing_environment(plan, "vllm-modelserver"))
     return [{"name": key, "value": value} for key, value in sorted(env.items())]
 
 
@@ -307,31 +310,41 @@ def _rhoai_basic_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
         "HF_HUB_CACHE": f"{cache_dir}/hub",
         **plan.deployment.runtime.env,
     }
+    if tracing_enabled(plan):
+        env.update(tracing_environment(plan, "vllm-modelserver"))
     return [{"name": key, "value": value} for key, value in sorted(env.items())]
 
 
 def _rhoai_vllm_args(plan: ResolvedRunPlan) -> list[str]:
     model_path = f"/mnt/models{_model_path(plan)}"
-    return [
-        "--port=8000",
-        "--host=0.0.0.0",
-        f"--model={model_path}",
-        f"--served-model-name={plan.model.name}",
-        f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
-        "--enable-ssl-refresh",
-        "--ssl-certfile=/var/run/kserve/tls/tls.crt",
-        "--ssl-keyfile=/var/run/kserve/tls/tls.key",
-    ] + plan.deployment.runtime.vllm_args
+    return vllm_tracing_args(
+        plan,
+        [
+            "--port=8000",
+            "--host=0.0.0.0",
+            f"--model={model_path}",
+            f"--served-model-name={plan.model.name}",
+            f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
+            "--enable-ssl-refresh",
+            "--ssl-certfile=/var/run/kserve/tls/tls.crt",
+            "--ssl-keyfile=/var/run/kserve/tls/tls.key",
+        ]
+        + plan.deployment.runtime.vllm_args,
+    )
 
 
 def _rhoai_basic_vllm_args(plan: ResolvedRunPlan) -> list[str]:
-    return [
-        "--port=8080",
-        "--host=0.0.0.0",
-        f"--model={_rhoai_basic_model_path(plan)}",
-        f"--served-model-name={plan.model.name}",
-        f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
-    ] + plan.deployment.runtime.vllm_args
+    return vllm_tracing_args(
+        plan,
+        [
+            "--port=8080",
+            "--host=0.0.0.0",
+            f"--model={_rhoai_basic_model_path(plan)}",
+            f"--served-model-name={plan.model.name}",
+            f"--tensor-parallel-size={plan.deployment.runtime.tensor_parallelism}",
+        ]
+        + plan.deployment.runtime.vllm_args,
+    )
 
 
 def _rhoai_precise_tokenizer_model_path(plan: ResolvedRunPlan) -> str:
@@ -491,6 +504,13 @@ def _rhoai_llminferenceservice_template_context(
         "custom_scheduler_enabled": custom_scheduler_enabled,
         "scheduler_config_enabled": scheduler_config_enabled,
         "epp_verbosity": epp_verbosity,
+        "epp_tracing_enabled": tracing_enabled(plan),
+        "epp_tracing_env": [
+            {"name": name, "value": value}
+            for name, value in tracing_environment(plan, "epp").items()
+        ]
+        if tracing_enabled(plan)
+        else [],
         "approximate_prefix_cache_enabled": (
             plan.deployment.mode == "approximate-prefix-cache"
         ),

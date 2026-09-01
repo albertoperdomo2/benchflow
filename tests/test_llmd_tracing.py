@@ -39,7 +39,7 @@ spec:
     name: Qwen/Qwen3.6-35B-A3B
   deployment_profile: llm-d-optimized-baseline-scalability
   benchmark_profile: aiperf-smoke
-  metrics_profile: llm-d-tracing
+  metrics_profile: detailed-tracing
   namespace: benchflow
 """,
         encoding="utf-8",
@@ -161,11 +161,13 @@ def test_router_tracing_values_enable_epp(tracing_plan, tmp_path: Path) -> None:
 
 
 def test_pd_proxy_requires_flag_and_otlp_exporter(tracing_plan) -> None:
-    container = {"args": ["--port=8000"], "env": []}
+    container = {"args": ["--port=8000", "--tracing", "false"], "env": []}
 
     _apply_pd_proxy_tracing(container, tracing_plan)
 
     assert "--tracing=true" in container["args"]
+    assert "--tracing" not in container["args"]
+    assert "false" not in container["args"]
     env = {item["name"]: item["value"] for item in container["env"]}
     assert env["OTEL_TRACES_EXPORTER"] == "otlp"
     assert env["OTEL_SERVICE_NAME"].endswith("-routing-proxy")

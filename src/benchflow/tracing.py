@@ -28,7 +28,42 @@ def tracing_spec(plan: ResolvedRunPlan) -> TracingSpec:
 
 
 def tracing_enabled(plan: ResolvedRunPlan) -> bool:
-    return plan.deployment.platform == "llm-d" and tracing_spec(plan).enabled()
+    return tracing_spec(plan).enabled()
+
+
+def _without_cli_flag(args: list[str], flag: str) -> list[str]:
+    output: list[str] = []
+    index = 0
+    while index < len(args):
+        item = str(args[index])
+        if item == flag:
+            index += 1
+            if index < len(args) and not str(args[index]).startswith("--"):
+                index += 1
+            continue
+        if item.startswith(f"{flag}="):
+            index += 1
+            continue
+        output.append(item)
+        index += 1
+    return output
+
+
+def vllm_tracing_args(plan: ResolvedRunPlan, args: list[str]) -> list[str]:
+    if not tracing_enabled(plan):
+        return args
+    output = _without_cli_flag(args, "--otlp-traces-endpoint")
+    output = _without_cli_flag(output, "--collect-detailed-traces")
+    output.append(f"--otlp-traces-endpoint={otlp_endpoint(plan)}")
+    if tracing_spec(plan).detailed():
+        output.append("--collect-detailed-traces=all")
+    return output
+
+
+def routing_proxy_tracing_args(args: list[str]) -> list[str]:
+    output = _without_cli_flag(args, "--tracing")
+    output.append("--tracing=true")
+    return output
 
 
 def otlp_endpoint(plan: ResolvedRunPlan) -> str:

@@ -64,6 +64,9 @@ spec:
               - --secure-serving
               - --model-server-metrics-scheme
               - https
+{% if epp_tracing_enabled %}
+              - --tracing=true
+{% endif %}
 {% if precise_prefix_cache_enabled %}
               - --model-server-metrics-https-insecure-skip-verify
 {% endif %}
@@ -132,10 +135,18 @@ spec:
 {% endif %}
 {% endif %}
 {% endif %}
-{% if precise_prefix_cache_enabled %}
+{% if precise_prefix_cache_enabled or epp_tracing_env %}
             env:
+{% for entry in epp_tracing_env %}
+              - name: {{ entry.name }}
+                value: {{ entry.value | tojson }}
+{% endfor %}
+{% if precise_prefix_cache_enabled %}
               - name: HF_HOME
                 value: /mnt/tokenizers
+{% endif %}
+{% endif %}
+{% if precise_prefix_cache_enabled %}
             volumeMounts:
               - mountPath: /mnt/tokenizers
                 name: tokenizers

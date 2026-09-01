@@ -1,0 +1,59 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-distributed-default-tracing
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 4
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+    vllm_args:
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.92
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+  options:
+    enable_auth: false
+    # This is currently the only RHOAI deployment profile supported with a
+    # tracing-enabled metrics profile. The marker makes BenchFlow reject
+    # tracing for every ordinary RHOAI profile before deployment.
+    tracing_provider: explicit-epp
+    # Keep this explicit configuration aligned with the OpenShift AI 3.5
+    # default EndpointPickerConfig. Making the scheduler template explicit is
+    # what lets BenchFlow inject the EPP tracing flag and OTLP environment.
+    epp_config: |
+      apiVersion: llm-d.ai/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+      - type: single-profile-handler
+      - type: queue-scorer
+      - type: kv-cache-utilization-scorer
+      - type: prefix-cache-scorer
+      - type: no-hit-lru-scorer
+      - type: max-score-picker
+      - parameters:
+          scheme: https
+        type: metrics-data-source
+      schedulingProfiles:
+      - name: default
+        plugins:
+        - pluginRef: queue-scorer
+          weight: 2
+        - pluginRef: kv-cache-utilization-scorer
+          weight: 2
+        - pluginRef: prefix-cache-scorer
+          weight: 3
+        - pluginRef: no-hit-lru-scorer
+          weight: 2
+        - pluginRef: max-score-picker

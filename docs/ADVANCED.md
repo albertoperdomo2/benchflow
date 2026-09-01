@@ -1417,33 +1417,52 @@ Today the live path is:
 - collected logs and manifests go to MLflow
 - MLflow runs get a `grafana_url` tag for the live dashboard window
 
-### llm-d distributed tracing
+### Distributed tracing
 
-Select the packaged `llm-d-tracing` metrics profile to capture distributed
-traces from llm-d:
+Select the packaged `detailed-tracing` metrics profile to capture distributed
+traces. For llm-d, pair it with a supported managed llm-d deployment profile:
 
 ```yaml
 spec:
   deployment_profile: llm-d-optimized-baseline-scalability
   benchmark_profile: aiperf-smoke
-  metrics_profile: llm-d-tracing
+  metrics_profile: detailed-tracing
 ```
+
+RHOAI tracing deliberately has one supported path today: RHOAI 3.5,
+`distributed-default`, and the packaged
+`rhoai-distributed-default-tracing` deployment profile. That profile carries
+the OpenShift AI 3.5 default `EndpointPickerConfig` explicitly so BenchFlow can
+instrument both the EPP and model server:
+
+```yaml
+spec:
+  deployment_profile: rhoai-distributed-default-tracing
+  benchmark_profile: aiperf-smoke
+  metrics_profile: detailed-tracing
+```
+
+See
+`experiments/smoke/qwen3-06b-rhoai-distributed-default-tracing-smoke.yaml` for
+the one-GPU smoke experiment. BenchFlow rejects tracing with every other RHOAI
+deployment profile; ordinary RHOAI profiles remain tracing-off.
 
 Tracing is profile-owned; there are no experiment or CLI overrides for OTLP
 endpoints, exporters, sampler names, or service names. `standard` captures the
 EPP and vLLM request spans, plus P/D routing-proxy spans when the selected
 supported guide contains that sidecar. This instrumentation does not add a new
 P/D deployment mode. `detailed` additionally passes
-`--collect-detailed-traces=all` to vLLM. llm-d supports only the
+`--collect-detailed-traces=all` to vLLM. The supported components accept only the
 `parentbased_traceidratio` sampler, so the public tuning surface is limited to
-`sample_ratio`.
+`sample_ratio`. Its schema default is `0.1`; the packaged smoke-oriented
+`detailed-tracing` profile uses `1.0` to retain every trace.
 
-When a resolved llm-d RunPlan enables tracing, platform setup idempotently
+When a resolved llm-d or supported RHOAI RunPlan enables tracing, platform setup idempotently
 ensures one namespaced OpenTelemetry Collector and Jaeger instance on the
 target cluster. Matrix children share that telemetry plane. Deployment
 generates release-scoped service names so concurrently running children remain
 distinguishable. Normal child cleanup leaves the shared plane in place; full
-llm-d platform teardown removes it.
+platform teardown removes it.
 
 Artifact collection queries Jaeger for the benchmark window before deployment
 cleanup and uploads these files through the normal MLflow artifact path:

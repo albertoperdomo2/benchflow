@@ -37,10 +37,12 @@ from ..storage_offloading import (
 )
 from ..tracing import (
     otlp_endpoint,
+    routing_proxy_tracing_args,
     tracing_enabled,
     tracing_environment,
     tracing_service_name,
     tracing_spec,
+    vllm_tracing_args,
 )
 from ..ui import detail, step, success
 
@@ -64,36 +66,14 @@ _TRACING_ENV_NAMES = {
 }
 
 
-def _without_cli_flag(args: list[str], flag: str) -> list[str]:
-    output: list[str] = []
-    index = 0
-    while index < len(args):
-        item = str(args[index])
-        if item == flag:
-            index += 1
-            if index < len(args) and not str(args[index]).startswith("--"):
-                index += 1
-            continue
-        if item.startswith(f"{flag}="):
-            index += 1
-            continue
-        output.append(item)
-        index += 1
-    return output
-
-
 def _apply_vllm_tracing(
     container: dict[str, Any], plan: ResolvedRunPlan, *, role: str
 ) -> None:
     if not tracing_enabled(plan):
         return
-    args = [str(item) for item in (container.get("args") or [])]
-    args = _without_cli_flag(args, "--otlp-traces-endpoint")
-    args = _without_cli_flag(args, "--collect-detailed-traces")
-    args.append(f"--otlp-traces-endpoint={otlp_endpoint(plan)}")
-    if tracing_spec(plan).detailed():
-        args.append("--collect-detailed-traces=all")
-    container["args"] = args
+    container["args"] = vllm_tracing_args(
+        plan, [str(item) for item in (container.get("args") or [])]
+    )
 
     env = [
         item
@@ -110,11 +90,9 @@ def _apply_vllm_tracing(
 def _apply_pd_proxy_tracing(container: dict[str, Any], plan: ResolvedRunPlan) -> None:
     if not tracing_enabled(plan):
         return
-    args = _without_cli_flag(
-        [str(item) for item in (container.get("args") or [])], "--tracing"
+    container["args"] = routing_proxy_tracing_args(
+        [str(item) for item in (container.get("args") or [])]
     )
-    args.append("--tracing=true")
-    container["args"] = args
     env = [
         item
         for item in (container.get("env") or [])
