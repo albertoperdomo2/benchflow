@@ -8,6 +8,8 @@ import numpy as np
 
 from benchflow.reports.tracing import (
     _kernel_density,
+    _workload_line,
+    _workload_shape,
     collect_trace_metrics,
     generate_trace_distribution_report,
 )
@@ -39,8 +41,42 @@ def _write_trace_artifacts(artifacts_dir: Path) -> Path:
                 "platform": "rhoai",
                 "version": "RHOAI-3.5",
                 "mode": "distributed-default",
+                "accelerator": "H200",
                 "tp": 1,
                 "replicas": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    metadata_dir = artifacts_dir / "metadata"
+    metadata_dir.mkdir()
+    (metadata_dir / "run-plan.json").write_text(
+        json.dumps(
+            {
+                "profiles": {
+                    "deployment": "rhoai-distributed-default-tracing",
+                    "benchmark": "aiperf-smoke",
+                    "metrics": "detailed-tracing",
+                },
+                "deployment": {
+                    "runtime": {
+                        "replicas": 1,
+                        "tensor_parallelism": 1,
+                    }
+                },
+                "benchmark": {
+                    "tool": "aiperf",
+                    "aiperf": {
+                        "args": {
+                            "concurrency": 2,
+                            "synthetic_input_tokens_mean": 64,
+                            "synthetic_input_tokens_stddev": 0,
+                            "output_tokens_mean": 16,
+                            "output_tokens_stddev": 0,
+                            "request_count": 10,
+                        }
+                    },
+                },
             }
         ),
         encoding="utf-8",
@@ -131,7 +167,54 @@ def test_generate_trace_distribution_report_is_standalone_html(
     assert "P50" in report
     assert "P95" in report
     assert "P99" in report
+    assert "RHOAI 3.5 | H200 | TP 1 | PP 1 | R 1" in report
+    assert "Profiles:" in report
+    assert "\u2003\u2003• Deploy: rhoai-distributed-default-tracing" in report
+    assert "\u2003\u2003• Benchmark: aiperf-smoke" in report
+    assert "\u2003\u2003• Metrics: detailed-tracing" in report
+    assert "Workload: ISL 64 ± 0 tokens · OSL 16 ± 0 tokens" in report
     assert "plotly.js" in report
+
+
+def test_workload_shape_identifies_weka_dataset() -> None:
+    run_plan = {
+        "benchmark": {
+            "tool": "aiperf",
+            "aiperf": {
+                "args": {
+                    "public_dataset": "weka_hf",
+                    "hf_weka_dataset": "semianalysisai/cc-traces-weka-062126",
+                }
+            },
+        }
+    }
+
+    assert _workload_shape(run_plan, {}) == (
+        "Weka traces · semianalysisai/cc-traces-weka-062126"
+    )
+    assert _workload_line(run_plan, {}) == (
+        "Weka AIPerf: Weka traces · semianalysisai/cc-traces-weka-062126"
+    )
+
+
+def test_workload_shape_formats_guidellm_data_profile() -> None:
+    run_plan = {"benchmark": {"tool": "guidellm"}}
+    metadata = {
+        "data_spec": json.dumps(
+            {
+                "kind": "synthetic_text",
+                "prompt_tokens": 8000,
+                "prompt_tokens_stdev": 8500,
+                "output_tokens": 800,
+                "output_tokens_stdev": 1500,
+            }
+        )
+    }
+
+    assert _workload_shape(run_plan, metadata) == (
+        "prompt_tokens: 8000 · prompt_tokens_stdev: 8500"
+        " · output_tokens: 800 · output_tokens_stdev: 1500"
+    )
 
 
 def test_kernel_density_skips_constant_series() -> None:

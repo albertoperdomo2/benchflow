@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .benchmark import runtime as runtime_module
 from .benchmark import benchmark_version_from_plan
+from .benchmark.common import resolved_accelerator
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .models import ResolvedRunPlan, RuntimeArtifactDirectorySpec
 from .storage_offloading import storage_offloading_config
@@ -1147,11 +1148,7 @@ def collect_artifacts(
         "platform": plan.deployment.platform,
         "mode": plan.deployment.mode,
         "version": benchmark_version_from_plan(plan),
-        "accelerator": str(
-            plan.mlflow.tags.get("accelerator")
-            or plan.deployment.options.get("accelerator")
-            or ""
-        ),
+        "accelerator": resolved_accelerator(plan),
         "runtime_args": " ".join(plan.deployment.runtime.vllm_args),
         "replicas": plan.deployment.runtime.replicas,
         "tp": plan.deployment.runtime.tensor_parallelism,

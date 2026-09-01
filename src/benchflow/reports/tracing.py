@@ -450,7 +450,7 @@ def _header_figure(*, title: str, subtitle_lines: list[str]) -> go.Figure:
     figure = go.Figure()
     figure.update_layout(
         width=_REPORT_WIDTH,
-        height=max(120, 80 + len(subtitle_lines) * 18),
+        height=max(120, 92 + len(subtitle_lines) * 19),
         paper_bgcolor=_PAPER_COLOR,
         plot_bgcolor=_PAPER_COLOR,
         margin={"l": 8, "r": 8, "t": 8, "b": 8},
@@ -462,9 +462,9 @@ def _header_figure(*, title: str, subtitle_lines: list[str]) -> go.Figure:
                 "xref": "paper",
                 "yref": "paper",
                 "x": 0.0,
-                "y": 0.8,
+                "y": 0.94,
                 "xanchor": "left",
-                "yanchor": "middle",
+                "yanchor": "top",
                 "showarrow": False,
                 "align": "left",
                 "text": title,
@@ -474,9 +474,9 @@ def _header_figure(*, title: str, subtitle_lines: list[str]) -> go.Figure:
                 "xref": "paper",
                 "yref": "paper",
                 "x": 0.0,
-                "y": 0.32,
+                "y": 0.72,
                 "xanchor": "left",
-                "yanchor": "middle",
+                "yanchor": "top",
                 "showarrow": False,
                 "align": "left",
                 "text": subtitle,
@@ -487,26 +487,152 @@ def _header_figure(*, title: str, subtitle_lines: list[str]) -> go.Figure:
     return figure
 
 
-def _metadata_lines(metadata: dict[str, Any], summary: dict[str, Any]) -> list[str]:
+def _display_value(value: Any, default: str = "unknown") -> str:
+    rendered = str(value or "").strip()
+    return rendered if rendered else default
+
+
+def _workload_shape(run_plan: dict[str, Any], metadata: dict[str, Any]) -> str:
+    benchmark = run_plan.get("benchmark") or {}
+    tool = _display_value(benchmark.get("tool"), "benchmark")
+
+    if tool == "aiperf":
+        aiperf = benchmark.get("aiperf") or {}
+        args = aiperf.get("args") or {}
+        public_dataset = _display_value(args.get("public_dataset"), "")
+        if public_dataset == "weka_hf":
+            dataset = _display_value(
+                args.get("hf_weka_dataset")
+                or aiperf.get("dataset_name")
+                or metadata.get("data_spec")
+            )
+            return f"Weka traces · {dataset}"
+
+        input_mean = args.get("synthetic_input_tokens_mean")
+        output_mean = args.get("output_tokens_mean")
+        if input_mean not in (None, "") and output_mean not in (None, ""):
+            input_sd = args.get("synthetic_input_tokens_stddev", 0)
+            output_sd = args.get("output_tokens_stddev", 0)
+            return (
+                f"ISL {input_mean} ± {input_sd} tokens"
+                f" · OSL {output_mean} ± {output_sd} tokens"
+            )
+
+    if tool == "guidellm":
+        data_spec = metadata.get("data_spec")
+        if isinstance(data_spec, str):
+            try:
+                data_spec = json.loads(data_spec)
+            except json.JSONDecodeError:
+                return _display_value(data_spec, tool)
+        if isinstance(data_spec, dict):
+            keys = (
+                "prompt_tokens",
+                "prompt_tokens_stdev",
+                "prompt_tokens_min",
+                "prompt_tokens_max",
+                "output_tokens",
+                "output_tokens_stdev",
+                "output_tokens_min",
+                "output_tokens_max",
+                "turns",
+                "prefix_tokens",
+                "prefix_count",
+            )
+            values = [
+                f"{key}: {data_spec[key]}"
+                for key in keys
+                if data_spec.get(key) is not None
+            ]
+            if values:
+                return " · ".join(values)
+
+    return _display_value(metadata.get("data_spec"), tool)
+
+
+def _workload_line(run_plan: dict[str, Any], metadata: dict[str, Any]) -> str:
+    benchmark = run_plan.get("benchmark") or {}
+    aiperf = benchmark.get("aiperf") or {}
+    args = aiperf.get("args") or {}
+    label = (
+        "Weka AIPerf"
+        if benchmark.get("tool") == "aiperf" and args.get("public_dataset") == "weka_hf"
+        else "Workload"
+    )
+    return f"{label}: {_workload_shape(run_plan, metadata)}"
+
+
+def _platform_label(metadata: dict[str, Any]) -> str:
+    value = _display_value(metadata.get("version") or metadata.get("platform"))
+    if value.startswith("RHOAI-"):
+        return value.replace("RHOAI-", "RHOAI ", 1)
+    if value.startswith("llm-d-"):
+        return value.replace("llm-d-", "llm-d ", 1)
+    return value
+
+
+def _accelerator(metadata: dict[str, Any], run_plan: dict[str, Any]) -> str:
+    deployment = run_plan.get("deployment") or {}
+    options = deployment.get("options") or {}
+    mlflow = run_plan.get("mlflow") or {}
+    tags = mlflow.get("tags") or {}
+    runtime = deployment.get("runtime") or {}
+    node_selector = runtime.get("node_selector") or {}
+    return _display_value(
+        metadata.get("accelerator")
+        or tags.get("accelerator")
+        or options.get("accelerator")
+        or node_selector.get("nvidia.com/gpu.product")
+    )
+
+
+def _metadata_lines_with_run_plan(
+    metadata: dict[str, Any],
+    summary: dict[str, Any],
+    run_plan: dict[str, Any],
+) -> list[str]:
     services = summary.get("services") or []
-    return [
+    profiles = run_plan.get("profiles") or {}
+    runtime = (run_plan.get("deployment") or {}).get("runtime") or {}
+    tp = metadata.get("tp", runtime.get("tensor_parallelism", "unknown"))
+    pp = runtime.get("pipeline_parallelism", 1)
+    replicas = metadata.get("replicas", runtime.get("replicas", "unknown"))
+    profile_values = (
+        _display_value(profiles.get("deployment"), ""),
+        _display_value(profiles.get("benchmark") or metadata.get("profile"), ""),
+        _display_value(profiles.get("metrics"), ""),
+    )
+    lines = [
         f"Model: {metadata.get('model_name') or 'unknown'}",
         (
-            f"Platform: {metadata.get('version') or metadata.get('platform') or 'unknown'}"
-            f" · mode {metadata.get('mode') or 'unknown'} · TP {metadata.get('tp', 'unknown')}"
-            f" · replicas {metadata.get('replicas', 'unknown')}"
+            f"{_platform_label(metadata)} | {_accelerator(metadata, run_plan)}"
+            f" | TP {tp} | PP {pp} | R {replicas}"
         ),
-        (
-            f"Trace window: {summary.get('benchmark_start_time') or 'unknown'} to "
-            f"{summary.get('benchmark_end_time') or 'unknown'}"
-        ),
-        (
-            f"Traces: {summary.get('trace_count', 0)} · spans: {summary.get('span_count', 0)}"
-            f" · complete multi-service traces: {summary.get('complete_multi_service_traces', 0)}"
-            f" · sampling: {summary.get('sample_ratio', 'unknown')}"
-        ),
-        f"Services: {', '.join(str(service) for service in services) or 'unknown'}",
+        "Profiles:",
     ]
+    lines.extend(
+        f"\u2003\u2003• {label}: {value}"
+        for label, value in zip(
+            ("Deploy", "Benchmark", "Metrics"), profile_values, strict=True
+        )
+        if value
+    )
+    lines.extend(
+        [
+            _workload_line(run_plan, metadata),
+            (
+                f"Trace window: {summary.get('benchmark_start_time') or 'unknown'} to "
+                f"{summary.get('benchmark_end_time') or 'unknown'}"
+            ),
+            (
+                f"Traces: {summary.get('trace_count', 0)} · spans: {summary.get('span_count', 0)}"
+                f" · complete multi-service traces: {summary.get('complete_multi_service_traces', 0)}"
+                f" · sampling: {summary.get('sample_ratio', 'unknown')}"
+            ),
+            f"Services: {', '.join(str(service) for service in services) or 'unknown'}",
+        ]
+    )
+    return lines
 
 
 def _summary_strip(summary: dict[str, Any], metric_count: int) -> str:
@@ -564,6 +690,8 @@ def generate_trace_distribution_report(
         return None
     metadata_path = artifacts_dir / "metadata.json"
     metadata = _load_json(metadata_path) if metadata_path.exists() else {}
+    run_plan_path = artifacts_dir / "metadata" / "run-plan.json"
+    run_plan = _load_json(run_plan_path) if run_plan_path.exists() else {}
     resolved_output = output_file or (artifacts_dir / "reports" / _REPORT_FILENAME)
     resolved_output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -612,7 +740,7 @@ def generate_trace_distribution_report(
     ]
     header_html = _header_figure(
         title="Bench Flow Tracing Distribution Report",
-        subtitle_lines=_metadata_lines(metadata, summary),
+        subtitle_lines=_metadata_lines_with_run_plan(metadata, summary, run_plan),
     ).to_html(include_plotlyjs=False, full_html=False, config=_PLOTLY_CONFIG)
     parts.append(f"<tr><td colspan='2'>{header_html}</td></tr>")
     parts.append(
