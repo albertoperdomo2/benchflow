@@ -35,6 +35,15 @@ from ..storage_offloading import (
     STORAGE_OFFLOADING_TYPE_PVC,
     storage_offloading_config as _storage_offloading_config,
 )
+from ..tracing import (
+    otlp_endpoint,
+    routing_proxy_tracing_args,
+    tracing_enabled,
+    tracing_environment,
+    tracing_service_name,
+    tracing_spec,
+    vllm_tracing_args,
+)
 from ..ui import detail, step, success
 
 _LLMD_INFERENCE_SERVING_LABEL = "llm-d.ai/inferenceServing"
@@ -47,6 +56,83 @@ _STORAGE_OFFLOADING_SERVICE_FILE = "benchflow-storage-events-service.yaml"
 _MODELSERVER_PODMONITOR_FILE = "benchflow-modelserver-podmonitor.yaml"
 _MANAGED_HOSTPATH_RUNTIME_SERVICE_ACCOUNT = "benchflow-hostpath-runtime"
 _MANAGED_HOSTPATH_RUNTIME_SCC = "benchflow-hostpath-runtime"
+_TRACING_ENV_NAMES = {
+    "OTEL_SERVICE_NAME",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_TRACES_SAMPLER",
+    "OTEL_TRACES_SAMPLER_ARG",
+    "OTEL_RESOURCE_ATTRIBUTES",
+}
+
+
+def _apply_vllm_tracing(
+    container: dict[str, Any], plan: ResolvedRunPlan, *, role: str
+) -> None:
+    if not tracing_enabled(plan):
+        return
+    container["args"] = vllm_tracing_args(
+        plan, [str(item) for item in (container.get("args") or [])]
+    )
+
+    env = [
+        item
+        for item in (container.get("env") or [])
+        if str(item.get("name") or "") not in _TRACING_ENV_NAMES
+    ]
+    env.extend(
+        {"name": name, "value": value}
+        for name, value in tracing_environment(plan, role).items()
+    )
+    container["env"] = env
+
+
+def _apply_pd_proxy_tracing(container: dict[str, Any], plan: ResolvedRunPlan) -> None:
+    if not tracing_enabled(plan):
+        return
+    container["args"] = routing_proxy_tracing_args(
+        [str(item) for item in (container.get("args") or [])]
+    )
+    env = [
+        item
+        for item in (container.get("env") or [])
+        if str(item.get("name") or "") not in _TRACING_ENV_NAMES
+    ]
+    env.extend(
+        {"name": name, "value": value}
+        for name, value in tracing_environment(plan, "routing-proxy").items()
+    )
+    container["env"] = env
+
+
+def _patch_pd_tracing_sources(guide_dir: Path, plan: ResolvedRunPlan) -> None:
+    """Patch upstream P/D components when the selected guide references them."""
+    if not tracing_enabled(plan):
+        return
+    for path in guide_dir.rglob("*.yaml"):
+        if path.name not in {
+            "patch-sidecar.yaml",
+            "patch-prefill.yaml",
+            "patch-decode.yaml",
+        }:
+            continue
+        manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            continue
+        pod_spec = manifest.get("spec", {}).get("template", {}).get("spec", {})
+        changed = False
+        for container in pod_spec.get("initContainers", []) or []:
+            if str(container.get("name") or "") == "routing-proxy":
+                _apply_pd_proxy_tracing(container, plan)
+                changed = True
+        role = "vllm-prefill" if "prefill" in path.name else "vllm-decode"
+        for container in pod_spec.get("containers", []) or []:
+            command = [str(item) for item in (container.get("command") or [])]
+            if command[:2] == ["vllm", "serve"]:
+                _apply_vllm_tracing(container, plan, role=role)
+                changed = True
+        if changed:
+            path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
 def _llmd_guide_layout(plan: ResolvedRunPlan) -> dict[str, str]:
@@ -1075,6 +1161,7 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
             volume_mount["readOnly"] = True
     pod_spec = decode.setdefault("template", {}).setdefault("spec", {})
     _apply_runtime_pod_customizations(container, pod_spec, plan)
+    _apply_vllm_tracing(container, plan, role="vllm-decode")
 
     values_file.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
     return values
@@ -1184,6 +1271,34 @@ def _patch_scheduler_values(
                 flags = {}
                 epp["flags"] = flags
             flags["v"] = epp_verbosity
+
+        if tracing_enabled(plan):
+            tracing = router.setdefault("tracing", {})
+            tracing["enabled"] = True
+            tracing["otelExporterEndpoint"] = otlp_endpoint(plan)
+            sampling = tracing.setdefault("sampling", {})
+            sampling["sampler"] = "parentbased_traceidratio"
+            sampling["samplerArg"] = str(tracing_spec(plan).sample_ratio)
+            epp_env = [
+                item
+                for item in (epp.get("env") or [])
+                if str(item.get("name") or "")
+                not in {"OTEL_SERVICE_NAME", "OTEL_RESOURCE_ATTRIBUTES"}
+            ]
+            trace_env = tracing_environment(plan, "epp")
+            epp_env.extend(
+                [
+                    {
+                        "name": "OTEL_SERVICE_NAME",
+                        "value": tracing_service_name(plan, "epp"),
+                    },
+                    {
+                        "name": "OTEL_RESOURCE_ATTRIBUTES",
+                        "value": trace_env["OTEL_RESOURCE_ATTRIBUTES"],
+                    },
+                ]
+            )
+            epp["env"] = epp_env
 
         custom_epp_config = _render_llmd_custom_epp_config(plan)
         if custom_epp_config:
@@ -1626,6 +1741,7 @@ def _patch_recipe_modelserver_overlay(
     container["command"] = ["vllm", "serve"]
     container["args"] = args + list(runtime.vllm_args)
     container["env"] = existing_env
+    _apply_vllm_tracing(container, plan, role="vllm-decode")
     if runtime.image:
         # Apply the image in the final modelserver patch: the guide's gpu-vllm
         # component otherwise overwrites Kustomize image replacements.
@@ -2560,6 +2676,11 @@ def deploy_llmd(
     render_dir: Path | None = None
     if recipe_layout:
         gateway_mode = str(plan.deployment.gateway or "").strip()
+        if tracing_enabled(plan) and not router_chart:
+            raise CommandError(
+                "llm-d tracing requires the router-chart recipe layout shipped "
+                "by llm-d v0.9.0 or newer"
+            )
         if gateway_mode not in {"istio", "standalone"}:
             raise CommandError(
                 "llm-d recipe layout currently supports gateway=istio or "
@@ -2616,6 +2737,7 @@ def deploy_llmd(
         if render_dir is not None:
             _patch_recipe_render_overlay(plan, render_dir)
         _patch_recipe_modelserver_overlay(plan, overlay_dir, router_chart=router_chart)
+        _patch_pd_tracing_sources(guide_dir, plan)
         if storage_offloading:
             _ensure_storage_offloading_pvc(plan, kubectl_cmd, storage_offloading)
 

@@ -12,11 +12,11 @@ from typing import Callable
 import mlflow
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 
-from .benchmark import generate_run_report
 from .cluster import require_any_command, run_command
 from .mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from .models import ResolvedRunPlan
 from .remote_jobs import copy_remote_results_directory, delete_remote_results_directory
+from .reports import generate_post_run_reports
 from .ui import detail, step, success, warning
 
 MLFLOW_MULTIPART_MINIMUM_FILE_SIZE = 64 * 1024 * 1024
@@ -407,16 +407,6 @@ def _cleanup_uploaded_remote_materializations(
             )
 
 
-def _generate_post_run_report(artifacts_dir: Path) -> Path | None:
-    try:
-        report_path = generate_run_report(artifacts_dir=artifacts_dir)
-    except Exception as exc:  # noqa: BLE001
-        warning(f"Skipping post-run report generation: {exc}")
-        return None
-    detail(f"Generated post-run report at {report_path}")
-    return report_path
-
-
 def _write_run_plan_artifact(plan: ResolvedRunPlan, artifacts_dir: Path) -> Path:
     metadata_dir = artifacts_dir / "metadata"
     metadata_dir.mkdir(parents=True, exist_ok=True)
@@ -782,7 +772,7 @@ def upload_to_mlflow(
                     "No fallback benchmark artifacts were needed; MLflow already "
                     "contained the benchmark results and console output"
                 )
-        _generate_post_run_report(artifacts_dir)
+        generate_post_run_reports(artifacts_dir=artifacts_dir)
         before_cleanup = _count_files(artifacts_dir)
         upload_artifact_directory_to_mlflow(
             mlflow_run_id=mlflow_run_id,

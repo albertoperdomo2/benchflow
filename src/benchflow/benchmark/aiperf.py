@@ -2440,7 +2440,7 @@ def generate_run_report(
         default_filename="full_run_artifacts_report.html",
         output_dir=output_dir,
         output_file=output_file,
-        default_dir=artifacts_dir,
+        default_dir=artifacts_dir / "reports",
     )
     subtitle = [
         f"Model: {summary.get('input_config', {}).get('model') or 'unknown'}",

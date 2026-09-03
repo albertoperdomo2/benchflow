@@ -8,9 +8,11 @@ from pathlib import Path
 
 from .benchmark import runtime as runtime_module
 from .benchmark import benchmark_version_from_plan
+from .benchmark.common import resolved_accelerator
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .models import ResolvedRunPlan, RuntimeArtifactDirectorySpec
 from .storage_offloading import storage_offloading_config
+from .tracing import collect_traces
 from .ui import detail, step, success
 
 RHOAI_PROFILER_OUTPUT_DIR = "/tmp/benchflow-profiler"
@@ -1131,6 +1133,13 @@ def collect_artifacts(
         else {}
     )
 
+    trace_summary = collect_traces(
+        plan,
+        artifacts_dir=artifacts_dir,
+        benchmark_start_time=benchmark_start_time,
+        benchmark_end_time=benchmark_end_time,
+    )
+
     metadata = {
         "namespace": namespace,
         "release": plan.deployment.release_name,
@@ -1139,11 +1148,7 @@ def collect_artifacts(
         "platform": plan.deployment.platform,
         "mode": plan.deployment.mode,
         "version": benchmark_version_from_plan(plan),
-        "accelerator": str(
-            plan.mlflow.tags.get("accelerator")
-            or plan.deployment.options.get("accelerator")
-            or ""
-        ),
+        "accelerator": resolved_accelerator(plan),
         "runtime_args": " ".join(plan.deployment.runtime.vllm_args),
         "replicas": plan.deployment.runtime.replicas,
         "tp": plan.deployment.runtime.tensor_parallelism,
@@ -1178,6 +1183,7 @@ def collect_artifacts(
         "cephfs_diagnostics": cephfs_diagnostics,
         "manifest_files": manifest_count,
         "platform_state_files": platform_state_count,
+        "tracing": trace_summary,
         "timestamp": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
