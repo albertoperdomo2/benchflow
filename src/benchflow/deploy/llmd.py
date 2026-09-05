@@ -22,6 +22,7 @@ from ..cluster import (
     run_json_command,
 )
 from ..llmd_layout import recipe_gateway_name as _llmd_recipe_gateway_name
+from ..llmd_epp import resolve_llmd_epp_identity
 from ..models import ResolvedRunPlan, model_storage_relative_path, sanitize_name
 from ..renderers.deployment import render_runtime_pvc_manifests
 from ..platform_state import (
@@ -330,22 +331,6 @@ def _llmd_router_chart_label_key(gateway_mode: str) -> str:
     )
 
 
-def _llmd_router_epp_selector(release_name: str, gateway_mode: str) -> str:
-    label_key = _llmd_router_chart_label_key(gateway_mode)
-    epp_name = f"{_llmd_recipe_scheduler_release_name_for(release_name)}-epp"
-    return f"{label_key}={epp_name}"
-
-
-def _llmd_router_epp_selectors(release_name: str, gateway_mode: str) -> list[str]:
-    epp_name = f"{_llmd_recipe_scheduler_release_name_for(release_name)}-epp"
-    selectors = [_llmd_router_epp_selector(release_name, gateway_mode)]
-    for label_key in ("llm-d-router-gateway", "llm-d-router-standalone"):
-        selector = f"{label_key}={epp_name}"
-        if selector not in selectors:
-            selectors.append(selector)
-    return selectors
-
-
 def _llmd_router_epp_selectors_for_release(
     namespace: str, release_name: str, gateway_mode: str, kubectl_cmd: str
 ) -> list[str]:
@@ -357,36 +342,11 @@ def _llmd_router_epp_selectors_for_release(
     Keep the deterministic selector as a fallback for older chart layouts and
     during the short interval before Helm has created the Deployment.
     """
-    helm_release_name = _llmd_recipe_scheduler_release_name_for(release_name)
-    fallback = _llmd_router_epp_selectors(release_name, gateway_mode)
-    try:
-        payload = run_json_command(
-            [kubectl_cmd, "get", "deployments", "-n", namespace, "-o", "json"]
-        )
-    except CommandError:
-        return fallback
-
-    for deployment in payload.get("items", []):
-        metadata = deployment.get("metadata") or {}
-        annotations = metadata.get("annotations") or {}
-        if (
-            annotations.get("meta.helm.sh/release-name") != helm_release_name
-            or annotations.get("meta.helm.sh/release-namespace") != namespace
-        ):
-            continue
-        match_labels = (
-            deployment.get("spec", {}).get("selector", {}).get("matchLabels") or {}
-        )
-        if not isinstance(match_labels, dict) or not match_labels:
-            continue
-        selector_parts = [
-            f"{key}={value}"
-            for key, value in match_labels.items()
-            if isinstance(key, str) and isinstance(value, (str, int, float, bool))
-        ]
-        if selector_parts:
-            return [",".join(selector_parts), *fallback]
-    return fallback
+    return list(
+        resolve_llmd_epp_identity(
+            namespace, release_name, gateway_mode, kubectl_cmd
+        ).selectors
+    )
 
 
 def _llmd_router_httproute_gateway_override(release_name: str) -> str:

@@ -10,6 +10,7 @@ from .benchmark import runtime as runtime_module
 from .benchmark import benchmark_version_from_plan
 from .benchmark.common import resolved_accelerator
 from .cluster import CommandError, require_any_command, run_command, run_json_command
+from .llmd_epp import resolve_llmd_epp_identity
 from .models import ResolvedRunPlan, RuntimeArtifactDirectorySpec
 from .storage_offloading import storage_offloading_config
 from .tracing import collect_traces
@@ -179,6 +180,7 @@ def _write_redacted_pods_snapshot(
     state_dir: Path,
     namespace: str,
     release_name: str,
+    release_aliases: tuple[str, ...] = (),
 ) -> bool:
     result = run_command(
         [kubectl_cmd, "get", "pods", "-n", namespace, "-o", "json"],
@@ -200,7 +202,7 @@ def _write_redacted_pods_snapshot(
             continue
         metadata = item.get("metadata") or {}
         if not isinstance(metadata, dict) or not _matches_release(
-            metadata, release_name
+            metadata, release_name, release_aliases
         ):
             continue
         payload["items"].append(_redact_pod_artifact(item))
@@ -252,16 +254,31 @@ def _release_token_matches(candidate: str, release_name: str) -> bool:
     return False
 
 
-def _matches_release(metadata: dict[str, object], release_name: str) -> bool:
+def _matches_release(
+    metadata: dict[str, object],
+    release_name: str,
+    release_aliases: tuple[str, ...] = (),
+) -> bool:
+    candidates = tuple(dict.fromkeys((release_name, *release_aliases)))
     name = metadata.get("name")
-    if isinstance(name, str) and _release_token_matches(name, release_name):
+    if isinstance(name, str) and any(
+        _release_token_matches(name, candidate) for candidate in candidates
+    ):
         return True
 
     labels = metadata.get("labels")
     if isinstance(labels, dict):
         for value in labels.values():
-            if isinstance(value, str) and _release_token_matches(value, release_name):
+            if isinstance(value, str) and any(
+                _release_token_matches(value, candidate) for candidate in candidates
+            ):
                 return True
+
+    annotations = metadata.get("annotations")
+    if isinstance(annotations, dict):
+        helm_release = annotations.get("meta.helm.sh/release-name")
+        if isinstance(helm_release, str) and helm_release in candidates:
+            return True
 
     owner_references = metadata.get("ownerReferences")
     if isinstance(owner_references, list):
@@ -269,8 +286,9 @@ def _matches_release(metadata: dict[str, object], release_name: str) -> bool:
             if not isinstance(owner, dict):
                 continue
             owner_name = owner.get("name")
-            if isinstance(owner_name, str) and _release_token_matches(
-                owner_name, release_name
+            if isinstance(owner_name, str) and any(
+                _release_token_matches(owner_name, candidate)
+                for candidate in candidates
             ):
                 return True
 
@@ -416,6 +434,7 @@ def _collect_platform_state(
     namespace: str,
     release_name: str,
     artifacts_dir: Path,
+    release_aliases: tuple[str, ...] = (),
 ) -> int:
     state_dir = artifacts_dir / "platform-state"
     snapshot_count = 0
@@ -456,7 +475,13 @@ def _collect_platform_state(
         if _write_command_snapshot(kubectl_cmd, state_dir, name, command):
             snapshot_count += 1
 
-    if _write_redacted_pods_snapshot(kubectl_cmd, state_dir, namespace, release_name):
+    if _write_redacted_pods_snapshot(
+        kubectl_cmd,
+        state_dir,
+        namespace,
+        release_name,
+        release_aliases,
+    ):
         snapshot_count += 1
 
     return snapshot_count
@@ -885,11 +910,20 @@ def collect_artifacts(
 
     namespace = plan.deployment.namespace
     release_name = plan.deployment.release_name
+    release_aliases: tuple[str, ...] = ()
+    if str(plan.deployment.platform or "").strip().lower() == "llm-d":
+        release_aliases = resolve_llmd_epp_identity(
+            namespace,
+            release_name,
+            str(plan.deployment.gateway or "").strip(),
+            kubectl_cmd,
+        ).release_aliases
     platform_state_count = _collect_platform_state(
         kubectl_cmd,
         namespace,
         release_name,
         artifacts_dir,
+        release_aliases,
     )
     detail(f"Collected {platform_state_count} platform state snapshot(s)")
 
@@ -939,7 +973,7 @@ def collect_artifacts(
         for item in payload.get("items", []):
             metadata = item.get("metadata", {})
             if not isinstance(metadata, dict) or not _matches_release(
-                metadata, release_name
+                metadata, release_name, release_aliases
             ):
                 continue
             pod_name = metadata.get("name", "")
@@ -1096,7 +1130,7 @@ def collect_artifacts(
             for item in items:
                 metadata = item.get("metadata", {})
                 if not isinstance(metadata, dict) or not _matches_release(
-                    metadata, release_name
+                    metadata, release_name, release_aliases
                 ):
                     continue
                 name = metadata.get("name")

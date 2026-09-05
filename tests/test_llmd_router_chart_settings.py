@@ -107,16 +107,17 @@ export ROUTER_GATEWAY_CHART=oci://example.invalid/router-gateway
         with self.assertRaisesRegex(CommandError, "unsupported shell expressions"):
             _llmd_router_chart_settings(Path(checkout.name), gateway_mode="istio")
 
-    @patch("benchflow.deploy.llmd.run_json_command")
+    @patch("benchflow.llmd_epp.run_json_command")
     def test_epp_selector_uses_helm_deployment_selector(self, run_json_command) -> None:
         run_json_command.return_value = {
             "items": [
                 {
                     "metadata": {
+                        "name": "gaie-very-long-release-na-epp",
                         "annotations": {
                             "meta.helm.sh/release-name": "gaie-very-long-release-name",
                             "meta.helm.sh/release-namespace": "benchflow",
-                        }
+                        },
                     },
                     "spec": {
                         "selector": {

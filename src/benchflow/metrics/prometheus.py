@@ -10,7 +10,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..cluster import CommandError
+from ..cluster import CommandError, require_any_command
+from ..llmd_epp import resolve_llmd_epp_identity
 from ..llmd_layout import uses_recipe_layout as _llmd_uses_recipe_layout
 from ..models import ResolvedRunPlan
 from ..ui import detail, step, success, warning
@@ -148,7 +149,10 @@ def _normalize_series(
 
 
 def _query_template_values(
-    plan: ResolvedRunPlan, metrics_release_name: str
+    plan: ResolvedRunPlan,
+    metrics_release_name: str,
+    *,
+    resolved_scheduler_pod_regex: str = "",
 ) -> dict[str, str]:
     platform = str(plan.deployment.platform or "").strip().lower()
     mode = str(plan.deployment.mode or "").strip().lower()
@@ -168,6 +172,9 @@ def _query_template_values(
             scheduler_pod_regex = f".*{metrics_release_name}.*router-scheduler.*"
             scheduler_endpoint_regex = "metrics"
 
+    if resolved_scheduler_pod_regex:
+        scheduler_pod_regex = resolved_scheduler_pod_regex
+
     return {
         "$namespace": plan.deployment.namespace,
         "$release": metrics_release_name,
@@ -180,6 +187,26 @@ def _query_template_values(
         "$ceph_pvc_regex": _ceph_pvc_regex(plan),
         "$ceph_pool_regex": _ceph_pool_regex(plan),
     }
+
+
+def _resolved_scheduler_pod_regex(
+    plan: ResolvedRunPlan,
+    metrics_release_name: str,
+    kubectl_cmd: str,
+) -> str:
+    if str(
+        plan.deployment.platform or ""
+    ).strip().lower() != "llm-d" or not _llmd_uses_recipe_layout(
+        plan.deployment.repo_ref
+    ):
+        return ""
+    identity = resolve_llmd_epp_identity(
+        plan.deployment.namespace,
+        metrics_release_name,
+        str(plan.deployment.gateway or "").strip(),
+        kubectl_cmd,
+    )
+    return f"{_promql_regex_escape(identity.deployment_name)}.*"
 
 
 def _runtime_pvc_regex(plan: ResolvedRunPlan) -> str:
@@ -285,7 +312,16 @@ def collect_metrics(
     metrics_release_name = plan.deployment.target.scoped_release_name(
         plan.deployment.release_name
     )
-    template_values = _query_template_values(plan, metrics_release_name)
+    resolved_scheduler_pod_regex = _resolved_scheduler_pod_regex(
+        plan,
+        metrics_release_name,
+        require_any_command("oc", "kubectl"),
+    )
+    template_values = _query_template_values(
+        plan,
+        metrics_release_name,
+        resolved_scheduler_pod_regex=resolved_scheduler_pod_regex,
+    )
 
     queries = plan.metrics.queries or {}
     if not queries:
