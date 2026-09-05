@@ -1,0 +1,26 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: llm-d-selective-loading
+spec:
+  model:
+    name:
+      - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8
+  deployment_profile:
+    - llm-d-optimized-baseline-selective-loading
+  benchmark_profile:
+    - aiperf-agentx-inference
+  overrides:
+    images:
+      runtime: quay.io/rh-ee-aperdomo/vllm:v0.27.0-selective-load-v1
+      scheduler: quay.io/rh-ee-aperdomo/llm-d-router-endpoint-picker:dev-ac5446eb
+    benchmark:
+      concurrency: 64
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H100
+      revision: v0.27.0-lookahead-v2
+  namespace: benchflow
+  execution:
+    timeout: 8h

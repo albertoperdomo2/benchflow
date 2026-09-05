@@ -1,0 +1,62 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-optimized-baseline-selective-loading
+spec:
+  platform: llm-d
+  mode: inference-scheduling
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v0.8.0
+  gateway: istio
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /model-cache
+  runtime:
+    replicas: 1
+    tensor_parallelism: 8
+    env:
+      USER: benchflow
+      PYTHONHASHSEED: "0"
+    # Reserve enough host memory for the 256 GiB CPU KV tier in addition to
+    # the model server. BenchFlow derives the GPU allocation from TP and PP.
+    shared_memory_size: 300Gi
+    resources:
+      requests:
+        memory: 300Gi
+      limits:
+        memory: 400Gi
+    vllm_args:
+      - --gpu-memory-utilization=0.8
+      - --trust-remote-code
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":274877906944}}
+  options:
+    epp_allow_experimental_plugins: true
+    epp_config: |
+      apiVersion: llm-d.ai/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+        - type: queue-scorer
+        - type: kv-cache-utilization-scorer
+        - type: prefix-cache-scorer
+        - type: no-hit-lru-scorer
+        - type: selective-kv-policy
+          name: selective-kv-policy
+          parameters:
+            engineCapability: binary-opt-out-v1
+            loadPolicy: disable
+            offloadPolicy: preserve
+      schedulingProfiles:
+        - name: default
+          plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: kv-cache-utilization-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+            - pluginRef: no-hit-lru-scorer
+              weight: 2
