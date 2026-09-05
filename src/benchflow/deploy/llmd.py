@@ -385,6 +385,13 @@ def _llmd_recipe_modelserver_backend_dirs(plan: ResolvedRunPlan) -> list[str]:
     return ["gpu/vllm"]
 
 
+def _llmd_uses_nvidia_gpu(plan: ResolvedRunPlan) -> bool:
+    return any(
+        backend.startswith("gpu/")
+        for backend in _llmd_recipe_modelserver_backend_dirs(plan)
+    )
+
+
 def _llmd_model_label_value(plan: ResolvedRunPlan) -> str:
     # Kubernetes label values must be DNS-like and cannot contain the raw model
     # identifier when it includes characters such as "/".
@@ -596,13 +603,19 @@ def _ensure_container(values: dict[str, Any]) -> dict[str, Any]:
     return containers[0]
 
 
-def _apply_runtime_resources(container: dict[str, Any], plan: ResolvedRunPlan) -> None:
+def _apply_runtime_resources(
+    container: dict[str, Any],
+    plan: ResolvedRunPlan,
+    *,
+    include_nvidia_gpu: bool = False,
+) -> None:
     runtime_resources = plan.deployment.runtime.resources
     if (
         not runtime_resources.requests
         and not runtime_resources.limits
         and not runtime_resources.remove_requests
         and not runtime_resources.remove_limits
+        and not include_nvidia_gpu
     ):
         return
 
@@ -621,6 +634,13 @@ def _apply_runtime_resources(container: dict[str, Any], plan: ResolvedRunPlan) -
         resources.setdefault("requests", {}).update(runtime_resources.requests)
     if runtime_resources.limits:
         resources.setdefault("limits", {}).update(runtime_resources.limits)
+    if include_nvidia_gpu:
+        gpu_count = str(
+            plan.deployment.runtime.tensor_parallelism
+            * plan.deployment.runtime.pipeline_parallelism
+        )
+        resources.setdefault("requests", {})["nvidia.com/gpu"] = gpu_count
+        resources.setdefault("limits", {})["nvidia.com/gpu"] = gpu_count
 
 
 def _apply_runtime_pvc_manifests(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
@@ -1047,7 +1067,11 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
 
     if runtime.image:
         container["image"] = runtime.image
-    _apply_runtime_resources(container, plan)
+    _apply_runtime_resources(
+        container,
+        plan,
+        include_nvidia_gpu=_llmd_uses_nvidia_gpu(plan),
+    )
     if plan.deployment.mode == "precise-prefix-cache":
         existing_args = list(container.get("args") or [])
         kv_events_config: dict[str, Any] | None = None
@@ -1725,7 +1749,11 @@ def _patch_recipe_modelserver_overlay(
         # Apply the image in the final modelserver patch: the guide's gpu-vllm
         # component otherwise overwrites Kustomize image replacements.
         container["image"] = runtime.image
-    _apply_runtime_resources(container, plan)
+    _apply_runtime_resources(
+        container,
+        plan,
+        include_nvidia_gpu=_llmd_uses_nvidia_gpu(plan),
+    )
 
     volume_mounts = container.setdefault("volumeMounts", [])
     if not any(
