@@ -1205,6 +1205,18 @@ def _llmd_epp_verbosity(plan: ResolvedRunPlan) -> int | None:
     return verbosity
 
 
+def _llmd_epp_allow_experimental_plugins(plan: ResolvedRunPlan) -> bool:
+    raw_value = plan.deployment.options.get("epp_allow_experimental_plugins")
+    if raw_value is None:
+        return False
+    if not isinstance(raw_value, bool):
+        raise CommandError(
+            "deployment profile options.epp_allow_experimental_plugins must be a "
+            "boolean"
+        )
+    return raw_value
+
+
 def _patch_scheduler_values(
     plan: ResolvedRunPlan,
     values_file: Path,
@@ -1231,6 +1243,13 @@ def _patch_scheduler_values(
                 flags = {}
                 epp["flags"] = flags
             flags["v"] = epp_verbosity
+
+        if _llmd_epp_allow_experimental_plugins(plan):
+            flags = epp.get("flags")
+            if not isinstance(flags, dict):
+                flags = {}
+                epp["flags"] = flags
+            flags["allow-experimental-plugins"] = True
 
         if tracing_enabled(plan):
             tracing = router.setdefault("tracing", {})

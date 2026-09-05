@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from benchflow.cluster import CommandError
 from benchflow.deploy.llmd import (
     _apply_pd_proxy_tracing,
     _apply_vllm_tracing,
@@ -158,6 +159,32 @@ def test_router_tracing_values_enable_epp(tracing_plan, tmp_path: Path) -> None:
     }
     env = {item["name"]: item["value"] for item in router["epp"]["env"]}
     assert env["OTEL_SERVICE_NAME"] == (f"{tracing_plan.deployment.release_name}-epp")
+
+
+def test_router_values_allow_experimental_plugins(tracing_plan, tmp_path: Path) -> None:
+    tracing_plan.deployment.options["epp_allow_experimental_plugins"] = True
+    values_path = tmp_path / "values.yaml"
+    values_path.write_text("router: {}\n", encoding="utf-8")
+
+    _patch_scheduler_values(
+        tracing_plan, values_path, recipe_layout=True, router_chart=True
+    )
+
+    values = yaml.safe_load(values_path.read_text(encoding="utf-8"))
+    assert values["router"]["epp"]["flags"]["allow-experimental-plugins"] is True
+
+
+def test_router_rejects_non_boolean_experimental_plugins_option(
+    tracing_plan, tmp_path: Path
+) -> None:
+    tracing_plan.deployment.options["epp_allow_experimental_plugins"] = "true"
+    values_path = tmp_path / "values.yaml"
+    values_path.write_text("router: {}\n", encoding="utf-8")
+
+    with pytest.raises(CommandError, match="must be a boolean"):
+        _patch_scheduler_values(
+            tracing_plan, values_path, recipe_layout=True, router_chart=True
+        )
 
 
 def test_pd_proxy_requires_flag_and_otlp_exporter(tracing_plan) -> None:
