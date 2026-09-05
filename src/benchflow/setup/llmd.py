@@ -516,10 +516,8 @@ def _wait_for_istiod(kubectl_cmd: str, timeout_seconds: int) -> None:
         [
             kubectl_cmd,
             "wait",
-            "--for=condition=ready",
-            "pod",
-            "-l",
-            "app=istiod",
+            "--for=condition=available",
+            "deployment/istiod",
             "-n",
             "istio-system",
             f"--timeout={timeout_seconds}s",
