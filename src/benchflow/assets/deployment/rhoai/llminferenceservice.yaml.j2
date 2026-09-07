@@ -57,6 +57,9 @@ spec:
 {% if epp_verbosity is not none %}
               - --v={{ epp_verbosity }}
 {% endif %}
+{% if epp_allow_experimental_plugins %}
+              - --allow-experimental-plugins
+{% endif %}
               - --grpc-port
               - "9002"
               - --grpc-health-port

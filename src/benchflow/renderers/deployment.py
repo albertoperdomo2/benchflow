@@ -397,6 +397,16 @@ def _rhoai_epp_verbosity(plan: ResolvedRunPlan) -> int | None:
     return verbosity
 
 
+def _rhoai_epp_allow_experimental_plugins(plan: ResolvedRunPlan) -> bool:
+    raw_value = plan.deployment.options.get("epp_allow_experimental_plugins", False)
+    if not isinstance(raw_value, bool):
+        raise ValidationError(
+            "deployment profile options.epp_allow_experimental_plugins must be a "
+            "boolean"
+        )
+    return raw_value
+
+
 def _rhoai_startup_probe(plan: ResolvedRunPlan) -> dict[str, Any] | None:
     default_probe = {
         "httpGet": {
@@ -443,6 +453,11 @@ def _rhoai_validate_isvc(plan: ResolvedRunPlan) -> None:
         raise ValidationError(
             "rhoai isvc deployments do not support options.epp_verbosity"
         )
+    if _rhoai_epp_allow_experimental_plugins(plan):
+        raise ValidationError(
+            "rhoai isvc deployments do not support "
+            "options.epp_allow_experimental_plugins"
+        )
 
 
 def _rhoai_llminferenceservice_template_context(
@@ -453,6 +468,7 @@ def _rhoai_llminferenceservice_template_context(
         str(plan.deployment.options.get("epp_config") or "").strip()
     )
     epp_verbosity = _rhoai_epp_verbosity(plan)
+    epp_allow_experimental_plugins = _rhoai_epp_allow_experimental_plugins(plan)
     custom_scheduler_enabled = (
         plan.deployment.mode
         in {
@@ -461,6 +477,7 @@ def _rhoai_llminferenceservice_template_context(
         }
         or has_custom_epp_config
         or epp_verbosity is not None
+        or epp_allow_experimental_plugins
     )
     scheduler_config_enabled = (
         plan.deployment.mode
@@ -504,6 +521,7 @@ def _rhoai_llminferenceservice_template_context(
         "custom_scheduler_enabled": custom_scheduler_enabled,
         "scheduler_config_enabled": scheduler_config_enabled,
         "epp_verbosity": epp_verbosity,
+        "epp_allow_experimental_plugins": epp_allow_experimental_plugins,
         "epp_tracing_enabled": tracing_enabled(plan),
         "epp_tracing_env": [
             {"name": name, "value": value}
