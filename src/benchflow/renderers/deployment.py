@@ -375,7 +375,7 @@ def _rhoai_basic_vllm_args(plan: ResolvedRunPlan) -> list[str]:
     )
 
 
-def _rhoai_precise_tokenizer_model_path(plan: ResolvedRunPlan) -> str:
+def _rhoai_tokenizer_model_path(plan: ResolvedRunPlan) -> str:
     return f"/mnt/models/base{_model_path(plan)}"
 
 
@@ -568,8 +568,9 @@ def _rhoai_llminferenceservice_template_context(
         ),
         "precise_prefix_cache_enabled": plan.deployment.mode == "precise-prefix-cache",
         "precise_prefix_cache_tokenizer_model_path": (
-            _rhoai_precise_tokenizer_model_path(plan)
+            _rhoai_tokenizer_model_path(plan)
         ),
+        "tokenizer_model_path": _rhoai_tokenizer_model_path(plan),
         "profiling_enabled": plan.execution.profiling.enabled,
         "profiler_call_ranges": plan.execution.profiling.call_ranges,
         "profiler_idle_seconds": plan.execution.profiling.idle_seconds,
