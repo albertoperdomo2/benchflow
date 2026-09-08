@@ -326,7 +326,7 @@ def _rhoai_basic_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
 
 
 def _rhoai_vllm_args(plan: ResolvedRunPlan) -> list[str]:
-    model_path = f"/mnt/models{_model_path(plan)}"
+    model_path = "/mnt/models"
     runtime_args = list(plan.deployment.runtime.vllm_args)
     if _rhoai_precise_prefix_cache_routing(plan):
         if "--enable-prefix-caching" not in runtime_args:
@@ -375,8 +375,8 @@ def _rhoai_basic_vllm_args(plan: ResolvedRunPlan) -> list[str]:
     )
 
 
-def _rhoai_tokenizer_model_path(plan: ResolvedRunPlan) -> str:
-    return f"/mnt/models/base{_model_path(plan)}"
+def _rhoai_tokenizer_model_path() -> str:
+    return "/mnt/models/base"
 
 
 def _rhoai_custom_epp_config_lines(
@@ -527,7 +527,9 @@ def _rhoai_llminferenceservice_template_context(
         "labels": _base_labels(plan),
         "enable_auth": str(plan.deployment.options.get("enable_auth", False)).lower(),
         "model_name": plan.model.name,
-        "model_uri": f"pvc://{plan.deployment.model_storage.pvc_name}",
+        "model_uri": (
+            f"pvc://{plan.deployment.model_storage.pvc_name}{_model_path(plan)}"
+        ),
         "replicas": plan.deployment.runtime.replicas,
         "runtime_image": plan.deployment.runtime.image,
         "scheduler_image": plan.deployment.scheduler_image,
@@ -567,10 +569,7 @@ def _rhoai_llminferenceservice_template_context(
             plan.deployment.mode == "approximate-prefix-cache"
         ),
         "precise_prefix_cache_enabled": plan.deployment.mode == "precise-prefix-cache",
-        "precise_prefix_cache_tokenizer_model_path": (
-            _rhoai_tokenizer_model_path(plan)
-        ),
-        "tokenizer_model_path": _rhoai_tokenizer_model_path(plan),
+        "precise_prefix_cache_tokenizer_model_path": (_rhoai_tokenizer_model_path()),
         "profiling_enabled": plan.execution.profiling.enabled,
         "profiler_call_ranges": plan.execution.profiling.call_ranges,
         "profiler_idle_seconds": plan.execution.profiling.idle_seconds,

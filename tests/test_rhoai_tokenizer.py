@@ -8,7 +8,7 @@ from benchflow.renderers.deployment import render_rhoai_manifest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_custom_rhoai_scheduler_uses_model_specific_tokenizer_path(
+def test_rhoai_model_uri_mounts_model_for_server_and_tokenizer(
     tmp_path: Path,
 ) -> None:
     experiment_path = tmp_path / "experiment.yaml"
@@ -33,8 +33,10 @@ spec:
     )[0]
 
     manifest = render_rhoai_manifest(plan)
-    tokenizer = manifest["spec"]["router"]["scheduler"]["tokenizer"]["template"]
-    container = tokenizer["containers"][0]
+    model_server = manifest["spec"]["template"]["containers"][0]
 
-    assert container["name"] == "main"
-    assert "/mnt/models/base/models/Qwen-Qwen3-32B" in container["command"][2]
+    assert manifest["spec"]["model"]["uri"] == (
+        "pvc://models-storage/models/Qwen-Qwen3-32B"
+    )
+    assert "--model=/mnt/models" in model_server["args"]
+    assert "tokenizer" not in manifest["spec"]["router"]["scheduler"]

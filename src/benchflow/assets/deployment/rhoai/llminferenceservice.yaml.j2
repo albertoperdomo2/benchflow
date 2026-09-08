@@ -155,19 +155,6 @@ spec:
                 name: tokenizers
 {% endif %}
             resources: {}
-      tokenizer:
-        template:
-          containers:
-            - name: main
-              command:
-                - /bin/bash
-                - -c
-                - |-
-                  exec vllm launch render {{ tokenizer_model_path }} \
-                    --port=8000 \
-                    --enable-ssl-refresh \
-                    --ssl-certfile /var/run/kserve/tls/tls.crt \
-                    --ssl-keyfile /var/run/kserve/tls/tls.key
 {% endif %}
   template:
 {% if runtime_service_account_name %}
