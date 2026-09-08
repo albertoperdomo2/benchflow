@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -285,6 +286,15 @@ def _rhoai_uses_isvc(plan: ResolvedRunPlan) -> bool:
     return plan.deployment.mode == "isvc"
 
 
+def _rhoai_precise_prefix_cache_routing(plan: ResolvedRunPlan) -> bool:
+    raw_value = plan.deployment.options.get("precise_prefix_cache_routing", False)
+    if not isinstance(raw_value, bool):
+        raise ValidationError(
+            "deployment profile options.precise_prefix_cache_routing must be a boolean"
+        )
+    return raw_value
+
+
 def _rhoai_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     env = {key: value for key, value in plan.deployment.runtime.env.items()}
     env.update(
@@ -317,6 +327,24 @@ def _rhoai_basic_runtime_env(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
 
 def _rhoai_vllm_args(plan: ResolvedRunPlan) -> list[str]:
     model_path = f"/mnt/models{_model_path(plan)}"
+    runtime_args = list(plan.deployment.runtime.vllm_args)
+    if _rhoai_precise_prefix_cache_routing(plan):
+        if "--enable-prefix-caching" not in runtime_args:
+            runtime_args.append("--enable-prefix-caching")
+        if not any(arg.startswith("--block-size") for arg in runtime_args):
+            runtime_args.append("--block-size=64")
+        if not any(arg.startswith("--kv-events-config") for arg in runtime_args):
+            kv_events_config = json.dumps(
+                {
+                    "enable_kv_cache_events": True,
+                    "publisher": "zmq",
+                    "endpoint": "$(KV_EVENTS_ENDPOINT)",
+                    "replay_endpoint": "$(KV_EVENTS_REPLAY_ENDPOINT)",
+                    "topic": f"kv@$(POD_IP):$(POD_PORT)@{plan.model.name}",
+                },
+                separators=(",", ":"),
+            )
+            runtime_args.append(f"--kv-events-config={kv_events_config}")
     return vllm_tracing_args(
         plan,
         [
@@ -329,7 +357,7 @@ def _rhoai_vllm_args(plan: ResolvedRunPlan) -> list[str]:
             "--ssl-certfile=/var/run/kserve/tls/tls.crt",
             "--ssl-keyfile=/var/run/kserve/tls/tls.key",
         ]
-        + plan.deployment.runtime.vllm_args,
+        + runtime_args,
     )
 
 
@@ -458,6 +486,10 @@ def _rhoai_validate_isvc(plan: ResolvedRunPlan) -> None:
             "rhoai isvc deployments do not support "
             "options.epp_allow_experimental_plugins"
         )
+    if _rhoai_precise_prefix_cache_routing(plan):
+        raise ValidationError(
+            "rhoai isvc deployments do not support options.precise_prefix_cache_routing"
+        )
 
 
 def _rhoai_llminferenceservice_template_context(
@@ -469,6 +501,7 @@ def _rhoai_llminferenceservice_template_context(
     )
     epp_verbosity = _rhoai_epp_verbosity(plan)
     epp_allow_experimental_plugins = _rhoai_epp_allow_experimental_plugins(plan)
+    precise_prefix_cache_routing = _rhoai_precise_prefix_cache_routing(plan)
     custom_scheduler_enabled = (
         plan.deployment.mode
         in {
@@ -522,6 +555,7 @@ def _rhoai_llminferenceservice_template_context(
         "scheduler_config_enabled": scheduler_config_enabled,
         "epp_verbosity": epp_verbosity,
         "epp_allow_experimental_plugins": epp_allow_experimental_plugins,
+        "precise_prefix_cache_routing": precise_prefix_cache_routing,
         "epp_tracing_enabled": tracing_enabled(plan),
         "epp_tracing_env": [
             {"name": name, "value": value}

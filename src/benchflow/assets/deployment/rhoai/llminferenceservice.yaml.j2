@@ -10,7 +10,7 @@ metadata:
   annotations:
     security.opendatahub.io/enable-auth: {{ enable_auth | tojson }}
     serving.kserve.io/enable-prometheus-scraping: "true"
-{% if precise_prefix_cache_enabled %}
+{% if precise_prefix_cache_enabled or precise_prefix_cache_routing %}
     benchflow.io/prefix-caching: "precise"
 {% endif %}
 spec:
@@ -177,6 +177,15 @@ spec:
 {% if runtime_image %}
         image: {{ runtime_image | tojson }}
 {% endif %}
+{% if precise_prefix_cache_routing %}
+        ports:
+          - containerPort: 5556
+            name: kv-events
+            protocol: TCP
+          - containerPort: 5559
+            name: kv-replay
+            protocol: TCP
+{% endif %}
         command:
           - python3
           - -m
@@ -214,7 +223,7 @@ spec:
           - "--block-size=64"
           - '--kv-events-config={"enable_kv_cache_events": true, "publisher": "zmq", "endpoint": "tcp://{{ release_name }}-epp-service:5557", "topic": "kv@$(POD_IP)@$(MODEL_NAME)"}'
 {% endif %}
-{% if runtime_env or precise_prefix_cache_enabled or profiling_enabled or mooncake_enabled %}
+{% if runtime_env or precise_prefix_cache_enabled or precise_prefix_cache_routing or profiling_enabled or mooncake_enabled %}
         env:
 {% for entry in runtime_env %}
           - name: {{ entry.name }}
@@ -247,6 +256,21 @@ spec:
             value: {{ model_name | tojson }}
           - name: PYTHONHASHSEED
             value: "42"
+{% endif %}
+{% if precise_prefix_cache_routing %}
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: status.podIP
+          - name: POD_PORT
+            value: "8000"
+          - name: KV_EVENTS_ENDPOINT
+            value: "tcp://*:5556"
+          - name: KV_EVENTS_REPLAY_ENDPOINT
+            value: "tcp://*:5559"
+          - name: DO_NOT_TRACK
+            value: "1"
 {% endif %}
 {% endif %}
 {% if runtime_shared_memory_size or runtime_host_path_mounts or runtime_pvc_mounts or profiling_enabled or mooncake_model_volume_mount %}
