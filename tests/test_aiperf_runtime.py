@@ -97,3 +97,25 @@ def test_aiperf_subprocess_uses_private_writable_working_directory() -> None:
 
     assert observed_work_dir is not None
     assert not observed_work_dir.exists()
+
+
+def test_aiperf_command_is_written_as_reusable_artifact(tmp_path: Path) -> None:
+    command = [
+        "aiperf",
+        "profile",
+        "--model",
+        "Qwen/Qwen3-32B",
+        "--extra-inputs",
+        "ignore_eos:true",
+        "--url",
+        "https://example.test/inference endpoint",
+    ]
+
+    command_path = aiperf._write_command_artifact(tmp_path, command)
+
+    assert command_path == tmp_path / "aiperf-command.txt"
+    assert command_path.read_text(encoding="utf-8") == (
+        "aiperf profile --model Qwen/Qwen3-32B "
+        "--extra-inputs ignore_eos:true "
+        "--url 'https://example.test/inference endpoint'\n"
+    )

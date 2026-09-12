@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -344,6 +345,12 @@ def _build_command(
     return command
 
 
+def _write_command_artifact(artifact_dir: Path, command: list[str]) -> Path:
+    command_path = artifact_dir / "aiperf-command.txt"
+    command_path.write_text(f"{shlex.join(command)}\n", encoding="utf-8")
+    return command_path
+
+
 def run_benchmark(
     *,
     plan: ResolvedRunPlan,
@@ -383,6 +390,7 @@ def run_benchmark(
         dataset_path=dataset_path,
         aiperf=aiperf,
     )
+    _write_command_artifact(artifact_dir, command)
 
     tags = dict(plan.mlflow.tags)
     if extra_tags:
