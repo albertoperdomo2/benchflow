@@ -29,6 +29,7 @@ from .node_exclusive import (
     reserve_nodes,
 )
 from .platform_state import SETUP_KEY_ANNOTATION
+from .runtime_images import is_inference_sim_image
 from .orchestration.matrix_payloads import (
     adopt_matrix_run_plans_configmap,
     matrix_run_plans_configmap_name_from_labels,
@@ -133,6 +134,8 @@ def target_kubeconfig_secret_from_plans(plans: list[ResolvedRunPlan]) -> str:
 
 def requested_gpus(plan: ResolvedRunPlan) -> int:
     if not (plan.stages.deploy or plan.stages.benchmark):
+        return 0
+    if is_inference_sim_image(plan.deployment.runtime.image):
         return 0
     replicas = max(1, int(plan.deployment.runtime.replicas or 1))
     tensor_parallelism = max(1, int(plan.deployment.runtime.tensor_parallelism or 1))

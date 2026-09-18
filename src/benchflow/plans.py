@@ -32,6 +32,7 @@ from .models import (
     normalize_profile_refs,
     sanitize_name,
 )
+from .runtime_images import is_inference_sim_image
 
 _MATRIX_CHILD_INDEX_LABEL = "benchflow.io/matrix-child-index"
 _MATRIX_RELEASE_SCOPE_LABEL = "benchflow.io/matrix-release-scope"
@@ -186,8 +187,12 @@ def _validate_existing_target_support(experiment: Experiment) -> None:
     return
 
 
-def _resolved_stage_spec(experiment: Experiment) -> StageSpec:
+def _resolved_stage_spec(
+    experiment: Experiment, *, inference_sim: bool = False
+) -> StageSpec:
     if not experiment.spec.target.enabled():
+        if inference_sim:
+            return replace(experiment.spec.stages, download=False)
         return experiment.spec.stages
     return StageSpec(
         download=False,
@@ -196,6 +201,67 @@ def _resolved_stage_spec(experiment: Experiment) -> StageSpec:
         collect=bool(str(experiment.spec.target.metrics_release_name or "").strip()),
         cleanup=False,
     )
+
+
+def _argument_names(arguments: list[str]) -> set[str]:
+    return {str(argument).split("=", 1)[0].strip() for argument in arguments}
+
+
+def _validate_inference_sim_runtime(
+    *,
+    runtime: RuntimeSpec,
+    platform: str,
+    mode: str,
+    tracing_enabled: bool,
+    options: dict[str, object],
+) -> None:
+    if platform != "llm-d" or mode != "inference-scheduling":
+        raise ValidationError(
+            "llm-d-inference-sim is currently supported only by llm-d "
+            "inference-scheduling deployment profiles"
+        )
+    if runtime.tensor_parallelism != 1 or runtime.pipeline_parallelism != 1:
+        raise ValidationError(
+            "llm-d-inference-sim requires tensor_parallelism=1 and "
+            "pipeline_parallelism=1"
+        )
+    if runtime.placement.mode == "node-exclusive":
+        raise ValidationError(
+            "llm-d-inference-sim does not support node-exclusive placement because "
+            "it does not reserve GPUs"
+        )
+    if tracing_enabled:
+        raise ValidationError(
+            "llm-d-inference-sim does not currently emit the OTLP traces required "
+            "by BenchFlow tracing metrics profiles"
+        )
+    if runtime.host_paths or runtime.pvc_mounts or runtime.shared_memory_size:
+        raise ValidationError(
+            "llm-d-inference-sim profiles must not configure host paths, PVC "
+            "mounts, or shared memory"
+        )
+    storage_offloading = options.get("storage_offloading")
+    if storage_offloading not in (None, "", False):
+        if not (
+            isinstance(storage_offloading, dict)
+            and storage_offloading.get("enabled") is False
+        ):
+            raise ValidationError(
+                "llm-d-inference-sim does not support storage offloading"
+            )
+
+    managed_flags = {
+        "--model",
+        "--served-model-name",
+        "--port",
+        "--render-url",
+    }
+    conflicts = sorted(_argument_names(runtime.vllm_args) & managed_flags)
+    if conflicts:
+        raise ValidationError(
+            "BenchFlow manages these llm-d-inference-sim arguments: "
+            + ", ".join(conflicts)
+        )
 
 
 def _validate_benchmark_env(env: dict[str, str]) -> None:
@@ -877,6 +943,15 @@ def resolve_run_plan(
             )
         ),
     )
+    inference_sim = is_inference_sim_image(runtime.image)
+    if inference_sim:
+        _validate_inference_sim_runtime(
+            runtime=runtime,
+            platform=deployment_profile.spec.platform,
+            mode=deployment_profile.spec.mode,
+            tracing_enabled=metrics_profile.spec.tracing.enabled(),
+            options=deployment_profile.spec.options,
+        )
     if (
         runtime.placement.mode == "same-node"
         and deployment_profile.spec.platform != "rhoai"
@@ -1113,6 +1188,9 @@ def resolve_run_plan(
     tags.setdefault("deployment_profile", deployment_profile.metadata.name)
     tags.setdefault("benchmark_profile", benchmark_profile.metadata.name)
     tags.setdefault("metrics_profile", metrics_profile.metadata.name)
+    if inference_sim:
+        tags["runtime_kind"] = "inference-sim"
+        tags["accelerator"] = "SIMULATED"
     if metrics_profile.spec.tracing.enabled():
         tags.setdefault("tracing_mode", metrics_profile.spec.tracing.mode)
         tags.setdefault(
@@ -1148,7 +1226,7 @@ def resolve_run_plan(
         deployment=deployment,
         benchmark=benchmark,
         metrics=metrics_profile.spec,
-        stages=_resolved_stage_spec(experiment),
+        stages=_resolved_stage_spec(experiment, inference_sim=inference_sim),
         mlflow=mlflow,
         service_account=experiment.spec.service_account,
         ttl_seconds_after_finished=experiment.spec.ttl_seconds_after_finished,

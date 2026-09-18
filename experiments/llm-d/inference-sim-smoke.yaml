@@ -1,0 +1,14 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: llm-d-inference-sim-smoke
+spec:
+  model:
+    # The simulator advertises this name but does not download model weights.
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: llm-d-optimized-baseline-inference-sim
+  benchmark_profile: aiperf-smoke
+  metrics_profile: detailed
+  namespace: benchflow
+  execution:
+    timeout: 30m

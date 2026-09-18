@@ -31,6 +31,7 @@ from ..platform_state import (
     setup_key_for_plan,
 )
 from ..repository import clone_repo
+from ..runtime_images import is_inference_sim_image
 from ..storage_offloading import (
     STORAGE_OFFLOADING_TYPE_HOST_PATH,
     STORAGE_OFFLOADING_TYPE_PVC,
@@ -359,6 +360,8 @@ def _llmd_recipe_standalone_envoy_configmap_name(plan: ResolvedRunPlan) -> str:
 
 
 def _llmd_recipe_modelserver_backend_dirs(plan: ResolvedRunPlan) -> list[str]:
+    if is_inference_sim_image(plan.deployment.runtime.image):
+        return ["cpu/vllm"]
     accelerator = (
         str(
             plan.mlflow.tags.get("accelerator")
@@ -386,6 +389,8 @@ def _llmd_recipe_modelserver_backend_dirs(plan: ResolvedRunPlan) -> list[str]:
 
 
 def _llmd_uses_nvidia_gpu(plan: ResolvedRunPlan) -> bool:
+    if is_inference_sim_image(plan.deployment.runtime.image):
+        return False
     return any(
         backend.startswith("gpu/")
         for backend in _llmd_recipe_modelserver_backend_dirs(plan)
@@ -1473,6 +1478,73 @@ def _ensure_container_port(container: dict[str, Any], name: str, port: int) -> N
     ports.append({"name": name, "containerPort": port, "protocol": "TCP"})
 
 
+def _patch_inference_sim_modelserver(
+    container: dict[str, Any], pod_spec: dict[str, Any], plan: ResolvedRunPlan
+) -> None:
+    """Replace vLLM-specific overlay settings with the compatible simulator."""
+    runtime = plan.deployment.runtime
+    container["command"] = []
+    container["args"] = [
+        "--model",
+        plan.model.name,
+        "--served-model-name",
+        plan.model.name,
+        "--port",
+        "8000",
+        *runtime.vllm_args,
+    ]
+    container["env"] = [
+        {
+            "name": "POD_NAME",
+            "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}},
+        },
+        {
+            "name": "POD_NAMESPACE",
+            "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+        },
+        {
+            "name": "POD_IP",
+            "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}},
+        },
+        *(
+            {"name": name, "value": value}
+            for name, value in sorted(runtime.env.items())
+        ),
+    ]
+    container["image"] = runtime.image
+    container.pop("securityContext", None)
+    container["resources"] = {
+        key: dict(values)
+        for key, values in (
+            ("requests", runtime.resources.requests),
+            ("limits", runtime.resources.limits),
+        )
+        if values
+    }
+    container["volumeMounts"] = []
+    pod_spec["volumes"] = []
+    _ensure_container_port(container, "modelserver", 8000)
+
+    container["startupProbe"] = {
+        "httpGet": {"path": "/health/ready", "port": "modelserver"},
+        "periodSeconds": 2,
+        "timeoutSeconds": 2,
+        "failureThreshold": 60,
+    }
+    container["readinessProbe"] = {
+        "httpGet": {"path": "/health/ready", "port": "modelserver"},
+        "periodSeconds": 2,
+        "timeoutSeconds": 2,
+        "failureThreshold": 3,
+    }
+    container["livenessProbe"] = {
+        "httpGet": {"path": "/health", "port": "modelserver"},
+        "periodSeconds": 10,
+        "timeoutSeconds": 2,
+        "failureThreshold": 3,
+    }
+
+
 def _rewrite_huggingface_secret_refs(value: Any) -> None:
     if isinstance(value, dict):
         secret_ref = value.get("secretKeyRef")
@@ -1785,6 +1857,8 @@ def _patch_recipe_modelserver_overlay(
     pod_spec = (
         patch.setdefault("spec", {}).setdefault("template", {}).setdefault("spec", {})
     )
+    if is_inference_sim_image(runtime.image):
+        _patch_inference_sim_modelserver(container, pod_spec, plan)
     if runtime.node_selector:
         pod_spec["nodeSelector"] = dict(runtime.node_selector)
     if runtime.affinity:
@@ -2681,6 +2755,10 @@ def deploy_llmd(
     router_chart = _llmd_recipe_router_layout_available(checkout_dir)
     storage_offloading = _storage_offloading_config(plan)
     render_dir: Path | None = None
+    if is_inference_sim_image(plan.deployment.runtime.image) and not recipe_layout:
+        raise CommandError(
+            "llm-d-inference-sim requires the llm-d recipe modelserver layout"
+        )
     if recipe_layout:
         gateway_mode = str(plan.deployment.gateway or "").strip()
         if tracing_enabled(plan) and not router_chart:

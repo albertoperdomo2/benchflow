@@ -482,6 +482,54 @@ Override semantics:
 - a failed or rejected child does not stop later matrix children; after every child has been attempted, the parent reports an aggregate failure if any child did not submit or complete successfully
 - use `runtime.affinity`, `runtime.node_selector`, and `runtime.tolerations` when a matrix child needs a particular node or hardware class
 
+### llm-d inference simulator deployments
+
+Use the `llm-d-optimized-baseline-inference-sim` deployment profile when the
+router, Gateway, benchmark, and metrics workflow should run against
+[`llm-d-inference-sim`](https://github.com/llm-d/llm-d-inference-sim) instead of
+vLLM:
+
+```bash
+bflow experiment run experiments/llm-d/inference-sim-smoke.yaml \
+  --cluster-name <cluster-name> \
+  --benchflow-image <benchflow-image>
+```
+
+BenchFlow recognizes this runtime from the repository basename in
+`runtime.image`: it must be `llm-d-inference-sim`, with any registry, tag, or
+digest. This deliberately reuses the existing image field and does not add a
+second runtime selector. The simulator follows the normal llm-d
+inference-scheduling path, including the EPP, Gateway, endpoint discovery,
+benchmark, metrics collection, and MLflow publication. Its model-server pods
+request no GPUs, model weights are not downloaded, and the model name is only
+the OpenAI-compatible model identifier advertised by the simulator.
+
+`runtime.vllm_args` has an intentional profile-specific meaning here:
+
+- with a vLLM image, each entry is a vLLM server argument
+- with `llm-d-inference-sim`, each entry is passed directly to the simulator
+  entrypoint and may therefore use simulator-only flags such as
+  `--latency-calculator`, `--time-to-first-token`, `--inter-token-latency`,
+  `--failure-injection-rate`, and `--seed`
+- do not copy arbitrary vLLM arguments into the simulator profile; the
+  simulator accepts only its documented flags plus a small compatibility
+  subset, and rejects unknown arguments
+- BenchFlow owns `--model`, `--served-model-name`, `--port`, and
+  `--render-url`; profiles must not set them. Omitting `--render-url` selects
+  the simulator's built-in tokenizer. `--max-model-len` and `--max-num-seqs`
+  retain their familiar capacity meanings, and benchmark requirements may
+  still raise the resolved `--max-model-len`
+
+The initial supported slice is intentionally narrow: llm-d
+`inference-scheduling`, the recipe model-server layout, TP=1, PP=1, and no
+hostPath/PVC mounts, shared memory, storage offloading, node-exclusive
+placement, P/D topology, or OTLP tracing. Use ordinary CPU scheduling or
+affinity if placement needs to be constrained. Simulator metrics and benchmark
+results validate orchestration and routing behavior; they are synthetic and
+must not be interpreted as accelerator performance measurements. The resolved
+run is tagged with `runtime_kind=inference-sim` and `accelerator=SIMULATED` to
+make that distinction explicit in MLflow and reports.
+
 Target-cluster semantics:
 
 - omit `spec.target_cluster` for the normal same-cluster path
