@@ -16,7 +16,7 @@ from benchflow.runtime_images import image_repository_basename, is_inference_sim
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SMOKE_EXPERIMENT = REPO_ROOT / "experiments/llm-d/inference-sim-smoke.yaml"
+SMOKE_EXPERIMENT = REPO_ROOT / "experiments/smoke/llm-d-inference-sim-smoke.yaml"
 
 
 def _simulator_plan():

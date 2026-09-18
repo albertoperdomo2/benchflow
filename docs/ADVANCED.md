@@ -490,7 +490,7 @@ router, Gateway, benchmark, and metrics workflow should run against
 vLLM:
 
 ```bash
-bflow experiment run experiments/llm-d/inference-sim-smoke.yaml \
+bflow experiment run experiments/smoke/llm-d-inference-sim-smoke.yaml \
   --cluster-name <cluster-name> \
   --benchflow-image <benchflow-image>
 ```
