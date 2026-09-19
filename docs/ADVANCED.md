@@ -523,12 +523,23 @@ the OpenAI-compatible model identifier advertised by the simulator.
 The initial supported slice is intentionally narrow: llm-d
 `inference-scheduling`, the recipe model-server layout, TP=1, PP=1, and no
 hostPath/PVC mounts, shared memory, storage offloading, node-exclusive
-placement, P/D topology, or OTLP tracing. Use ordinary CPU scheduling or
-affinity if placement needs to be constrained. Simulator metrics and benchmark
-results validate orchestration and routing behavior; they are synthetic and
-must not be interpreted as accelerator performance measurements. The resolved
-run is tagged with `runtime_kind=inference-sim` and `accelerator=SIMULATED` to
-make that distinction explicit in MLflow and reports.
+placement, or P/D topology. Use ordinary CPU scheduling or affinity if
+placement needs to be constrained. Simulator metrics and benchmark results
+validate orchestration and routing behavior; they are synthetic and must not
+be interpreted as accelerator performance measurements. The resolved run is
+tagged with `runtime_kind=inference-sim` and `accelerator=SIMULATED` to make
+that distinction explicit in MLflow and reports.
+
+Tracing-enabled metrics profiles are supported for simulator deployments, but
+their scope is deliberately **EPP-only**. BenchFlow installs the shared OTel
+Collector and Jaeger plane and configures the EPP exporter and sampler exactly
+as it does for a vLLM deployment. The simulator currently has no request-span
+instrumentation or OTLP exporter, so it does not receive vLLM's
+`--otlp-traces-endpoint` or `--collect-detailed-traces` flags and contributes no
+engine/model-phase spans. Consequently, trace artifacts and the tracing report
+contain routing-layer spans and metrics only; they cannot be used for vLLM
+queue, prefill, decode, or model-phase latency analysis. Such runs are tagged
+with `tracing_scope=epp-only`.
 
 Target-cluster semantics:
 

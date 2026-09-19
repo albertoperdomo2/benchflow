@@ -212,7 +212,6 @@ def _validate_inference_sim_runtime(
     runtime: RuntimeSpec,
     platform: str,
     mode: str,
-    tracing_enabled: bool,
     options: dict[str, object],
 ) -> None:
     if platform != "llm-d" or mode != "inference-scheduling":
@@ -229,11 +228,6 @@ def _validate_inference_sim_runtime(
         raise ValidationError(
             "llm-d-inference-sim does not support node-exclusive placement because "
             "it does not reserve GPUs"
-        )
-    if tracing_enabled:
-        raise ValidationError(
-            "llm-d-inference-sim does not currently emit the OTLP traces required "
-            "by BenchFlow tracing metrics profiles"
         )
     if runtime.host_paths or runtime.pvc_mounts or runtime.shared_memory_size:
         raise ValidationError(
@@ -949,7 +943,6 @@ def resolve_run_plan(
             runtime=runtime,
             platform=deployment_profile.spec.platform,
             mode=deployment_profile.spec.mode,
-            tracing_enabled=metrics_profile.spec.tracing.enabled(),
             options=deployment_profile.spec.options,
         )
     if (
@@ -1191,6 +1184,8 @@ def resolve_run_plan(
     if inference_sim:
         tags["runtime_kind"] = "inference-sim"
         tags["accelerator"] = "SIMULATED"
+        if metrics_profile.spec.tracing.enabled():
+            tags["tracing_scope"] = "epp-only"
     if metrics_profile.spec.tracing.enabled():
         tags.setdefault("tracing_mode", metrics_profile.spec.tracing.mode)
         tags.setdefault(

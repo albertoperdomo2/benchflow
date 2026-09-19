@@ -3,7 +3,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from benchflow.deploy.llmd import _patch_recipe_modelserver_overlay
+from benchflow.deploy.llmd import (
+    _patch_recipe_modelserver_overlay,
+    _patch_scheduler_values,
+)
 
 # Import the orchestration package before kueue to follow the package's existing
 # import order and avoid its service/kueue initialization cycle in isolation.
@@ -22,6 +25,21 @@ SMOKE_EXPERIMENT = REPO_ROOT / "experiments/smoke/llm-d-inference-sim-smoke.yaml
 def _simulator_plan():
     return resolve_experiment_matrix(
         load_experiment(SMOKE_EXPERIMENT),
+        ProfileCatalog.load(REPO_ROOT / "profiles"),
+    )[0]
+
+
+def _simulator_tracing_plan(tmp_path: Path):
+    experiment_path = tmp_path / "tracing-experiment.yaml"
+    experiment_path.write_text(
+        SMOKE_EXPERIMENT.read_text(encoding="utf-8").replace(
+            "metrics_profile: detailed\n",
+            "metrics_profile: detailed-tracing\n",
+        ),
+        encoding="utf-8",
+    )
+    return resolve_experiment_matrix(
+        load_experiment(experiment_path),
         ProfileCatalog.load(REPO_ROOT / "profiles"),
     )[0]
 
@@ -57,6 +75,44 @@ def test_inference_sim_plan_skips_download_and_gpu_reservation() -> None:
     assert plan.mlflow.tags["runtime_kind"] == "inference-sim"
     assert plan.mlflow.tags["accelerator"] == "SIMULATED"
     assert requested_gpus(plan) == 0
+
+
+def test_inference_sim_supports_epp_only_tracing(tmp_path: Path) -> None:
+    plan = _simulator_tracing_plan(tmp_path)
+    values_path = tmp_path / "values.yaml"
+    values_path.write_text("router: {}\n", encoding="utf-8")
+
+    _patch_scheduler_values(
+        plan,
+        values_path,
+        recipe_layout=True,
+        router_chart=True,
+    )
+
+    values = yaml.safe_load(values_path.read_text(encoding="utf-8"))
+    tracing = values["router"]["tracing"]
+    assert plan.metrics.tracing.mode == "detailed"
+    assert plan.mlflow.tags["tracing_scope"] == "epp-only"
+    assert tracing["enabled"] is True
+    assert tracing["sampling"] == {
+        "sampler": "parentbased_traceidratio",
+        "samplerArg": "1.0",
+    }
+    assert values["router"]["epp"]["env"] == [
+        {
+            "name": "OTEL_SERVICE_NAME",
+            "value": f"{plan.deployment.release_name}-epp",
+        },
+        {
+            "name": "OTEL_RESOURCE_ATTRIBUTES",
+            "value": (
+                f"benchflow.release={plan.deployment.release_name},"
+                f"benchflow.experiment={plan.metadata.name},"
+                f"benchflow.model={plan.model.resource_name},"
+                "benchflow.component.role=epp"
+            ),
+        },
+    ]
 
 
 def test_inference_sim_rejects_benchflow_managed_arguments(tmp_path: Path) -> None:
