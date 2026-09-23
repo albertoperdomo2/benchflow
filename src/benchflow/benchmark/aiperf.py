@@ -447,7 +447,8 @@ def run_benchmark(
                 mlflow.log_param("model", plan.model.name)
                 mlflow.log_param("tp", plan.deployment.runtime.tensor_parallelism)
                 mlflow.log_param("pp", plan.deployment.runtime.pipeline_parallelism)
-                mlflow.log_param("replicas", plan.deployment.runtime.replicas)
+                if plan.deployment.runtime.replicas is not None:
+                    mlflow.log_param("replicas", plan.deployment.runtime.replicas)
                 mlflow.log_param("version", benchmark_version_from_plan(plan))
                 _run_subprocess(command, env=benchmark_env)
                 summary = _load_json(_summary_path(artifact_dir))
@@ -2038,7 +2039,7 @@ def generate_report(
                     "accelerator": _mlflow_value(run, "accelerator", default="unknown"),
                     "tp": _mlflow_value(run, "tp", "tensor_parallelism", default="1"),
                     "pp": _mlflow_value(run, "pp", "pipeline_parallelism", default="1"),
-                    "replicas": _mlflow_value(run, "replicas", default="1"),
+                    "replicas": _mlflow_value(run, "replicas"),
                 }
             )
     finally:

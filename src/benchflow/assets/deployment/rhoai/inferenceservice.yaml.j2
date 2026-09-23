@@ -13,8 +13,10 @@ metadata:
     serving.kserve.io/enable-prometheus-scraping: "true"
 spec:
   predictor:
+{% if replicas is not none %}
     minReplicas: {{ replicas }}
     maxReplicas: {{ replicas }}
+{% endif %}
 {% if runtime_service_account_name %}
     serviceAccountName: {{ runtime_service_account_name | tojson }}
 {% endif %}

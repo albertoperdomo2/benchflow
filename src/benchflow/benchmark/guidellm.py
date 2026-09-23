@@ -168,7 +168,11 @@ def run_benchmark(
                     version=benchmark_version_from_plan(plan),
                     tp_size=plan.deployment.runtime.tensor_parallelism,
                     runtime_args=_runtime_args(plan),
-                    replicas=str(plan.deployment.runtime.replicas),
+                    replicas=(
+                        str(plan.deployment.runtime.replicas)
+                        if plan.deployment.runtime.replicas is not None
+                        else None
+                    ),
                     output_dir=str(output_dir) if output_dir is not None else None,
                 )
             else:
@@ -222,7 +226,7 @@ def generate_report(
     runtime_args: str = "",
     output_dir: Path | None = None,
     output_file: Path | None = None,
-    replicas: int = 1,
+    replicas: int | None = None,
     mlflow_run_ids: list[str] | None = None,
     mlflow_tracking_uri: str | None = None,
     versions: list[str] | None = None,

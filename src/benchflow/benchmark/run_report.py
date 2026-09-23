@@ -75,7 +75,7 @@ class RunReportMetadata:
     version: str
     accelerator: str
     tp: int
-    replicas: int
+    replicas: int | None
     runtime_args: str
     execution_name: str
     platform: str

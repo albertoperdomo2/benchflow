@@ -911,7 +911,7 @@ def _render_rhaiis_distributed_raw_vllm_manifests(
     plan: ResolvedRunPlan,
 ) -> list[dict[str, Any]]:
     runtime = plan.deployment.runtime
-    if runtime.replicas < 2:
+    if runtime.replicas is None or runtime.replicas < 2:
         raise ValidationError(
             "rhaiis distributed raw-vllm requires runtime.replicas >= 2"
         )

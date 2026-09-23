@@ -1035,7 +1035,7 @@ def generate_visualization_report(
     runtime_args: str = "",
     output_dir: str = None,
     output_file: str = None,
-    replicas: int = 1,
+    replicas: int | None = None,
     notes: list[str] | None = None,
     repeat_section_legends: bool = False,
     include_total_throughput: bool = False,
@@ -1162,7 +1162,7 @@ def run_benchmark_without_mlflow(
     version: str = None,
     tp_size: int = 1,
     runtime_args: str = "",
-    replicas: int = 1,
+    replicas: int | None = None,
 ) -> str:
     """Run benchmark without MLflow tracking, saving results to specified directory."""
     load_values = _guidellm_load_values(benchmark_args)
@@ -1273,7 +1273,7 @@ def run_benchmark_with_mlflow(
     version: str = None,
     tp_size: int = 1,
     runtime_args: str = "",
-    replicas: str = "N/A",
+    replicas: str | None = None,
     prefill_replicas: str = "N/A",
     decode_replicas: str = "N/A",
     output_dir: str | None = None,
@@ -1316,11 +1316,12 @@ def run_benchmark_with_mlflow(
                 "target": target,
                 "model": model,
                 "tp": tp_size,
-                "replicas": replicas,
                 "prefill_replicas": prefill_replicas,
                 "decode_replicas": decode_replicas,
                 "multiturn_mode": multiturn_mode,
             }
+            if replicas is not None:
+                params["replicas"] = replicas
             profile_args = _guidellm_profile_mapping(benchmark_args)
             backend_args = guidellm_backend_mapping(benchmark_args)
             load_field = _guidellm_load_field(benchmark_args)
@@ -2037,12 +2038,11 @@ def generate_plot_only_report(
         tp_size = int(params.get("tp", 1))
 
         # Extract replicas from MLflow params
-        replicas = params.get("replicas", "N/A")
-        # Convert "N/A" to 1 for consistency with default behavior
+        replicas = params.get("replicas")
         try:
-            replicas_int = int(replicas) if replicas != "N/A" else 1
+            replicas_int = int(replicas) if replicas is not None else None
         except (ValueError, TypeError):
-            replicas_int = 1
+            replicas_int = None
 
         logger.info(
             f"Processing run {run_id} (composed_version={composed_version}, TP={tp_size}, replicas={replicas_int})"

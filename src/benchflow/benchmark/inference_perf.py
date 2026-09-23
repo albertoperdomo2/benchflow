@@ -273,25 +273,25 @@ def run_benchmark(
                 run_id = run.info.run_id
                 if mlflow_run_id:
                     mlflow.set_tags(tags)
-                mlflow.log_params(
-                    {
-                        "benchmark_tool": "inference-perf",
-                        "backend_type": str(
-                            (config.get("server") or {}).get("type", "")
-                        ),
-                        "target": benchmark_target,
-                        "model": model_name,
-                        "tp": plan.deployment.runtime.tensor_parallelism,
-                        "replicas": plan.deployment.runtime.replicas,
-                        "version": benchmark_version_from_plan(plan),
-                        "inference_perf_data_type": str(
-                            (config.get("data") or {}).get("type", "")
-                        ),
-                        "inference_perf_load_type": str(
-                            (config.get("load") or {}).get("type", "")
-                        ),
-                    }
-                )
+                params = {
+                    "benchmark_tool": "inference-perf",
+                    "backend_type": str(
+                        (config.get("server") or {}).get("type", "")
+                    ),
+                    "target": benchmark_target,
+                    "model": model_name,
+                    "tp": plan.deployment.runtime.tensor_parallelism,
+                    "version": benchmark_version_from_plan(plan),
+                    "inference_perf_data_type": str(
+                        (config.get("data") or {}).get("type", "")
+                    ),
+                    "inference_perf_load_type": str(
+                        (config.get("load") or {}).get("type", "")
+                    ),
+                }
+                if plan.deployment.runtime.replicas is not None:
+                    params["replicas"] = plan.deployment.runtime.replicas
+                mlflow.log_params(params)
                 try:
                     _run_command(command, env=environment, log_path=log_path)
                     summary = _load_summary(artifact_dir)

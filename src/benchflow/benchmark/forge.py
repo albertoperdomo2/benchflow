@@ -563,9 +563,7 @@ def fetch_local_runs(
                         "tp": str(
                             _as_int(deployment_values.get("tensor_parallelism")) or 1
                         ),
-                        "replicas": str(
-                            _as_int(deployment_values.get("replicas")) or 1
-                        ),
+                        "replicas": _as_int(deployment_values.get("replicas")),
                         **workload_data_profile,
                     },
                     "tags": {
@@ -643,7 +641,7 @@ def fetch_mlflow_runs(
                         "define prompt_tokens and output_tokens"
                     )
                 tp_size = _as_int(deployment_values.get("tensor_parallelism")) or 1
-                replicas = _as_int(deployment_values.get("replicas")) or 1
+                replicas = _as_int(deployment_values.get("replicas"))
                 accelerator_name = _accelerator_from_artifact(
                     artifact_uri, test_root, cache_dir
                 )

@@ -17,7 +17,9 @@ spec:
   model:
     name: {{ model_name | tojson }}
     uri: {{ model_uri | tojson }}
+{% if replicas is not none %}
   replicas: {{ replicas }}
+{% endif %}
   router:
     route: {}
     gateway:

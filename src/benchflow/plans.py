@@ -869,8 +869,8 @@ def resolve_run_plan(
 
     runtime = RuntimeSpec(
         image=str(runtime_image_override or deployment_profile.spec.runtime.image),
-        replicas=int(
-            replicas_override
+        replicas=(
+            int(replicas_override)
             if replicas_override is not None
             else deployment_profile.spec.runtime.replicas
         ),

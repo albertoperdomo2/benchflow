@@ -420,7 +420,7 @@ class RuntimeArtifactDirectorySpec:
 @dataclass(slots=True)
 class RuntimeSpec:
     image: str = ""
-    replicas: int = 1
+    replicas: int | None = None
     tensor_parallelism: int = 1
     pipeline_parallelism: int = 1
     vllm_args: list[str] = field(default_factory=list)

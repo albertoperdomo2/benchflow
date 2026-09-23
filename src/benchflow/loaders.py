@@ -798,9 +798,10 @@ def _runtime_from_dict(raw: dict[str, Any] | None) -> RuntimeSpec:
     image_pull_secrets = raw.get("image_pull_secrets")
     if image_pull_secrets is None:
         image_pull_secrets = raw.get("imagePullSecrets")
+    replicas_raw = raw.get("replicas")
     return RuntimeSpec(
         image=str(raw.get("image", "")),
-        replicas=int(raw.get("replicas", 1)),
+        replicas=int(replicas_raw) if replicas_raw is not None else None,
         tensor_parallelism=int(raw.get("tensor_parallelism", 1)),
         pipeline_parallelism=(
             _positive_int(

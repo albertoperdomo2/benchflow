@@ -292,11 +292,9 @@ def generate_plan_report(
     resolved_runtime_args = runtime_args or (
         " ".join(plan.deployment.runtime.vllm_args) if plan is not None else ""
     )
-    resolved_replicas = (
-        replicas
-        if replicas is not None
-        else (plan.deployment.runtime.replicas if plan is not None else 1)
-    )
+    resolved_replicas = replicas
+    if resolved_replicas is None and plan is not None:
+        resolved_replicas = plan.deployment.runtime.replicas
 
     return generate_report(
         plan=plan,

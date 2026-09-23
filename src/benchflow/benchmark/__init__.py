@@ -117,7 +117,7 @@ def generate_report(
     runtime_args: str = "",
     output_dir: Path | None = None,
     output_file: Path | None = None,
-    replicas: int = 1,
+    replicas: int | None = None,
     mlflow_run_ids: list[str] | None = None,
     local_runs_dirs: list[Path] | None = None,
     mlflow_tracking_uri: str | None = None,

@@ -779,7 +779,7 @@ def cmd_benchmark_report(args: argparse.Namespace) -> int:
     replicas = (
         args.replicas
         if args.replicas is not None
-        else (plan.deployment.runtime.replicas if plan is not None else 1)
+        else (plan.deployment.runtime.replicas if plan is not None else None)
     )
 
     report_path = generate_plan_report(
