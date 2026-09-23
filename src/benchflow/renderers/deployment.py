@@ -9,6 +9,7 @@ import yaml
 
 from ..assets import asset_text, render_jinja_text, render_jinja_yaml_document
 from ..models import ResolvedRunPlan, ValidationError, model_storage_relative_path
+from .autoscaling import render_scaled_object
 from ..rhoai_mooncake import (
     mooncake_configmap_name,
     rhoai_mooncake_model_env,
@@ -1159,6 +1160,13 @@ def write_deployment_assets(
             encoding="utf-8",
         )
         written.append(target)
+        scaled_object = render_scaled_object(plan)
+        if scaled_object is not None:
+            target = output_dir / "scaled-object.yaml"
+            target.write_text(
+                yaml.safe_dump(scaled_object, sort_keys=False), encoding="utf-8"
+            )
+            written.append(target)
         return written
 
     if plan.deployment.platform == "rhaiis":

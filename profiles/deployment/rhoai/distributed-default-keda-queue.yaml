@@ -1,0 +1,87 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-distributed-default-keda-queue
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    tensor_parallelism: 2
+    pvc_mounts:
+      - name: models-storage
+        claim_name: vllm-torch-compile-cache
+        mount_path: /tmp/vllm/torch_compile_cache
+        sub_path: torch_compile_cache
+        create: false
+    env:
+      USER: benchflow
+    vllm_args:
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.92
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+  options:
+    enable_auth: false
+    scaled_object:
+      apiVersion: keda.sh/v1alpha1
+      kind: ScaledObject
+      metadata:
+        name: "queue-based-autoscaler"
+      spec:
+        scaleTargetRef:
+          apiVersion: apps/v1
+          kind: Deployment
+          name: "{{ release_name }}-kserve"
+        pollingInterval: 15
+        cooldownPeriod: 120
+        minReplicaCount: 1
+        maxReplicaCount: 8
+        advanced:
+          horizontalPodAutoscalerConfig:
+            name: "{{ release_name }}-keda-hpa"
+            behavior:
+              scaleUp:
+                stabilizationWindowSeconds: 180
+                policies:
+                  - type: Percent
+                    value: 100
+                    periodSeconds: 15
+              scaleDown:
+                stabilizationWindowSeconds: 180
+                policies:
+                  - type: Percent
+                    value: 100
+                    periodSeconds: 15
+        triggers:
+          - type: prometheus
+            name: epp-queue-size
+            metricType: AverageValue
+            metadata:
+              serverAddress: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+              query: >-
+                sum(llm_d_epp_flow_control_queue_size{namespace="{{ namespace }}"})
+              threshold: "2"
+              authModes: bearer
+            authenticationRef:
+              kind: ClusterTriggerAuthentication
+              name: ai-inference-keda-thanos
+          - type: prometheus
+            name: epp-running-requests
+            metricType: AverageValue
+            metadata:
+              serverAddress: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+              query: >-
+                sum(llm_d_epp_request_running{namespace="{{ namespace }}"})
+              threshold: "20"
+              authModes: bearer
+            authenticationRef:
+              kind: ClusterTriggerAuthentication
+              name: ai-inference-keda-thanos
