@@ -406,6 +406,7 @@ def _runtime_pvc_mounts_from_dict(
         mount_path = _nonempty_string(
             item.get("mount_path"), f"{item_field}.mount_path"
         )
+        sub_path = str(item.get("sub_path") or "").strip()
         if name is None:
             raise ValidationError(f"{item_field}.name is required")
         if claim_name is None:
@@ -428,6 +429,14 @@ def _runtime_pvc_mounts_from_dict(
             )
         if not mount_path.startswith("/"):
             raise ValidationError(f"{item_field}.mount_path must be an absolute path")
+        if sub_path and (
+            sub_path.startswith("/")
+            or any(part in {"", ".", ".."} for part in sub_path.split("/"))
+        ):
+            raise ValidationError(
+                f"{item_field}.sub_path must be a relative path without '.', '..', "
+                "or empty path components"
+            )
         if mount_path in mount_paths:
             raise ValidationError(
                 f"{item_field}.mount_path duplicates mount path {mount_path!r}"
@@ -459,6 +468,7 @@ def _runtime_pvc_mounts_from_dict(
                 name=name,
                 claim_name=claim_name,
                 mount_path=mount_path,
+                sub_path=sub_path,
                 read_only=_as_bool(item.get("read_only"), False),
                 create=create,
                 storage_class_name=storage_class_name,

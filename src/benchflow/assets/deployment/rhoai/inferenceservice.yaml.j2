@@ -112,6 +112,9 @@ spec:
 {% for mount in runtime_pvc_mounts %}
           - mountPath: {{ mount.mountPath | tojson }}
             name: {{ mount.name | tojson }}
+{% if mount.subPath %}
+            subPath: {{ mount.subPath | tojson }}
+{% endif %}
 {% if mount.readOnly %}
             readOnly: true
 {% endif %}

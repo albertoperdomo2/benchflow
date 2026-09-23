@@ -403,6 +403,7 @@ class RuntimePVCMountSpec:
     name: str
     claim_name: str
     mount_path: str
+    sub_path: str = ""
     read_only: bool = False
     create: bool = False
     storage_class_name: str = ""

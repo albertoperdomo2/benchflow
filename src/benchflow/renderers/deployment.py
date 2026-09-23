@@ -170,6 +170,11 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
                     "name": pvc_mount.name,
                     "claimName": pvc_mount.claim_name,
                     "mountPath": pvc_mount.mount_path,
+                    **(
+                        {"subPath": pvc_mount.sub_path}
+                        if pvc_mount.sub_path
+                        else {}
+                    ),
                     "readOnly": pvc_mount.read_only,
                     "create": pvc_mount.create,
                     "storageClassName": pvc_mount.storage_class_name,
@@ -224,13 +229,14 @@ def _runtime_host_path_volume_mounts(plan: ResolvedRunPlan) -> list[dict[str, An
 def _runtime_pvc_volume_mounts(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     mounts: list[dict[str, Any]] = []
     for pvc_mount in plan.deployment.runtime.pvc_mounts:
-        mounts.append(
-            {
-                "name": pvc_mount.name,
-                "mountPath": pvc_mount.mount_path,
-                "readOnly": pvc_mount.read_only,
-            }
-        )
+        mount = {
+            "name": pvc_mount.name,
+            "mountPath": pvc_mount.mount_path,
+            "readOnly": pvc_mount.read_only,
+        }
+        if pvc_mount.sub_path:
+            mount["subPath"] = pvc_mount.sub_path
+        mounts.append(mount)
     return mounts
 
 
