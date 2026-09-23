@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..cluster import CommandError
 from ..models import ResolvedRunPlan
+from ..renderers.autoscaling import scaled_object_name as get_scaled_object_name
 from ..ui import detail, step, success, warning
 from .common import (
     BenchmarkRunFailed,
@@ -173,6 +174,7 @@ def run_benchmark(
                         if plan.deployment.runtime.replicas is not None
                         else None
                     ),
+                    scaled_object_name=get_scaled_object_name(plan),
                     output_dir=str(output_dir) if output_dir is not None else None,
                 )
             else:

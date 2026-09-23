@@ -16,6 +16,7 @@ import yaml
 from ..cluster import CommandError, require_command
 from ..mlflow_compat import configure_mlflow_tracking
 from ..models import InferencePerfBenchmarkSpec, ResolvedRunPlan, ValidationError
+from ..renderers.autoscaling import scaled_object_name
 from ..ui import detail, step, success
 from .common import (
     BenchmarkRunFailed,
@@ -291,6 +292,9 @@ def run_benchmark(
                 }
                 if plan.deployment.runtime.replicas is not None:
                     params["replicas"] = plan.deployment.runtime.replicas
+                autoscaler_name = scaled_object_name(plan)
+                if autoscaler_name is not None:
+                    params["scaled_object_name"] = autoscaler_name
                 mlflow.log_params(params)
                 try:
                     _run_command(command, env=environment, log_path=log_path)

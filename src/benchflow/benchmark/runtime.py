@@ -1274,6 +1274,7 @@ def run_benchmark_with_mlflow(
     tp_size: int = 1,
     runtime_args: str = "",
     replicas: str | None = None,
+    scaled_object_name: str | None = None,
     prefill_replicas: str = "N/A",
     decode_replicas: str = "N/A",
     output_dir: str | None = None,
@@ -1322,6 +1323,8 @@ def run_benchmark_with_mlflow(
             }
             if replicas is not None:
                 params["replicas"] = replicas
+            if scaled_object_name is not None:
+                params["scaled_object_name"] = scaled_object_name
             profile_args = _guidellm_profile_mapping(benchmark_args)
             backend_args = guidellm_backend_mapping(benchmark_args)
             load_field = _guidellm_load_field(benchmark_args)

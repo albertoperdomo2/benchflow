@@ -25,6 +25,7 @@ from ..cluster import CommandError, discover_repo_root, require_command
 from ..mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from ..models import AiperfBenchmarkSpec, ResolvedRunPlan, ValidationError
 from ..plotting import REPORT_COLOR_PALETTE
+from ..renderers.autoscaling import scaled_object_name
 from ..ui import detail, step, success
 from .common import (
     BenchmarkRunFailed,
@@ -449,6 +450,9 @@ def run_benchmark(
                 mlflow.log_param("pp", plan.deployment.runtime.pipeline_parallelism)
                 if plan.deployment.runtime.replicas is not None:
                     mlflow.log_param("replicas", plan.deployment.runtime.replicas)
+                autoscaler_name = scaled_object_name(plan)
+                if autoscaler_name is not None:
+                    mlflow.log_param("scaled_object_name", autoscaler_name)
                 mlflow.log_param("version", benchmark_version_from_plan(plan))
                 _run_subprocess(command, env=benchmark_env)
                 summary = _load_json(_summary_path(artifact_dir))
