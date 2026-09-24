@@ -11,7 +11,7 @@ import html
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
 import mlflow
@@ -360,6 +360,7 @@ def run_benchmark(
     enable_mlflow: bool = True,
     mlflow_run_id: str = "",
     extra_tags: dict[str, str] | None = None,
+    on_load_generator_launch: Callable[[], None] | None = None,
 ) -> tuple[str, str, str]:
     require_command("aiperf")
     aiperf = _aiperf_spec(plan)
@@ -449,11 +450,15 @@ def run_benchmark(
                 mlflow.log_param("pp", plan.deployment.runtime.pipeline_parallelism)
                 mlflow.log_param("replicas", plan.deployment.runtime.replicas)
                 mlflow.log_param("version", benchmark_version_from_plan(plan))
+                if on_load_generator_launch is not None:
+                    on_load_generator_launch()
                 _run_subprocess(command, env=benchmark_env)
                 summary = _load_json(_summary_path(artifact_dir))
                 _log_summary_metrics(summary)
                 _log_artifacts(artifact_dir)
         else:
+            if on_load_generator_launch is not None:
+                on_load_generator_launch()
             _run_subprocess(command, env=benchmark_env)
             _summary_path(artifact_dir)
     except Exception as exc:  # noqa: BLE001

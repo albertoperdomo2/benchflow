@@ -431,6 +431,11 @@ def _gaie_rbac_name(release_name: str) -> str:
     return f"benchflow-gaie-epp-rbac-{suffix}"
 
 
+def _epp_pprof_rbac_name(release_name: str) -> str:
+    suffix = hashlib.sha1(release_name.encode("utf-8")).hexdigest()[:10]
+    return f"benchflow-epp-pprof-{suffix}"
+
+
 def _environment_name(plan: ResolvedRunPlan) -> str:
     gateway = plan.deployment.gateway
     if gateway in {"istio", "kgateway", "agentgateway", "gke", "standalone"}:
@@ -1258,6 +1263,13 @@ def _patch_scheduler_values(
     if router_chart:
         router = values.setdefault("router", {})
         epp = router.setdefault("epp", {})
+        flags = epp.get("flags")
+        if not isinstance(flags, dict):
+            flags = {}
+            epp["flags"] = flags
+        # Current router releases enable pprof by default. Make exposure and
+        # capture explicitly profile-owned for BenchFlow deployments.
+        flags["enable-pprof"] = plan.metrics.epp_pprof is not None
         model_servers = router.setdefault("modelServers", {})
         match_labels = model_servers.setdefault("matchLabels", {})
         if not isinstance(match_labels, dict):
@@ -1369,6 +1381,12 @@ def _patch_scheduler_values(
         return
 
     inference_extension = values.setdefault("inferenceExtension", {})
+    if plan.metrics.epp_pprof is not None:
+        flags = inference_extension.get("flags")
+        if not isinstance(flags, dict):
+            flags = {}
+            inference_extension["flags"] = flags
+        flags["enable-pprof"] = True
     monitoring = inference_extension.setdefault("monitoring", {})
     secret_name = f"{plan.deployment.release_name}-gateway-sa-metrics-reader-secret"
 
@@ -2439,6 +2457,57 @@ def _ensure_gaie_rbac(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
     )
 
 
+def _ensure_epp_pprof_rbac(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    if plan.metrics.epp_pprof is None:
+        return
+    namespace = plan.deployment.namespace
+    resource_name = _epp_pprof_rbac_name(plan.deployment.release_name)
+    labels = {
+        "app.kubernetes.io/name": "benchflow",
+        "benchflow.io/platform": "llm-d",
+        "benchflow.io/release": plan.deployment.release_name,
+        "benchflow.io/managed-by": "benchflow",
+    }
+    role = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRole",
+        "metadata": {"name": resource_name, "labels": labels},
+        "rules": [
+            {
+                "nonResourceURLs": ["/debug/pprof", "/debug/pprof/*"],
+                "verbs": ["get"],
+            }
+        ],
+    }
+    binding = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRoleBinding",
+        "metadata": {"name": resource_name, "labels": labels},
+        "subjects": [
+            {
+                "kind": "ServiceAccount",
+                "name": plan.service_account,
+                "namespace": namespace,
+            }
+        ],
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": resource_name,
+        },
+    }
+    step(f"Applying EPP pprof access for service account {plan.service_account}")
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text="---\n".join(
+            [
+                yaml.safe_dump(role, sort_keys=False),
+                yaml.safe_dump(binding, sort_keys=False),
+            ]
+        ),
+    )
+
+
 def _patch_standalone_envoy_volume(
     plan: ResolvedRunPlan, kubectl_cmd: str, *, skip_if_missing: bool = False
 ) -> None:
@@ -2720,6 +2789,7 @@ def deploy_llmd(
         plan.deployment.namespace, plan.deployment.release_name
     ):
         _ensure_gaie_rbac(plan, kubectl_cmd)
+        _ensure_epp_pprof_rbac(plan, kubectl_cmd)
         if (
             str(plan.deployment.gateway or "").strip() == "standalone"
             and str(plan.deployment.repo_ref or "").strip() != "main"
@@ -2973,6 +3043,7 @@ def deploy_llmd(
         )
         _apply_runtime_pvc_manifests(plan, kubectl_cmd)
         run_command(helm_args, cwd=guide_dir, env=env)
+        _ensure_epp_pprof_rbac(plan, kubectl_cmd)
         _apply_recipe_epp_podmonitor(plan, kubectl_cmd, router_chart=router_chart)
 
         if gateway_mode == "standalone" and not router_chart:
@@ -3101,6 +3172,7 @@ def deploy_llmd(
             env=env,
         )
         _ensure_gaie_rbac(plan, kubectl_cmd)
+        _ensure_epp_pprof_rbac(plan, kubectl_cmd)
         step(f"Applying HTTPRoute llm-d-{plan.deployment.release_name}")
         _create_httproute(plan, kubectl_cmd)
         success(

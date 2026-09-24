@@ -551,6 +551,13 @@ class TracingSpec:
 
 
 @dataclass(slots=True)
+class EppPprofSpec:
+    start_delay_seconds: int = 60
+    cpu_duration_seconds: int = 30
+    collect_heap: bool = True
+
+
+@dataclass(slots=True)
 class MetricsProfileSpec:
     prometheus_url: str
     query_step: str
@@ -558,6 +565,7 @@ class MetricsProfileSpec:
     verify_tls: bool = False
     queries: dict[str, str] = field(default_factory=dict)
     tracing: TracingSpec = field(default_factory=TracingSpec)
+    epp_pprof: EppPprofSpec | None = None
 
 
 @dataclass(slots=True)

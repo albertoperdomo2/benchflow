@@ -812,6 +812,17 @@ def resolve_run_plan(
     deployment_profile = catalog.require_deployment(deployment_profile_names[0])
     benchmark_profile = catalog.require_benchmark(benchmark_profile_names[0])
     metrics_profile = catalog.require_metrics(metrics_profile_names[0])
+    if (
+        metrics_profile.spec.epp_pprof is not None
+        and deployment_profile.spec.platform != "llm-d"
+    ):
+        raise ValidationError(
+            "metrics profile epp_pprof is currently supported only for llm-d deployments"
+        )
+    if metrics_profile.spec.epp_pprof is not None and experiment.spec.target.enabled():
+        raise ValidationError(
+            "metrics profile epp_pprof requires a BenchFlow-managed llm-d deployment"
+        )
     if metrics_profile.spec.tracing.enabled():
         tracing_platform = deployment_profile.spec.platform
         if tracing_platform not in {"llm-d", "rhoai"}:

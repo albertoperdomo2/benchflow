@@ -14,6 +14,7 @@ from ..benchmark import (
     run_benchmark,
 )
 from ..contracts import BenchmarkOutcome, ResolvedRunPlan
+from ..profiling import EppPprofCaptureError, EppPprofSession
 from ..remote_jobs import (
     RemoteJobFailed,
     copy_remote_results_directory,
@@ -228,6 +229,25 @@ def run_plan_benchmark(
     )
 
     previous_execution_name = os.environ.get("EXECUTION_NAME")
+    pprof_session: EppPprofSession | None = None
+    effective_tags = dict(extra_tags or {})
+    if plan.metrics.epp_pprof is not None:
+        if output_dir is None:
+            raise BenchmarkRunFailed(
+                "EPP pprof capture requires a benchmark output directory"
+            )
+        pprof_session = EppPprofSession(plan, Path(output_dir), plan.metrics.epp_pprof)
+        effective_tags.update(
+            {
+                "epp_pprof": "true",
+                "epp_pprof_start_delay_seconds": str(
+                    plan.metrics.epp_pprof.start_delay_seconds
+                ),
+                "epp_pprof_cpu_duration_seconds": str(
+                    plan.metrics.epp_pprof.cpu_duration_seconds
+                ),
+            }
+        )
     try:
         if execution_name:
             os.environ["EXECUTION_NAME"] = execution_name
@@ -237,15 +257,39 @@ def run_plan_benchmark(
             output_dir=output_dir,
             mlflow_tracking_uri=mlflow_tracking_uri,
             enable_mlflow=enable_mlflow,
-            extra_tags=extra_tags or {},
+            extra_tags=effective_tags,
             mlflow_run_id=mlflow_run_id,
+            on_load_generator_launch=(
+                pprof_session.start if pprof_session is not None else None
+            ),
         )
+    except BenchmarkRunFailed as exc:
+        if pprof_session is not None:
+            try:
+                pprof_session.finish(exc.end_time)
+            except EppPprofCaptureError as capture_exc:
+                detail(
+                    "EPP pprof capture also failed while preserving benchmark failure: "
+                    f"{capture_exc}"
+                )
+        raise
     finally:
         if execution_name:
             if previous_execution_name is None:
                 os.environ.pop("EXECUTION_NAME", None)
             else:
                 os.environ["EXECUTION_NAME"] = previous_execution_name
+
+    if pprof_session is not None:
+        try:
+            pprof_session.finish(end_time)
+        except EppPprofCaptureError as exc:
+            raise BenchmarkRunFailed(
+                f"EPP pprof capture requirement failed: {exc}",
+                run_id=run_id,
+                start_time=start_time,
+                end_time=end_time,
+            ) from exc
 
     success(
         f"Benchmark finished. Start: {start_time}, end: {end_time}, "

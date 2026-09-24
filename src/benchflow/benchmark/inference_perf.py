@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import mlflow
 import yaml
@@ -226,6 +226,7 @@ def run_benchmark(
     enable_mlflow: bool = True,
     mlflow_run_id: str = "",
     extra_tags: dict[str, str] | None = None,
+    on_load_generator_launch: Callable[[], None] | None = None,
 ) -> tuple[str, str, str]:
     require_command("inference-perf")
     artifact_dir = _artifact_dir(output_dir)
@@ -293,6 +294,8 @@ def run_benchmark(
                     }
                 )
                 try:
+                    if on_load_generator_launch is not None:
+                        on_load_generator_launch()
                     _run_command(command, env=environment, log_path=log_path)
                     summary = _load_summary(artifact_dir)
                     if summary is not None:
@@ -302,6 +305,8 @@ def run_benchmark(
                     # when the native runner exits unsuccessfully.
                     _log_artifacts(artifact_dir)
         else:
+            if on_load_generator_launch is not None:
+                on_load_generator_launch()
             _run_command(command, env=environment, log_path=log_path)
             _load_summary(artifact_dir)
     except Exception as exc:  # noqa: BLE001

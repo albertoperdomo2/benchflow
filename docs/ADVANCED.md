@@ -1054,6 +1054,10 @@ spec:
   tracing:
     mode: off # off, standard, or detailed; llm-d only; no CLI override
     sample_ratio: 0.1 # 0.0 through 1.0; no CLI override
+  epp_pprof: # optional; llm-d EPP only; presence enables required capture
+    start_delay_seconds: 60 # after load-generator launch, not detected steady state
+    cpu_duration_seconds: 30
+    collect_heap: true
   queries:
     request_success_total: sum(rate(vllm:request_success_total[5m])) # no CLI override
 ```
@@ -1539,6 +1543,64 @@ run-time buffer; MLflow artifacts are the durable output.
 
 The archive dashboard and Infinity datasource were intentionally removed. The
 current supported Grafana path is the live Prometheus-backed dashboard only.
+
+### EPP CPU and heap profiles
+
+An llm-d metrics profile can opt into Go pprof capture from every EPP replica:
+
+```yaml
+spec:
+  tracing:
+    mode: standard
+    sample_ratio: 1.0
+  epp_pprof:
+    start_delay_seconds: 60
+    cpu_duration_seconds: 30
+    collect_heap: true
+```
+
+The packaged `epp-tracing-full-pprof` profile provides this 100%-sampling
+diagnostic shape together with 10-second EPP CPU, working-set, and throttling
+queries.
+
+The presence of `epp_pprof` enables the EPP pprof handlers and makes a complete
+capture a run requirement. Without it, BenchFlow explicitly disables pprof on
+current llm-d router-chart deployments. BenchFlow keeps the endpoint internal
+and grants the benchmark service account GET access only to
+`/debug/pprof` and `/debug/pprof/*`.
+
+Use this feature with a single fixed-load benchmark when the profile needs to
+represent one known load point. BenchFlow deliberately does not inspect or
+restrict the benchmark shape. In a multi-step sweep, the configured window may
+land in the first load step or cross multiple steps. The delay is measured from
+the load-generator invocation; it does not mean seconds of detected
+steady-state traffic because BenchFlow has no traffic-start or steady-state
+signal. Selecting an appropriate benchmark and delay remains the profile
+author's responsibility.
+
+After the delay, BenchFlow discovers the EPP Deployment's expected replica
+count and captures all ready replicas concurrently so their CPU profiles cover
+the same benchmark window. It records exact capture timestamps, pod identity,
+container image identity, byte counts, tracing mode, and sampling ratio. Missing
+pods, unready pods, empty responses, or any incomplete replica capture fail the
+profiling requirement. Successfully captured files remain available even when
+the requirement fails.
+
+The normal artifact upload preserves the complete subtree in MLflow:
+
+```text
+benchmark/pprof/epp/capture-summary.json
+benchmark/pprof/epp/<pod>/cpu.pprof
+benchmark/pprof/epp/<pod>/heap.pprof
+benchmark/pprof/epp/<pod>/capture.json
+```
+
+CPU profiling introduces overhead. Keep pprof disabled in the primary
+performance comparison and use an additional, equivalently configured
+diagnostic run for attribution. A heap profile measures the Go heap, not total
+RSS or working-set memory. Metrics profiles used for performance analysis must
+still query EPP CPU usage and working-set/RSS memory and should also query CPU
+throttling. Those Prometheus series are independent of pprof capture.
 
 ## Local Metrics Viewer
 

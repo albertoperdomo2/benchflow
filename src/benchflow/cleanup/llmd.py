@@ -32,6 +32,11 @@ def _gaie_rbac_name(release_name: str) -> str:
     return f"benchflow-gaie-epp-rbac-{suffix}"
 
 
+def _epp_pprof_rbac_name(release_name: str) -> str:
+    suffix = hashlib.sha1(release_name.encode("utf-8")).hexdigest()[:10]
+    return f"benchflow-epp-pprof-{suffix}"
+
+
 def _modelserver_deployment_name(release_name: str) -> str:
     return f"ms-{release_name}-decode"
 
@@ -384,6 +389,17 @@ def cleanup_llmd(
     existing = {entry.get("name") for entry in helm_releases}
     recipe_layout = _llmd_recipe_layout_from_repo_ref(plan.deployment.repo_ref)
     release_label = f"benchflow.io/release={plan.deployment.release_name}"
+    pprof_resource_name = _epp_pprof_rbac_name(plan.deployment.release_name)
+    for kind in ("clusterrolebinding", "clusterrole"):
+        run_command(
+            [
+                kubectl_cmd,
+                "delete",
+                kind,
+                pprof_resource_name,
+                "--ignore-not-found=true",
+            ],
+        )
     # `helm list` hides releases left in the uninstalling state. Include them
     # so cleanup can finish deleting resources and release metadata.
     existing.update(_stale_helm_release_names(kubectl_cmd, namespace, set(releases)))
@@ -486,7 +502,6 @@ def cleanup_llmd(
             "--ignore-not-found=true",
         ],
     )
-
     _delete_runtime_host_path_contents(plan, kubectl_cmd, release_label)
     _delete_storage_offloading_host_path_contents(plan, kubectl_cmd, release_label)
 

@@ -439,6 +439,10 @@ def _list_run_artifact_paths(
 
 
 def _benchmark_workspace_artifact_root(relative_path: Path) -> str:
+    if relative_path.parts and relative_path.parts[0] == "pprof":
+        # Keep the diagnostic profile tree intact. Routing capture.json by its
+        # extension would otherwise split one pprof capture across roots.
+        return "benchmark"
     suffix = relative_path.suffix.lower()
     if suffix == ".log":
         return "logs"

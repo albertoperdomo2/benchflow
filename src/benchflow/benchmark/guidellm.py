@@ -5,6 +5,7 @@ from importlib import metadata
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from ..cluster import CommandError
 from ..models import ResolvedRunPlan
@@ -112,6 +113,7 @@ def run_benchmark(
     enable_mlflow: bool = True,
     mlflow_run_id: str = "",
     extra_tags: dict[str, str] | None = None,
+    on_load_generator_launch: Callable[[], None] | None = None,
 ) -> tuple[str, str, str]:
     module = _load_guidellm_module()
     benchmark_target = target or plan.deployment.target.base_url
@@ -154,6 +156,8 @@ def run_benchmark(
         try:
             if enable_mlflow:
                 step("Executing GuideLLM benchmark with MLflow tracking")
+                if on_load_generator_launch is not None:
+                    on_load_generator_launch()
                 run_id = module.run_benchmark_with_mlflow(
                     target=benchmark_target,
                     model=plan.model.name,
@@ -177,6 +181,8 @@ def run_benchmark(
                         "--output-dir is required when MLflow is disabled"
                     )
                 step("Executing GuideLLM benchmark without MLflow tracking")
+                if on_load_generator_launch is not None:
+                    on_load_generator_launch()
                 module.run_benchmark_without_mlflow(
                     target=benchmark_target,
                     model=plan.model.name,

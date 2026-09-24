@@ -1,0 +1,32 @@
+apiVersion: benchflow.io/v1alpha1
+kind: MetricsProfile
+metadata:
+  name: epp-tracing-full-pprof
+spec:
+  prometheus_url: https://thanos-querier.openshift-monitoring.svc:9091
+  query_step: 10s
+  query_timeout: 30s
+  verify_tls: false
+  tracing:
+    mode: standard
+    sample_ratio: 1
+  epp_pprof:
+    # Measured after the load-generator invocation. Choose the benchmark and
+    # delay so this window represents the fixed load point being diagnosed.
+    start_delay_seconds: 60
+    cpu_duration_seconds: 30
+    collect_heap: true
+  queries:
+    epp_request_rate: rate(llm_d_epp_request_total{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])
+    epp_cpu_cores: rate(container_cpu_usage_seconds_total{namespace="$namespace", pod=~"$scheduler_pod_regex", container="epp"}[1m])
+    epp_cpu_throttled_seconds_per_second: rate(container_cpu_cfs_throttled_seconds_total{namespace="$namespace", pod=~"$scheduler_pod_regex", container="epp"}[1m])
+    epp_memory_working_set_bytes: container_memory_working_set_bytes{namespace="$namespace", pod=~"$scheduler_pod_regex", container="epp"}
+    epp_scheduler_p50_seconds: histogram_quantile(0.5, sum by (le) (rate(llm_d_epp_scheduler_e2e_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_scheduler_p95_seconds: histogram_quantile(0.95, sum by (le) (rate(llm_d_epp_scheduler_e2e_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_scheduler_p99_seconds: histogram_quantile(0.99, sum by (le) (rate(llm_d_epp_scheduler_e2e_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_request_processing_p50_seconds: histogram_quantile(0.5, sum by (le) (rate(llm_d_epp_request_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_request_processing_p95_seconds: histogram_quantile(0.95, sum by (le) (rate(llm_d_epp_request_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_request_processing_p99_seconds: histogram_quantile(0.99, sum by (le) (rate(llm_d_epp_request_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_response_processing_p50_seconds: histogram_quantile(0.5, sum by (le) (rate(llm_d_epp_response_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_response_processing_p95_seconds: histogram_quantile(0.95, sum by (le) (rate(llm_d_epp_response_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_response_processing_p99_seconds: histogram_quantile(0.99, sum by (le) (rate(llm_d_epp_response_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))

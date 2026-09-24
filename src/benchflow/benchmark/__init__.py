@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Callable
 
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 
@@ -72,6 +73,7 @@ def run_benchmark(
     enable_mlflow: bool = True,
     mlflow_run_id: str = "",
     extra_tags: dict[str, str] | None = None,
+    on_load_generator_launch: Callable[[], None] | None = None,
 ) -> tuple[str, str, str]:
     if plan.benchmark.tool == "guidellm":
         return guidellm_backend.run_benchmark(
@@ -82,6 +84,7 @@ def run_benchmark(
             enable_mlflow=enable_mlflow,
             mlflow_run_id=mlflow_run_id,
             extra_tags=extra_tags,
+            on_load_generator_launch=on_load_generator_launch,
         )
     if plan.benchmark.tool == "aiperf":
         return aiperf_backend.run_benchmark(
@@ -92,6 +95,7 @@ def run_benchmark(
             enable_mlflow=enable_mlflow,
             mlflow_run_id=mlflow_run_id,
             extra_tags=extra_tags,
+            on_load_generator_launch=on_load_generator_launch,
         )
     if plan.benchmark.tool == "inference-perf":
         return inference_perf_backend.run_benchmark(
@@ -102,6 +106,7 @@ def run_benchmark(
             enable_mlflow=enable_mlflow,
             mlflow_run_id=mlflow_run_id,
             extra_tags=extra_tags,
+            on_load_generator_launch=on_load_generator_launch,
         )
     raise ValidationError(f"unsupported benchmark tool: {plan.benchmark.tool}")
 

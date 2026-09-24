@@ -45,6 +45,7 @@ from .models import (
     RuntimeSpec,
     StageSpec,
     TargetSpec,
+    EppPprofSpec,
     TracingSpec,
     ValidationError,
     _require,
@@ -1347,6 +1348,44 @@ def _tracing_spec_from_dict(raw: object, field_name: str) -> TracingSpec:
     return TracingSpec(mode=mode, sample_ratio=sample_ratio)
 
 
+def _epp_pprof_spec_from_dict(raw: object, field_name: str) -> EppPprofSpec | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValidationError(f"{field_name} must be a mapping")
+
+    unknown = set(raw) - {
+        "start_delay_seconds",
+        "cpu_duration_seconds",
+        "collect_heap",
+    }
+    if unknown:
+        names = ", ".join(sorted(str(item) for item in unknown))
+        raise ValidationError(f"{field_name} contains unsupported fields: {names}")
+
+    def positive_integer(name: str, default: int, *, allow_zero: bool = False) -> int:
+        value = raw.get(name, default)
+        if isinstance(value, bool) or not (
+            isinstance(value, int)
+            or (isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()))
+        ):
+            raise ValidationError(f"{field_name}.{name} must be an integer")
+        parsed = int(value)
+        minimum = 0 if allow_zero else 1
+        if parsed < minimum:
+            qualifier = "zero or greater" if allow_zero else "greater than zero"
+            raise ValidationError(f"{field_name}.{name} must be {qualifier}")
+        return parsed
+
+    return EppPprofSpec(
+        start_delay_seconds=positive_integer(
+            "start_delay_seconds", 60, allow_zero=True
+        ),
+        cpu_duration_seconds=positive_integer("cpu_duration_seconds", 30),
+        collect_heap=_as_bool(raw.get("collect_heap"), True),
+    )
+
+
 def load_metrics_profile(path: Path) -> MetricsProfile:
     raw = load_yaml_file(path)
     if raw.get("kind") != "MetricsProfile":
@@ -1364,6 +1403,7 @@ def load_metrics_profile(path: Path) -> MetricsProfile:
             str(key): str(value) for key, value in (spec.get("queries") or {}).items()
         },
         tracing=tracing,
+        epp_pprof=_epp_pprof_spec_from_dict(spec.get("epp_pprof"), "spec.epp_pprof"),
     )
     if not profile_spec.prometheus_url:
         raise ValidationError(f"{path} is missing spec.prometheus_url")
@@ -1448,6 +1488,9 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
             for key, value in (metrics_raw.get("queries") or {}).items()
         },
         tracing=_tracing_spec_from_dict(metrics_raw.get("tracing"), "metrics.tracing"),
+        epp_pprof=_epp_pprof_spec_from_dict(
+            metrics_raw.get("epp_pprof"), "metrics.epp_pprof"
+        ),
     )
 
     return ResolvedRunPlan(
