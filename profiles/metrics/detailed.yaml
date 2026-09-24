@@ -9,7 +9,10 @@ spec:
   verify_tls: false
   queries:
     active_pods: count(kube_pod_info{namespace="$namespace", pod=~".*$release.*"})
+    deployment_desired_replicas: kube_deployment_spec_replicas{namespace="$namespace", deployment=~"$release-kserve"}
+    deployment_ready_replicas: kube_deployment_status_replicas_available{namespace="$namespace", deployment=~"$release-kserve"}
     avg_gpu_utilization: avg(DCGM_FI_DEV_GPU_UTIL{exported_namespace="$namespace", exported_pod=~".*$release.*"})
+    gpu_power_watts: sum(DCGM_FI_DEV_POWER_USAGE{exported_namespace="$namespace"})
     avg_cpu_usage_percent: avg(rate(container_cpu_usage_seconds_total{namespace="$namespace", pod=~".*$release.*"}[5m])) * 100
     avg_memory_working_set_bytes: avg(container_memory_working_set_bytes{namespace="$namespace", pod=~".*$release.*"})
     prompt_tokens_total: '{__name__=~"(vllm|kserve_vllm):prompt_tokens_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}'
@@ -151,6 +154,9 @@ spec:
     scheduler_per_pod_queue_size: kserve_inference_pool_per_pod_queue_size{namespace="$namespace", pod=~"$scheduler_pod_regex"}
     scheduler_average_kv_cache_utilization: kserve_inference_pool_average_kv_cache_utilization{namespace="$namespace", pod=~"$scheduler_pod_regex"}
     scheduler_running_requests: kserve_inference_objective_running_requests{namespace="$namespace", pod=~"$scheduler_pod_regex"}
+    epp_flow_control_queue_size: sum(llm_d_epp_flow_control_queue_size{namespace="$namespace", pod=~"$scheduler_pod_regex"})
+    epp_running_requests: sum(llm_d_epp_request_running{namespace="$namespace", pod=~"$scheduler_pod_regex"})
+    epp_flow_control_pool_saturation: max(llm_d_epp_flow_control_pool_saturation{namespace="$namespace", pod=~"$scheduler_pod_regex"})
     scheduler_request_rate_per_second: rate(kserve_inference_objective_request_total{namespace="$namespace", pod=~"$scheduler_pod_regex"}[5m])
     scheduler_request_duration_p50_seconds: histogram_quantile(0.5, sum(rate(kserve_inference_objective_request_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[5m])) by (le))
     scheduler_request_duration_p90_seconds: histogram_quantile(0.9, sum(rate(kserve_inference_objective_request_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[5m])) by (le))
