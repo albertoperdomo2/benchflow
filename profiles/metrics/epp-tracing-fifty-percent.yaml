@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: MetricsProfile
 metadata:
-  name: epp-tracing-full-pprof
+  name: epp-tracing-fifty-percent
 spec:
   prometheus_url: https://thanos-querier.openshift-monitoring.svc:9091
   query_step: 10s
@@ -9,13 +9,7 @@ spec:
   verify_tls: false
   tracing:
     mode: standard
-    sample_ratio: 1
-  epp_pprof:
-    # Measured after the load-generator invocation. Choose the benchmark and
-    # delay so this window represents the fixed load point being diagnosed.
-    start_delay_seconds: 60
-    cpu_duration_seconds: 30
-    collect_heap: true
+    sample_ratio: 0.5
   queries:
     epp_request_rate: rate(llm_d_epp_request_total{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])
     epp_cpu_cores: sum by (pod) (rate(process_cpu_seconds_total{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m]))

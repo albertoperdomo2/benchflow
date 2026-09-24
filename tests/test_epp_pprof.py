@@ -96,6 +96,21 @@ spec:
     )
 
 
+def test_packaged_epp_pprof_profile_uses_reliable_cpu_queries() -> None:
+    profile = load_metrics_profile(
+        REPO_ROOT / "profiles/metrics/epp-tracing-full-pprof.yaml"
+    )
+
+    assert profile.spec.queries["epp_cpu_cores"] == (
+        'sum by (pod) (rate(process_cpu_seconds_total{namespace="$namespace", '
+        'pod=~"$scheduler_pod_regex"}[1m]))'
+    )
+    throttling_query = profile.spec.queries["epp_cpu_throttling_ratio"]
+    assert "container_cpu_cfs_throttled_periods_total" in throttling_query
+    assert "container_cpu_cfs_periods_total" in throttling_query
+    assert "container_cpu_cfs_throttled_seconds_total" not in throttling_query
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("start_delay_seconds", -1), ("cpu_duration_seconds", 0)],

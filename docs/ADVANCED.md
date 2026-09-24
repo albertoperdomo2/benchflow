@@ -1561,7 +1561,10 @@ spec:
 
 The packaged `epp-tracing-full-pprof` profile provides this 100%-sampling
 diagnostic shape together with 10-second EPP CPU, working-set, and throttling
-queries.
+queries. EPP CPU is derived from the process counter exposed by the EPP metrics
+endpoint, which follows the EPP scrape cadence. CPU throttling remains a
+container-runtime measurement and is reported as the ratio of throttled CFS
+periods to total CFS periods over a five-minute rate window.
 
 The presence of `epp_pprof` enables the EPP pprof handlers and makes a complete
 capture a run requirement. Without it, BenchFlow explicitly disables pprof on
