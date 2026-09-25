@@ -25,6 +25,7 @@ from ..cluster import CommandError, discover_repo_root, require_command
 from ..mlflow_compat import create_mlflow_client, configure_mlflow_tracking
 from ..models import AiperfBenchmarkSpec, ResolvedRunPlan, ValidationError
 from ..plotting import REPORT_COLOR_PALETTE
+from ..renderers.autoscaling import scaled_object_name
 from ..ui import detail, step, success
 from .common import (
     BenchmarkRunFailed,
@@ -448,7 +449,11 @@ def run_benchmark(
                 mlflow.log_param("model", plan.model.name)
                 mlflow.log_param("tp", plan.deployment.runtime.tensor_parallelism)
                 mlflow.log_param("pp", plan.deployment.runtime.pipeline_parallelism)
-                mlflow.log_param("replicas", plan.deployment.runtime.replicas)
+                if plan.deployment.runtime.replicas is not None:
+                    mlflow.log_param("replicas", plan.deployment.runtime.replicas)
+                autoscaler_name = scaled_object_name(plan)
+                if autoscaler_name is not None:
+                    mlflow.log_param("scaled_object_name", autoscaler_name)
                 mlflow.log_param("version", benchmark_version_from_plan(plan))
                 if on_load_generator_launch is not None:
                     on_load_generator_launch()
@@ -2043,7 +2048,7 @@ def generate_report(
                     "accelerator": _mlflow_value(run, "accelerator", default="unknown"),
                     "tp": _mlflow_value(run, "tp", "tensor_parallelism", default="1"),
                     "pp": _mlflow_value(run, "pp", "pipeline_parallelism", default="1"),
-                    "replicas": _mlflow_value(run, "replicas", default="1"),
+                    "replicas": _mlflow_value(run, "replicas"),
                 }
             )
     finally:

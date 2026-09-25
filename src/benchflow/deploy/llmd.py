@@ -1052,7 +1052,8 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
         model_artifacts["labels"] = labels
     labels.update(_release_match_labels(plan.deployment.release_name))
 
-    decode["replicas"] = runtime.replicas
+    if runtime.replicas is not None:
+        decode["replicas"] = runtime.replicas
     decode.setdefault("parallelism", {})
     decode["parallelism"]["tensor"] = runtime.tensor_parallelism
     if runtime.node_selector:
@@ -1747,7 +1748,8 @@ def _patch_recipe_modelserver_overlay(
     )
     runtime = plan.deployment.runtime
     spec = patch.setdefault("spec", {})
-    spec["replicas"] = runtime.replicas
+    if runtime.replicas is not None:
+        spec["replicas"] = runtime.replicas
     container = _recipe_modelserver_container(patch)
     args = [
         _model_mount_path(plan),

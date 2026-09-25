@@ -16,6 +16,7 @@ import yaml
 from ..cluster import CommandError, require_command
 from ..mlflow_compat import configure_mlflow_tracking
 from ..models import InferencePerfBenchmarkSpec, ResolvedRunPlan, ValidationError
+from ..renderers.autoscaling import scaled_object_name
 from ..ui import detail, step, success
 from .common import (
     BenchmarkRunFailed,
@@ -274,25 +275,28 @@ def run_benchmark(
                 run_id = run.info.run_id
                 if mlflow_run_id:
                     mlflow.set_tags(tags)
-                mlflow.log_params(
-                    {
-                        "benchmark_tool": "inference-perf",
-                        "backend_type": str(
-                            (config.get("server") or {}).get("type", "")
-                        ),
-                        "target": benchmark_target,
-                        "model": model_name,
-                        "tp": plan.deployment.runtime.tensor_parallelism,
-                        "replicas": plan.deployment.runtime.replicas,
-                        "version": benchmark_version_from_plan(plan),
-                        "inference_perf_data_type": str(
-                            (config.get("data") or {}).get("type", "")
-                        ),
-                        "inference_perf_load_type": str(
-                            (config.get("load") or {}).get("type", "")
-                        ),
-                    }
-                )
+                params = {
+                    "benchmark_tool": "inference-perf",
+                    "backend_type": str(
+                        (config.get("server") or {}).get("type", "")
+                    ),
+                    "target": benchmark_target,
+                    "model": model_name,
+                    "tp": plan.deployment.runtime.tensor_parallelism,
+                    "version": benchmark_version_from_plan(plan),
+                    "inference_perf_data_type": str(
+                        (config.get("data") or {}).get("type", "")
+                    ),
+                    "inference_perf_load_type": str(
+                        (config.get("load") or {}).get("type", "")
+                    ),
+                }
+                if plan.deployment.runtime.replicas is not None:
+                    params["replicas"] = plan.deployment.runtime.replicas
+                autoscaler_name = scaled_object_name(plan)
+                if autoscaler_name is not None:
+                    params["scaled_object_name"] = autoscaler_name
+                mlflow.log_params(params)
                 try:
                     if on_load_generator_launch is not None:
                         on_load_generator_launch()

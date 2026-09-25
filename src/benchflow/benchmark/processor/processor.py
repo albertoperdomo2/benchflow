@@ -535,7 +535,7 @@ class BenchmarkProcessor:
         config_path: Optional[str] = None,
         output_html: Optional[str] = None,
         aws_profile: Optional[str] = None,
-        replicas: int = 1,
+        replicas: int | None = None,
         data_profile: Optional[Dict[str, Any]] = None,
         prompt_tokens: Optional[int] = None,
         output_tokens: Optional[int] = None,
@@ -1388,8 +1388,8 @@ class BenchmarkProcessor:
         all_data["version"] = all_data["version"].fillna("N/A").astype(str)
 
         if "replicas" not in all_data.columns:
-            all_data["replicas"] = 1
-        all_data["replicas"] = all_data["replicas"].fillna(1).astype(int)
+            all_data["replicas"] = None
+        all_data["replicas"] = pd.to_numeric(all_data["replicas"], errors="coerce")
 
         model_config = self.config["models"][0]
         colors = self.config["styling"]["colors"]

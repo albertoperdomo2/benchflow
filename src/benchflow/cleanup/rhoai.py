@@ -6,6 +6,7 @@ import time
 from ..cluster import CommandError, require_any_command, run_command, run_json_command
 from ..models import ResolvedRunPlan
 from ..renderers.deployment import rhoai_profiler_configmap_name
+from ..renderers.autoscaling import scaled_object_name
 from ..rhoai_mooncake import (
     mooncake_configmap_name,
     mooncake_master_name,
@@ -36,6 +37,26 @@ def _delete_profiler_configmap(
             "delete",
             "configmap",
             rhoai_profiler_configmap_name(plan),
+            "-n",
+            namespace,
+            "--ignore-not-found",
+        ],
+        check=False,
+    )
+
+
+def _delete_scaled_object(
+    plan: ResolvedRunPlan, *, kubectl_cmd: str, namespace: str
+) -> None:
+    name = scaled_object_name(plan)
+    if not name:
+        return
+    run_command(
+        [
+            kubectl_cmd,
+            "delete",
+            "scaledobject",
+            name,
             "-n",
             namespace,
             "--ignore-not-found",
@@ -276,6 +297,8 @@ def cleanup_rhoai(
     release_name = plan.deployment.release_name
     resource = _deployment_resource(plan)
     resource_kind = _deployment_kind(plan)
+
+    _delete_scaled_object(plan, kubectl_cmd=kubectl_cmd, namespace=namespace)
 
     exists = run_command(
         [

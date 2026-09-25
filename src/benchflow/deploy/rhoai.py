@@ -12,6 +12,7 @@ from ..renderers.deployment import (
     render_rhoai_manifest,
     render_rhoai_profiler_configmap,
 )
+from ..renderers.autoscaling import render_scaled_object
 from ..rhoai_mooncake import (
     mooncake_master_name,
     render_rhoai_mooncake_manifests,
@@ -169,6 +170,19 @@ def _apply_runtime_pvc_manifests(plan: ResolvedRunPlan, kubectl_cmd: str) -> Non
             [kubectl_cmd, "apply", "-f", "-"],
             input_text=yaml.safe_dump(manifest, sort_keys=False),
         )
+
+
+def _apply_scaled_object(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
+    manifest = render_scaled_object(plan)
+    if manifest is None:
+        return
+    name = str(manifest["metadata"]["name"])
+    step(f"Applying KEDA ScaledObject {name} in namespace {plan.deployment.namespace}")
+    run_command(
+        [kubectl_cmd, "apply", "-f", "-"],
+        input_text=yaml.safe_dump(manifest, sort_keys=False),
+    )
+    success(f"Applied KEDA ScaledObject {name} in namespace {plan.deployment.namespace}")
 
 
 def _apply_mooncake_manifests(
@@ -442,6 +456,9 @@ def deploy_rhoai(
                 "than silently bypassing EndpointPicker routing."
             )
         success(f"Skipping deploy; {resource_kind} {release_name} already exists")
+        if verify:
+            _verify_deployment(plan, verify_timeout_seconds)
+        _apply_scaled_object(plan, kubectl_cmd)
         return manifests_dir.resolve() if manifests_dir else Path.cwd()
 
     if resource_kind == "LLMInferenceService":
@@ -497,6 +514,13 @@ def deploy_rhoai(
                 yaml.safe_dump(release_gateway, sort_keys=False), encoding="utf-8"
             )
             detail(f"Rendered RHOAI Gateway manifest written to {gateway_target}")
+        scaled_object = render_scaled_object(plan)
+        if scaled_object is not None:
+            scaled_object_target = manifests_dir / "scaled-object.yaml"
+            scaled_object_target.write_text(
+                yaml.safe_dump(scaled_object, sort_keys=False), encoding="utf-8"
+            )
+            detail(f"Rendered ScaledObject manifest written to {scaled_object_target}")
         names = [_deployment_manifest_filename(plan)]
         for manifest, name in zip(manifests, names, strict=True):
             target = manifests_dir / name
@@ -537,5 +561,7 @@ def deploy_rhoai(
 
     if verify:
         _verify_deployment(plan, verify_timeout_seconds)
+
+    _apply_scaled_object(plan, kubectl_cmd)
 
     return manifests_dir.resolve() if manifests_dir else Path.cwd()

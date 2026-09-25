@@ -38,6 +38,7 @@ def download_cached_model(
                     },
                 }
             ],
+            tolerations=plan.deployment.runtime.tolerations,
         )
         return Path("/models-storage") / model_storage_relative_path(
             plan.deployment.model_storage, plan.model

@@ -13,8 +13,10 @@ metadata:
     serving.kserve.io/enable-prometheus-scraping: "true"
 spec:
   predictor:
+{% if replicas is not none %}
     minReplicas: {{ replicas }}
     maxReplicas: {{ replicas }}
+{% endif %}
 {% if runtime_service_account_name %}
     serviceAccountName: {{ runtime_service_account_name | tojson }}
 {% endif %}
@@ -112,6 +114,9 @@ spec:
 {% for mount in runtime_pvc_mounts %}
           - mountPath: {{ mount.mountPath | tojson }}
             name: {{ mount.name | tojson }}
+{% if mount.subPath %}
+            subPath: {{ mount.subPath | tojson }}
+{% endif %}
 {% if mount.readOnly %}
             readOnly: true
 {% endif %}

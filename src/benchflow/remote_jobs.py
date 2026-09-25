@@ -209,6 +209,7 @@ def _create_remote_job(
     env: dict[str, str] | None = None,
     volume_mounts: list[dict[str, Any]] | None = None,
     volumes: list[dict[str, Any]] | None = None,
+    tolerations: list[dict[str, Any]] | None = None,
 ) -> None:
     safe_kind = sanitize_name(job_kind, max_length=20)
     manifest = {
@@ -237,6 +238,7 @@ def _create_remote_job(
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": plan.service_account,
+                    **({"tolerations": list(tolerations)} if tolerations else {}),
                     "containers": [
                         {
                             "name": "main",
@@ -750,6 +752,7 @@ def run_remote_job(
     env: dict[str, str] | None = None,
     volume_mounts: list[dict[str, Any]] | None = None,
     volumes: list[dict[str, Any]] | None = None,
+    tolerations: list[dict[str, Any]] | None = None,
     timeout_seconds: int | None = 3600,
     mount_results_pvc: bool = False,
     job_name: str | None = None,
@@ -779,5 +782,6 @@ def run_remote_job(
         env=env,
         volume_mounts=resolved_volume_mounts,
         volumes=resolved_volumes,
+        tolerations=tolerations,
     )
     return wait_for_remote_job(plan, job_name=job_name, timeout_seconds=timeout_seconds)

@@ -15,7 +15,7 @@ from .cluster import (
     run_json_command,
     use_kubeconfig,
 )
-from .models import ResolvedRunPlan
+from .models import ResolvedRunPlan, ValidationError
 from .ui import detail
 
 NODE_EXCLUSIVE_RELEASE_LABEL = "benchflow.io/node-exclusive-release"
@@ -28,6 +28,10 @@ def _lease_name(node: str) -> str:
 
 def _needed(plan: ResolvedRunPlan) -> int:
     runtime = plan.deployment.runtime
+    if runtime.replicas is None:
+        raise ValidationError(
+            "node-exclusive placement requires runtime.replicas to be set"
+        )
     return runtime.replicas * runtime.tensor_parallelism * runtime.pipeline_parallelism
 
 

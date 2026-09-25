@@ -225,7 +225,6 @@ def load_report_metadata(
 
     if tp_value is None and replica_value is None:
         tp_value = int(gpu_count) if float(gpu_count).is_integer() else gpu_count
-        replica_value = 1
     elif tp_value is None and replica_value is not None and gpu_count:
         try:
             tp_value = gpu_count / float(replica_value)
@@ -235,7 +234,7 @@ def load_report_metadata(
         try:
             replica_value = gpu_count / float(tp_value)
         except (TypeError, ValueError, ZeroDivisionError):
-            replica_value = 1
+            replica_value = None
 
     def format_parallel_value(value):
         if value is None:

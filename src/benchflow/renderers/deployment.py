@@ -9,6 +9,7 @@ import yaml
 
 from ..assets import asset_text, render_jinja_text, render_jinja_yaml_document
 from ..models import ResolvedRunPlan, ValidationError, model_storage_relative_path
+from .autoscaling import render_scaled_object
 from ..rhoai_mooncake import (
     mooncake_configmap_name,
     rhoai_mooncake_model_env,
@@ -169,6 +170,11 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
                     "name": pvc_mount.name,
                     "claimName": pvc_mount.claim_name,
                     "mountPath": pvc_mount.mount_path,
+                    **(
+                        {"subPath": pvc_mount.sub_path}
+                        if pvc_mount.sub_path
+                        else {}
+                    ),
                     "readOnly": pvc_mount.read_only,
                     "create": pvc_mount.create,
                     "storageClassName": pvc_mount.storage_class_name,
@@ -223,13 +229,14 @@ def _runtime_host_path_volume_mounts(plan: ResolvedRunPlan) -> list[dict[str, An
 def _runtime_pvc_volume_mounts(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     mounts: list[dict[str, Any]] = []
     for pvc_mount in plan.deployment.runtime.pvc_mounts:
-        mounts.append(
-            {
-                "name": pvc_mount.name,
-                "mountPath": pvc_mount.mount_path,
-                "readOnly": pvc_mount.read_only,
-            }
-        )
+        mount = {
+            "name": pvc_mount.name,
+            "mountPath": pvc_mount.mount_path,
+            "readOnly": pvc_mount.read_only,
+        }
+        if pvc_mount.sub_path:
+            mount["subPath"] = pvc_mount.sub_path
+        mounts.append(mount)
     return mounts
 
 
@@ -904,7 +911,7 @@ def _render_rhaiis_distributed_raw_vllm_manifests(
     plan: ResolvedRunPlan,
 ) -> list[dict[str, Any]]:
     runtime = plan.deployment.runtime
-    if runtime.replicas < 2:
+    if runtime.replicas is None or runtime.replicas < 2:
         raise ValidationError(
             "rhaiis distributed raw-vllm requires runtime.replicas >= 2"
         )
@@ -1159,6 +1166,13 @@ def write_deployment_assets(
             encoding="utf-8",
         )
         written.append(target)
+        scaled_object = render_scaled_object(plan)
+        if scaled_object is not None:
+            target = output_dir / "scaled-object.yaml"
+            target.write_text(
+                yaml.safe_dump(scaled_object, sort_keys=False), encoding="utf-8"
+            )
+            written.append(target)
         return written
 
     if plan.deployment.platform == "rhaiis":

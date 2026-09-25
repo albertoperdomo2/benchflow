@@ -1110,6 +1110,7 @@ def collect_artifacts(
             "gateways",
             "inferencepool",
             "llminferenceservices",
+            "scaledobjects",
             "httproutes",
             "podmonitors",
             "servicemonitors",

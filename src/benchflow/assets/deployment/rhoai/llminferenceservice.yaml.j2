@@ -17,7 +17,9 @@ spec:
   model:
     name: {{ model_name | tojson }}
     uri: {{ model_uri | tojson }}
+{% if replicas is not none %}
   replicas: {{ replicas }}
+{% endif %}
   router:
     route: {}
     gateway:
@@ -289,6 +291,9 @@ spec:
 {% for mount in runtime_pvc_mounts %}
           - mountPath: {{ mount.mountPath | tojson }}
             name: {{ mount.name | tojson }}
+{% if mount.subPath %}
+            subPath: {{ mount.subPath | tojson }}
+{% endif %}
 {% if mount.readOnly %}
             readOnly: true
 {% endif %}
