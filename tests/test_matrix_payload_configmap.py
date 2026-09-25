@@ -158,7 +158,7 @@ class MatrixPayloadConfigMapTest(unittest.TestCase):
     def test_remote_matrix_keeps_compatible_kubeconfig_workspace(self) -> None:
         experiment = load_experiment(
             REPO_ROOT
-            / "experiments/llm-d/qwen36-35b-cephfs-offloading-scalability.yaml"
+            / "experiments/llm-d/offloading/qwen36-35b-cephfs-offloading-scalability.yaml"
         )
         plan = resolve_experiment_matrix(
             experiment, ProfileCatalog.load(REPO_ROOT / "profiles")

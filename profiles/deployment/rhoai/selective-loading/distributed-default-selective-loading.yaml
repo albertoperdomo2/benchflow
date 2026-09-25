@@ -1,0 +1,114 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-distributed-default-selective-loading
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+    # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
+    # larger than cpu_bytes_to_use below, plus some headroom.
+    shared_memory_size: 300Gi
+    # Required for hostPath volumes on OpenShift. For RHOAI LLMInferenceService,
+    # bind this service account to an SCC that allows both hostPath and
+    # runtime/default seccomp; on Poseidon, use:
+    # openshift-ai-llminferenceservice-multi-node-scc.
+    service_account_name: benchflow-hostpath-runtime
+    host_paths:
+      # poseidon H100 nodes mount local NVMe at /var/mnt/modelcache. This
+      # subdirectory is pre-created on each node with mode 1777 so random
+      # non-root OpenShift UIDs can write to it. Do not rely on DirectoryOrCreate
+      # here: kubelet-created hostPath directories are root-owned and may not be
+      # writable by the vLLM container.
+      #
+      # The filesystem tier does not enforce byte capacity in vLLM config. Size
+      # it by provisioning/quotaing this host directory, and wipe it between
+      # benchmark runs because old tier files are not reused by later engines.
+      # cleanup: true makes BenchFlow empty this mount before deleting the
+      # release, while a model pod is still available on each used node.
+      - name: nvme-kv-cache
+        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
+        mount_path: /mnt/nvme-kv-cache
+        type: Directory
+        read_only: false
+        cleanup: true
+    vllm_args:
+      - --max-model-len=8192
+      # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache","n_read_threads":64,"n_write_threads":64}]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
+    epp_allow_experimental_plugins: true
+    # This profile deliberately enables the complete precise-prefix path: the
+    # EPP consumes KV events from the model pods and vLLM exposes both the live
+    # and replay sockets. Keep this paired with the explicit EPP config below.
+    precise_prefix_cache_routing: true
+    startup_probe:
+      failureThreshold: 180
+    epp_config: |
+      apiVersion: llm-d.ai/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+        - type: token-producer
+          parameters:
+            modelName: {{ model_name }}
+            vllm:
+              url: https://{{ release_name }}-kserve-workload-svc.{{ namespace }}.svc:8000
+              caCertPath: /var/run/kserve/tls/ca.crt
+        - type: endpoint-notification-source
+        - type: precise-prefix-cache-producer
+          parameters:
+            tokenProcessorConfig:
+              blockSizeTokens: 64
+            speculativeIndexing: true
+            indexerConfig:
+              kvBlockIndexConfig:
+                enableMetrics: true
+            kvEventsConfig:
+              topicFilter: "kv@"
+              concurrency: 8
+              discoverPods: true
+              podDiscoveryConfig:
+                socketPort: 5556
+                replaySocketPort: 5559
+        - type: inflight-load-producer
+          parameters:
+            prefixMatchInfoProducerName: precise-prefix-cache-producer
+        - type: prefix-cache-affinity-filter
+          parameters:
+            prefixMatchInfoProducerName: precise-prefix-cache-producer
+            # Calibrated by the upstream precise-prefix guide for Qwen3-32B on
+            # H100 with TP=2. Recalibrate before reusing this profile elsewhere.
+            peakPrefillThroughput: 15926
+        - type: token-load-scorer
+        - type: selective-kv-policy
+          name: selective-kv-policy
+          parameters:
+            loadPolicy: threshold
+            minExternalReusableTokens: 1024
+      dataLayer:
+        sources:
+          - pluginRef: endpoint-notification-source
+            extractors:
+              - pluginRef: precise-prefix-cache-producer
+      schedulingProfiles:
+        - name: default
+          plugins:
+            - pluginRef: prefix-cache-affinity-filter
+            - pluginRef: token-load-scorer

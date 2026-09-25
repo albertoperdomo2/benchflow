@@ -32,7 +32,7 @@ spec:
       - --trust-remote-code
       - --enable-prefix-caching
       - --enable-prompt-tokens-details
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":274877906944}}
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":274877906944,"enable_offload_telemetry":true,"offload_telemetry_sample_rate":1.0}}
   options:
     epp_allow_experimental_plugins: true
     epp_config: |

@@ -1,0 +1,60 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: selective-loading-pr-regression-validation
+spec:
+  model:
+    name:
+      - Qwen/Qwen3-32B
+  deployment_profile:
+    - multi-tier-offloading-nvme
+    - rhoai-distributed-default-selective-loading-combined
+  benchmark_profile:
+    - guidellm-selective-loading-calibration-p1024-c64
+    - guidellm-selective-loading-calibration-p8192-c4
+  overrides:
+    images:
+      runtime: quay.io/rh-ee-aperdomo/vllm:v0.29.0-max-load-tokens
+      scheduler: quay.io/rh-ee-aperdomo/llm-d-router-endpoint-picker:dev-1b096e59
+    scale:
+      replicas: 4
+      tensor_parallelism: 2
+    runtime:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - diadochos-hqxzk-gpu-h100-mt46x
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  kserve.io/component: workload
+              matchLabelKeys:
+                - app.kubernetes.io/name
+      placement:
+        mode: sequential
+  metrics_profile: detailed
+  target:
+    endpoint_scope: external
+  mlflow:
+    tags:
+      accelerator: H100
+      benchmark_family: selective-loading-pr-regression-validation
+      revision: v0.29.0-max-load-tokens
+      epp_revision: dev-1b096e59
+      combined_min_external_reusable_tokens: "1024"
+      combined_max_waiting_requests: "8"
+      prefix_corpus_tokens: "2097152"
+      turns: "1"
+      calibration_node: diadochos-hqxzk-gpu-h100-mt46x
+      validation_scope: saturated-and-low-pressure
+  namespace: benchflow
+  execution:
+    timeout: 10h

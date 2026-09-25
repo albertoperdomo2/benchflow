@@ -1,0 +1,29 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: epp-tracing-overhead-streaming
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: llm-d-epp-tracing-inference-sim
+  benchmark_profile:
+    - guidellm-epp-tracing-streaming-rate-200-100
+    - guidellm-epp-tracing-streaming-rate-200-1
+    - guidellm-epp-tracing-streaming-rate-8000-100
+    - guidellm-epp-tracing-streaming-rate-200-1000
+    - guidellm-epp-tracing-streaming-concurrent-200-100
+  metrics_profile:
+    - epp-tracing-off
+    - epp-tracing-zero
+    - epp-tracing-one-percent
+    - epp-tracing-ten-percent
+    - epp-tracing-fifty-percent
+    - epp-tracing-full
+  namespace: benchflow
+  mlflow:
+    experiment: epp-tracing-overhead
+    tags:
+      issue: llm-d-router#2665
+      response_mode: streaming
+  execution:
+    timeout: 2h

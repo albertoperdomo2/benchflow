@@ -108,6 +108,126 @@ spec:
     kv_offload_tiering_lookup_async_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
     kv_offload_tiering_lookup_async_p99_seconds_by_engine: histogram_quantile(0.99, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
     kv_offload_tiering_lookup_async_overflow_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex", le="+Inf"}[5m]) - ignoring(le) rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_lookup_async_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex", le="10"}[5m]))
+    # ABC clean-prefetch lifecycle and critical-path costs. Preserve cumulative
+    # totals for exact run accounting and rates for native 15-second plots.
+    # The status-labelled chunk counter includes candidate, source_resident,
+    # redundant, source_miss, submitted, capacity, promoted, late, useful,
+    # wasted, load_failed, cancellation, and eviction/regret outcomes.
+    kv_offload_prefetch_intents_total_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_intents_total", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_prefetch_intents_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_intents_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_prefetch_chunks_total_by_engine_status: sum by (pod, engine, status) ({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_chunks_total", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_prefetch_chunks_rate_by_engine_status: sum by (pod, engine, status) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_chunks_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_prefetch_tracked_chunks_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_tracked_chunks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_prefetch_admission_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_admission_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_probe_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_probe_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_apply_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_apply_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_ready_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_ready_delay_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    # Request-level oracle metrics answer the real performance question: was
+    # the complete bounded external working set ready at first demand lookup?
+    kv_offload_prefetch_requests_total_by_engine_status: sum by (pod, engine, status) ({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_requests_total", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_prefetch_requests_rate_by_engine_status: sum by (pod, engine, status) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_requests_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_prefetch_active_requests_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_active_requests", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_prefetch_request_target_chunks_mean_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_target_chunks_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_target_chunks_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    kv_offload_prefetch_request_target_chunks_p50_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_target_chunks_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_request_target_chunks_p90_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_target_chunks_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_request_ready_chunks_mean_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_ready_chunks_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_ready_chunks_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    kv_offload_prefetch_request_ready_chunks_p50_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_ready_chunks_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_request_ready_chunks_p90_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_ready_chunks_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_request_coverage_mean_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_coverage_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_coverage_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    kv_offload_prefetch_request_coverage_p50_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_coverage_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_request_coverage_p90_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_request_coverage_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_admission_to_first_lookup_p50_seconds_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_admission_to_first_lookup_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_admission_to_first_lookup_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_admission_to_first_lookup_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_first_lookup_to_ready_p50_seconds_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_first_lookup_to_ready_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_first_lookup_to_ready_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_first_lookup_to_ready_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_external_hit_chunks_mean_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_external_hit_chunks_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_external_hit_chunks_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    kv_offload_prefetch_external_hit_chunks_p50_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_external_hit_chunks_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_prefetch_external_hit_chunks_p90_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_prefetch_external_hit_chunks_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_tiering_prefetch_attempted_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_attempted_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_promoted_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_promoted_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_skipped_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_skipped_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_redundant_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_redundant_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_useful_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_useful_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_wasted_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_wasted_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_untracked_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_untracked_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_load_failed_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_load_failed_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_late_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_late_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    # ABC V2.1 residency/deadline admission prefetch. The per-key counters form
+    # a terminal partition: considered equals the sum of the ten terminal
+    # classes below, so any shortfall means keys are unaccounted for.
+    kv_offload_tiering_prefetch_admission_considered_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_considered_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_primary_redundant_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_primary_redundant_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_secondary_absent_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_secondary_absent_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_gate_reject_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_gate_reject_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    # Capacity refusals split by cause. A single capacity_skip counter made the
+    # first five-cell run unattributable: hard-cap trimming and allocator
+    # refusal are different failures needing different fixes.
+    kv_offload_tiering_prefetch_admission_bundle_overflow_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_bundle_overflow_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_bundle_trim_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_bundle_trim_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_alloc_refused_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_alloc_refused_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_submitted_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_submitted_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_shadow_submit_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_shadow_submit_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_lookup_unresolved_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_lookup_unresolved_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_cancelled_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_cancelled_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_bundle_outcomes_rate_by_engine: sum by (pod, engine, tier, outcome) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_bundle_outcomes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_tiering_prefetch_admission_transitions_rate_by_engine: sum by (pod, engine, transition) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_transitions_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    # Measured promotion cost the deadline gate actually spends. A rising
+    # per-chunk value means the tier is contended.
+    kv_offload_tiering_prefetch_transfer_cost_base_seconds_by_engine: max by (pod, engine, tier) ({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_transfer_cost_base_seconds", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_tiering_prefetch_transfer_cost_per_chunk_seconds_by_engine: max by (pod, engine, tier) ({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_transfer_cost_per_chunk_seconds", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    # Predicted versus observed lead time: validates the estimator itself.
+    kv_offload_tiering_prefetch_admission_lead_time_p50_seconds_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_lead_time_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_tiering_prefetch_admission_lead_time_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_lead_time_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_tiering_prefetch_admission_actual_lead_time_p50_seconds_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_actual_lead_time_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_tiering_prefetch_admission_actual_lead_time_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_actual_lead_time_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    # Contiguous resident prefix length reaching the gate.
+    kv_offload_tiering_prefetch_admission_bundle_chunks_p50_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_bundle_chunks_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_tiering_prefetch_admission_bundle_chunks_p90_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_bundle_chunks_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    # Share of gated bundles whose remaining lead time did not cover the
+    # measured transfer. This is the direct answer to "is lead time the
+    # binding constraint?" -- a ratio rather than a quantile because the
+    # margin histogram has negative buckets.
+    kv_offload_tiering_prefetch_admission_deadline_missed_share_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_deadline_margin_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex", le="0.0"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_deadline_margin_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex", le="+Inf"}[5m])), 0.001)
+    kv_offload_tiering_prefetch_admission_deadline_margin_mean_seconds_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_deadline_margin_seconds_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_admission_deadline_margin_seconds_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    # Lookahead demand staging. A probe runs the ordinary admission lookup for
+    # a queued request the scheduler could not admit, so its secondary-tier
+    # existence checks and NVMe->CPU promotions start while it waits. Probes
+    # allocate no GPU blocks, so the only visible effect is earlier promotion.
+    # A control cell (lookahead_requests absent or 0) reports zero probes while
+    # the horizon histogram below still populates, which is what makes the two
+    # arms comparable on the same query set.
+    kv_offload_lookahead_probes_total_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_lookahead_probes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_lookahead_probes_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookahead_probes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    kv_offload_lookahead_probes_deferred_total_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_lookahead_probes_deferred_total", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_lookahead_probes_deferred_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookahead_probes_deferred_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    # Share of probes the backend could not resolve in one step. The first
+    # probe of a cold key always defers while the async existence check runs,
+    # so a share that starts high and falls is the expected shape. A share
+    # pinned at 1.0 means probes never resolve and no promotion is starting.
+    kv_offload_lookahead_probes_deferred_share_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookahead_probes_deferred_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookahead_probes_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    # Request arrival to its first offload lookup, whether that lookup came
+    # from a probe or from admission. This is the queueing horizon available
+    # to hide external retrieval, so it is the denominator for whether
+    # lookahead can help at all: a p90 well below the tier's promotion time
+    # means there is no lead time to exploit, whatever the policy does.
+    # Distinct from the kv_offload_prefetch_admission_to_first_lookup_* queries
+    # above, which belong to the earlier ABC clean-prefetch mechanism.
+    kv_offload_admission_to_first_lookup_mean_seconds_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_admission_to_first_lookup_seconds_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_admission_to_first_lookup_seconds_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
+    kv_offload_admission_to_first_lookup_p50_seconds_by_engine: histogram_quantile(0.5, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_admission_to_first_lookup_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_admission_to_first_lookup_p90_seconds_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_admission_to_first_lookup_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    kv_offload_admission_to_first_lookup_p99_seconds_by_engine: histogram_quantile(0.99, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_admission_to_first_lookup_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
+    # Horizon beyond the top finite bucket (30s). Requests waiting longer than
+    # that are counted here rather than being lost into an unbounded quantile.
+    kv_offload_admission_to_first_lookup_overflow_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_admission_to_first_lookup_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex", le="+Inf"}[5m]) - ignoring(le) rate({__name__=~"(vllm|kserve_vllm):kv_offload_admission_to_first_lookup_seconds_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex", le="30.0"}[5m]))
+    # Do-no-harm refusals: a lookahead promotion the primary tier declined
+    # because the only blocks it could evict belong to requests scheduled
+    # ahead of the probed one. A rising rate is the gate working, not a bug --
+    # it means the CPU tier is full of blocks that are about to be demanded,
+    # and that staging this request would have moved a miss earlier. Read it
+    # against kv_offload_cpu_cache_free_blocks_by_engine: gating with free
+    # blocks available would instead point at an accounting error.
+    kv_offload_tiering_promotions_gated_total_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_promotions_gated_total", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_tiering_promotions_gated_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_promotions_gated_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
     kv_offload_lookup_async_stall_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
     kv_offload_lookup_async_blocked_requests_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
     kv_offload_lookup_async_mean_seconds_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_sum", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])) / clamp_min(sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_lookup_async_delay_seconds_count", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])), 0.001)
@@ -123,6 +243,52 @@ spec:
     kv_offload_cpu_cache_usage_percent_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"})
     kv_offload_cpu_cache_read_usage_percent_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_read_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"})
     kv_offload_cpu_cache_write_usage_percent_by_engine: sum by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_write_usage_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    # Physical capacity, distinct from the *_usage_perc gauges above: those
+    # measure PINNED occupancy, so a physically full but idle cache reports
+    # near zero. That is what made the first five-cell run's zero-submission
+    # failure look impossible -- usage_perc peaked at 15.8% while the pool had
+    # zero free blocks. fill_perc is the real fill.
+    kv_offload_cpu_cache_fill_percent_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_fill_perc", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_cache_free_blocks_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_free_blocks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_cache_evictable_blocks_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_evictable_blocks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_cache_write_pending_blocks_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_write_pending_blocks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    # Reserved speculative pool. speculative_blocks is what prefetch currently
+    # holds; reserve_free_blocks is the headroom left. A reserve pinned at zero
+    # free with alloc_refused rising means the reserve is undersized.
+    kv_offload_cpu_cache_speculative_blocks_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_speculative_blocks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_cache_speculative_reserve_blocks_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_speculative_reserve_blocks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_cache_speculative_reserve_free_blocks_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_speculative_reserve_free_blocks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    # Reserved blocks consumed by critical demand, in BLOCKS per second so the
+    # magnitude is readable: a one-block dip and an erosion of the whole
+    # prefetch budget are different events. The gauges above show a shortfall
+    # but not its cause -- the bounded-reserve run had to infer the borrow from
+    # free=0 while reserve_free=64. A rising rate here with free_blocks below
+    # the reserve means demand pressure, not a prefetch bug, is the cause.
+    kv_offload_cpu_cache_reserve_borrowed_blocks_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_reserve_borrowed_blocks_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    # Acceptance gate for the live cell: free blocks must stay at or above the
+    # configured reserve after warmup. min() rather than sum() so a single
+    # starved CPU manager cannot be masked by a healthy one.
+    #
+    # The absolute CPU block gauges above use max() for the same reason: the
+    # exporter emits two series per CPU manager, so sum() reported a 1,024-
+    # block reserve for a configured 512 and doubled the free-block count.
+    # These gauges are per-manager state, not additive quantities -- summing
+    # them was always wrong, it only became visible once the reserve gave the
+    # value a known ground truth to disagree with.
+    kv_offload_cpu_cache_min_free_blocks_by_engine: min by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_free_blocks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    # Retention lease: blocks currently held against ordinary persistence, and
+    # blocks whose lease demand-critical pressure had to break.
+    kv_offload_cpu_cache_speculative_leased_blocks_by_engine: max by (pod, engine) ({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_speculative_leased_blocks", namespace="$namespace", pod=~"$modelserver_pod_regex"})
+    kv_offload_cpu_cache_speculative_lease_reclaimed_blocks_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_cache_speculative_lease_reclaimed_blocks_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
+    # Waste attributed to persistence reclaiming a promotion before demand --
+    # a subset of prefetch_wasted. This is the number that validates or
+    # falsifies the retention lease: if waste stays high but this stays low,
+    # retention is not the remaining problem.
+    # NOT every pre-demand eviction: a promotion displaced by a *later*
+    # speculative promotion is wasted but not counted here. Check
+    # speculative_reserve_free_blocks reaching zero for that case, and the
+    # lead-time histograms for demand simply never arriving.
+    kv_offload_tiering_prefetch_evicted_before_demand_rate_by_engine: sum by (pod, engine, tier) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_tiering_prefetch_evicted_before_demand_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
     kv_offload_cpu_allocation_size_p90_blocks_by_engine: histogram_quantile(0.9, sum by (pod, engine, le) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_cpu_allocation_size_bucket", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m])))
     kv_offload_allocation_failures_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_allocation_failure_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))
     kv_offload_stores_skipped_rate_by_engine: sum by (pod, engine) (rate({__name__=~"(vllm|kserve_vllm):kv_offload_stores_skipped_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}[5m]))

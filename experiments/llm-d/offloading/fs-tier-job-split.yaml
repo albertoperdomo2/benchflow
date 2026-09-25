@@ -1,0 +1,161 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: llm-d-fs-tier-job-split
+spec:
+  # Which half of per-job filesystem-tier I/O splitting is worth having, on
+  # llm-d rather than RHOAI.
+  #
+  # WHAT IS BEING TESTED
+  #
+  # FileSystemTierManager enqueued exactly one task per job, and a job's blocks
+  # are moved by one blocking loop (the C extension's batch_load_block is a
+  # serial for-loop over pread), so one request held one pool thread and kept
+  # one I/O in flight however large n_read_threads was; the pool only
+  # parallelized across requests. The fix splits a job across threads.
+  #
+  # Splitting both paths regressed on RHOAI (runs 53c79be6 vs b27ecd93, one
+  # node, sequential, Nemotron-253B TP=8, 64 I/O threads):
+  #   prefill_time p50/p90/p99   -2.5% / -2.7% / -2.3%   (the intended win)
+  #   decode_time  p50/p90/p99  +20.1% / +6.7% / +3.3%
+  #   num_preemptions_rate      +181%
+  #   output token throughput    -6.8%,  ITL mean +13.8%
+  #
+  # The fix works -- prefill improved at every percentile -- but the cost landed
+  # on decode. Pool workers are Python threads: with one task a worker sits
+  # inside the batch I/O call with the GIL released, but each extra task adds a
+  # wake-up, a queue pop and job bookkeeping that competes with the engine loop.
+  # Loads run while a request prefills; stores cascade on nearly every scheduler
+  # step, so splitting stores puts that churn next to decode.
+  #
+  # THREE ARMS
+  #   split-none   load=0  store=0   upstream behaviour
+  #   split-loads  load=32 store=0   the hypothesis: stores pay the tax
+  #   split-both   load=32 store=32  reproduces the regression
+  #
+  # PREDICTION, stated before the run so it can be scored honestly: split-loads
+  # keeps the prefill gain and returns decode_time and num_preemptions_rate to
+  # split-none levels. If split-loads also regresses decode, the tax is not
+  # store-specific and the thread-pool approach is finished on this engine.
+  #
+  # WHY llm-d MAY SHOW THIS MORE CLEARLY THAN RHOAI
+  #
+  # The RHOAI runs left the NVMe device 8.6% busy, so there was little for a
+  # retrieval optimization to win and the prefill gain stalled at 2.5%. This
+  # deployment pressures the device far harder: 8 replicas instead of 1, all
+  # sharing the same host NVMe directory, each with a 32 GiB CPU tier instead of
+  # 256 GiB, so far more traffic reaches the secondary tier.
+  #
+  # Counterweight, and the reason not to expect the RHOAI magnitudes: the base
+  # profile leaves n_read_threads/n_write_threads at 16, and a job is capped at
+  # the thread count, so a ~2,628-chunk prompt splits into at most 16 tasks here
+  # versus 63 there. Expect a smaller gain AND a smaller decode tax. Treat this
+  # as a fresh baseline, not a continuation of the RHOAI series -- the model,
+  # topology, CPU tier size and thread count all differ.
+  #
+  # READ THE RESULTS IN THIS ORDER. Reading throughput first is what made the
+  # lookahead campaign expensive:
+  #   1. prefill_time percentiles - did the load path get faster?
+  #   2. decode_time percentiles and num_preemptions_rate - what did it cost?
+  #   3. num_requests_running - did any of it let more requests run?
+  #   4. Only then request throughput, ITL and TTFT.
+  #
+  # Also check storage_nvme_busy_seconds_per_second. If the device is still
+  # largely idle with 8 replicas, this platform does not resolve the question
+  # either and the next regime to try is a slower tier (CephFS), not more
+  # tuning here.
+  #
+  # Run at least twice: BenchFlow has no repetitions field, and one no-offload
+  # replicate in this series came in 6x off its siblings.
+  #
+  # NOTES FROM THE FIRST LAUNCH (2026-09-21), for whoever reruns this:
+  #
+  # - Expect a slow rollout, not a failure. The runtime image is 21.8 GB and
+  #   8 pods per node pull it at once. Pods sat in ContainerCreating for 15+
+  #   minutes, and two hit ImagePullBackOff with
+  #     reading blob sha256:1452dc75...: Get "https://cdn01.quay.io/...": EOF
+  #   That is Quay's CDN truncating a blob under load, not a bad image, bad
+  #   auth, or an arch mismatch. It cleared on its own via kubelet backoff.
+  #   Give it 15-20 minutes before touching anything; only delete a stuck pod
+  #   if it is still backing off well past that, and it will then re-pull
+  #   against a node whose layers are mostly cached.
+  #
+  # - Readiness lags startup. Pods show Running 0/1 while the engine loads;
+  #   "init engine (profile, create kv cache, warmup model) took 91.79 s" in
+  #   the pod log means it is fine, just not probed ready yet.
+  #
+  # - Verify the arm from the rendered args, not the profile name. The image
+  #   defaults min_blocks_per_load_task=32 and min_blocks_per_store_task=0, so
+  #   a dropped key silently changes which arm a cell is.
+  model:
+    name:
+      - Qwen/Qwen3.6-35B-A3B
+  deployment_profile:
+    - llm-d-multi-tier-offloading-nvme-split-none
+    - llm-d-multi-tier-offloading-nvme-split-loads
+    - llm-d-multi-tier-offloading-nvme-split-both
+  benchmark_profile:
+    - aiperf-agentx-inference
+  overrides:
+    images:
+      # By tag, so this runs wherever the tag is pullable.
+      #
+      # Pods use imagePullPolicy IfNotPresent, so if this tag is ever re-pushed,
+      # nodes already holding the old image keep it and no error is raised --
+      # that is how an arm64 build survived three relaunches earlier in this
+      # campaign. The tag currently holds a single-arch amd64 manifest whose
+      # build assertions passed. Treat it as immutable: cut a new tag rather
+      # than re-pushing this one.
+      runtime: quay.io/rh-ee-aperdomo/vllm:v0.29.0-fs-job-split-v2
+    benchmark:
+      concurrency: 64
+    runtime:
+      # PLACEMENT: sequential + pinned nodes, deliberately, not node-exclusive.
+      #
+      # The first launch used node-exclusive with spread_pool h100-benchflow.
+      # That runs the arms in parallel on disjoint node sets, which isolates the
+      # shared host NVMe directory but measures every arm on different hardware:
+      #   m1 (split-none)  -> 6kl5z, fx7c8
+      #   m2 (split-loads) -> gjfjh, mt46x
+      # The headline effect here is decode regression of roughly 20%, which
+      # survives node-to-node variation, but the prefill delta being tested is
+      # about 2.5% and does not. Several reports in this series were already
+      # weakened by "the nodes differed"; do not add another.
+      #
+      # Sequential alone is not enough: the scheduler could still land each arm
+      # somewhere different. The affinity pin below is the part that actually
+      # removes the confound. Sequential is what makes the pin safe, because the
+      # arms then never touch the shared NVMe directory at the same time, and
+      # host_paths[].cleanup=true empties it between them.
+      #
+      # 8 replicas x TP=2 = 16 GPUs, so exactly two 8-GPU nodes are required.
+      # gjfjh and mt46x are chosen because they already hold the runtime image
+      # and ran the arm that came up cleanly; any two of the four H100 nodes
+      # work, but keep the same pair across repetitions.
+      #
+      # Cost: the three arms run back to back rather than in parallel, so wall
+      # time is roughly 3x. That is the price of a clean comparison.
+      placement:
+        mode: sequential
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - diadochos-hqxzk-gpu-h100-gjfjh
+                      - diadochos-hqxzk-gpu-h100-mt46x
+  metrics_profile: detailed
+  target:
+    # External Gateway traffic exercises the upstream EPP routing path.
+    endpoint_scope: external
+  mlflow:
+    tags:
+      revision: v0.29.0-fs-job-split-v2
+      benchmark_family: fs-tier-job-split-llm-d
+      offload_type: local-nvme
+  namespace: benchflow
+  execution:
+    timeout: 8h

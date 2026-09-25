@@ -98,7 +98,7 @@ spec:
 
 def test_packaged_epp_pprof_profile_uses_reliable_cpu_queries() -> None:
     profile = load_metrics_profile(
-        REPO_ROOT / "profiles/metrics/epp-tracing-full-pprof.yaml"
+        REPO_ROOT / "profiles/metrics/epp-tracing/epp-tracing-full-pprof.yaml"
     )
 
     assert profile.spec.queries["epp_cpu_cores"] == (

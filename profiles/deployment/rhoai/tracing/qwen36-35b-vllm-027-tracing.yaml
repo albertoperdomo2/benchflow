@@ -1,0 +1,65 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-qwen36-35b-vllm-027-tracing
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    image: vllm/vllm-openai:v0.27.0
+    replicas: 1
+    tensor_parallelism: 1
+    shared_memory_size: 300Gi
+    env:
+      USER: benchflow
+    # Match the effective model-server arguments captured by source MLflow
+    # run 9e8aa54f0fee4c04863fd2ff400c5c3f. That live pod did not contain a
+    # --kv-transfer-config argument, despite its CPU-offloading run name.
+    vllm_args:
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+      - --gpu-memory-utilization=0.55
+      - --max-num-seqs=256
+      - --max-model-len=131072
+  options:
+    enable_auth: false
+    startup_probe:
+      failureThreshold: 180
+    # RHOAI tracing currently requires an explicit OpenShift AI 3.5 EPP
+    # configuration so BenchFlow can instrument both the EPP and vLLM.
+    tracing_provider: explicit-epp
+    epp_config: |
+      apiVersion: llm-d.ai/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+      - type: single-profile-handler
+      - type: queue-scorer
+      - type: kv-cache-utilization-scorer
+      - type: prefix-cache-scorer
+      - type: no-hit-lru-scorer
+      - type: max-score-picker
+      - parameters:
+          scheme: https
+        type: metrics-data-source
+      schedulingProfiles:
+      - name: default
+        plugins:
+        - pluginRef: queue-scorer
+          weight: 2
+        - pluginRef: kv-cache-utilization-scorer
+          weight: 2
+        - pluginRef: prefix-cache-scorer
+          weight: 3
+        - pluginRef: no-hit-lru-scorer
+          weight: 2
+        - pluginRef: max-score-picker

@@ -1,0 +1,110 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: rhoai-fs-tier-job-split-portable
+spec:
+  # RHOAI validation of the filesystem-tier per-job I/O split, by image tag.
+  #
+  # Identical in substance to fs-tier-job-split.yaml; it differs only in
+  # referencing the runtime image by tag rather than by digest, so it can run
+  # on any RHOAI cluster where that tag is pullable.
+  #
+  # PREREQUISITE, assumed already satisfied on the target cluster: the tier's
+  # hostPath directory /var/mnt/benchflow-nvme/benchflow-kv-cache exists on
+  # every GPU node it may schedule to, with mode 1777 so arbitrary OpenShift
+  # UIDs can write to it, and the service account benchflow-hostpath-runtime is
+  # bound to an SCC permitting hostPath plus runtime/default seccomp. The
+  # profiles do not create either. Do not switch the volume to
+  # DirectoryOrCreate: kubelet-created hostPath directories are root-owned and
+  # the vLLM container may not be able to write to them.
+  #
+  # WHAT IS BEING TESTED
+  #
+  # FileSystemTierManager enqueued exactly one task per job, and a job's blocks
+  # are moved by one blocking loop (the C extension's batch_load_block is a
+  # serial for-loop over pread), so one request held one pool thread and kept
+  # one I/O in flight however large n_read_threads was. The pool only
+  # parallelized across requests. The fix splits jobs across threads.
+  #
+  # Splitting both paths regressed on local NVMe (runs 53c79be6 vs b27ecd93,
+  # same node, sequential):
+  #   prefill_time p50/p90/p99   -2.5% / -2.7% / -2.3%   (the intended win)
+  #   decode_time  p50/p90/p99  +20.1% / +6.7% / +3.3%
+  #   num_preemptions_rate      +181%
+  #   output token throughput    -6.8%,  ITL mean +13.8%
+  #
+  # The fix works -- prefill improved at every percentile -- but the cost landed
+  # on decode. Pool workers are Python threads: with one task a worker sits
+  # inside the batch I/O call with the GIL released, but each extra task adds a
+  # wake-up, a queue pop and job bookkeeping that competes with the engine loop.
+  #
+  # THREE ARMS
+  #   split-none   load=0  store=0   upstream behaviour
+  #   split-loads  load=32 store=0   the hypothesis: stores pay the tax
+  #   split-both   load=32 store=32  reproduces the regression
+  #
+  # PREDICTION, stated before the run so it can be scored honestly: split-loads
+  # keeps the prefill gain and returns decode_time and num_preemptions_rate to
+  # split-none levels. If split-loads also regresses decode, the tax is not
+  # store-specific and the thread-pool approach is finished on this engine.
+  #
+  # WHAT THIS RUN CAN AND CANNOT SETTLE
+  #
+  # On local NVMe the device sat 8.6% busy, so there is little for a retrieval
+  # optimization to win and the prefill gain stayed at 2.5%. This run therefore
+  # answers which path pays the decode tax, not whether the fix is worth having
+  # in general. The latter needs a tier whose per-file latency is high enough
+  # that the prefill gain is large relative to the tax.
+  #
+  # READ THE RESULTS IN THIS ORDER. Reading throughput first is what made the
+  # lookahead campaign expensive:
+  #   1. prefill_time percentiles - did the load path get faster?
+  #   2. decode_time percentiles and num_preemptions_rate - what did it cost?
+  #   3. num_requests_running - did any of it let more requests run?
+  #   4. Only then request throughput, ITL and TTFT.
+  #
+  # Run at least twice: BenchFlow has no repetitions field, and one no-offload
+  # replicate in this series came in 6x off its siblings.
+  model:
+    name:
+      - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8
+  deployment_profile:
+    - multi-tier-offloading-nvme-split-none
+    - multi-tier-offloading-nvme-split-loads
+    - multi-tier-offloading-nvme-split-both
+  benchmark_profile:
+    - aiperf-agentx-inference
+  model_overrides:
+    nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.8
+  overrides:
+    images:
+      # Tag, not digest, so this runs anywhere the tag is pullable.
+      #
+      # The trade-off is real and worth knowing: pods use imagePullPolicy
+      # IfNotPresent, so if this tag is ever re-pushed, nodes that already
+      # cached it keep the old image and no error is raised. That is how an
+      # arm64 build survived three relaunches earlier in this campaign. This tag
+      # holds a single-arch amd64 manifest whose build assertions passed; treat
+      # it as immutable and cut a new tag rather than re-pushing this one.
+      runtime: quay.io/rh-ee-aperdomo/vllm:v0.29.0-fs-job-split-v2
+    benchmark:
+      concurrency: 64
+    runtime:
+      # Run the arms one after another. Several reports in this series were
+      # weakened by "the nodes differed".
+      placement:
+        mode: sequential
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      revision: v0.29.0-fs-job-split-v2
+      benchmark_family: fs-tier-job-split-portable
+  namespace: benchflow
+  execution:
+    timeout: 8h

@@ -1,0 +1,105 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-multi-tier-offloading-nvme-split-loads
+spec:
+  platform: llm-d
+  mode: precise-prefix-cache
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v0.8.0
+  gateway: istio
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /model-cache
+  runtime:
+    replicas: 8
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+      PYTHONHASHSEED: "0"
+    # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
+    # larger than cpu_bytes_to_use below, plus some headroom.
+    shared_memory_size: 200Gi
+    host_paths:
+      # The node setup must mount local NVMe here and pre-create this directory with
+      # mode 1777 and SELinux label container_file_t:s0. A shared cache directory
+      # must not be relabeled per pod because replicas run concurrently.
+      #
+      # The filesystem tier does not enforce byte capacity in vLLM config. Size
+      # it by provisioning/quotaing this host directory, and wipe it between
+      # benchmark runs because old tier files are not reused by later engines.
+      - name: nvme-kv-cache
+        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
+        mount_path: /mnt/nvme-kv-cache
+        type: DirectoryOrCreate
+        read_only: false
+        cleanup: true
+    vllm_args:
+      - --gpu-memory-utilization=0.92
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      #
+      # TREATMENT: loads split, stores not. Loads run while a request prefills; stores cascade on nearly every scheduler step, so their Python-side task churn lands next to decode.
+      #
+      # min_blocks_per_load_task=32, min_blocks_per_store_task=0.
+      # Both are explicit: the runtime image defaults them to 32 and 0, so an
+      # omitted key silently changes which arm this is.
+      #
+      # n_read_threads/n_write_threads are deliberately left at their defaults
+      # (16) to match the base profile. The split caps a job at the thread
+      # count, so a ~2,628-chunk prompt yields at most 16 tasks here rather than
+      # the 63 seen with 64 threads on RHOAI. That means both the gain and the
+      # decode cost should be smaller than the RHOAI numbers; do not compare the
+      # magnitudes across the two platforms.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":34359738368,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache","min_blocks_per_load_task":32,"min_blocks_per_store_task":0}]}}
+  options:
+    epp_config: |
+      apiVersion: llm-d.ai/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+        - type: token-producer
+          parameters:
+            modelName: {{ model_name }}
+            vllm:
+              url: "http://{{ release_name }}-render:8000"
+        - type: endpoint-notification-source
+        - type: precise-prefix-cache-producer
+          parameters:
+            tokenProcessorConfig:
+              blockSize: 1088
+            speculativeIndexing: true
+            indexerConfig:
+              kvBlockIndexConfig:
+                enableMetrics: true
+            kvEventsConfig:
+              topicFilter: "kv@"
+              concurrency: 8
+              discoverPods: true
+              podDiscoveryConfig:
+                socketPort: 5556
+        - type: prefix-cache-scorer
+          parameters:
+            prefixMatchInfoProducerName: precise-prefix-cache-producer
+        - type: kv-cache-utilization-scorer
+        - type: queue-scorer
+        - type: no-hit-lru-scorer
+          parameters:
+            prefixMatchInfoProducerName: precise-prefix-cache-producer
+      dataLayer:
+        sources:
+          - pluginRef: endpoint-notification-source
+            extractors:
+              - pluginRef: precise-prefix-cache-producer
+      schedulingProfiles:
+        - name: default
+          plugins:
+            - pluginRef: kv-cache-utilization-scorer
+              weight: 2.0
+            - pluginRef: queue-scorer
+              weight: 2.0
+            - pluginRef: prefix-cache-scorer
+              weight: 3.0
+            - pluginRef: no-hit-lru-scorer
+              weight: 2.0

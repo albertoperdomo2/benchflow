@@ -306,7 +306,7 @@ an execution that Kueue has already admitted; the higher-priority run starts
 when enough queue capacity becomes available.
 
 ```bash
-bflow experiment run experiments/rhoai/cpu-offloading.yaml --priority 100
+bflow experiment run experiments/rhoai/offloading/cpu-offloading.yaml --priority 100
 ```
 
 Important behavior:
@@ -1023,7 +1023,7 @@ request behavior, and default concurrency.
 The CLI equivalent repeats `--concurrency`:
 
 ```bash
-bflow experiment run experiments/rhoai/cpu-offloading.yaml \
+bflow experiment run experiments/rhoai/offloading/cpu-offloading.yaml \
   --concurrency 4 \
   --concurrency 8 \
   --concurrency 16

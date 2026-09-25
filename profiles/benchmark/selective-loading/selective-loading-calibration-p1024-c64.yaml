@@ -1,0 +1,37 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: guidellm-selective-loading-calibration-p1024-c64
+spec:
+  guidellm:
+    backend:
+      kind: openai_http
+    profile:
+      kind: concurrent
+    override:
+      profile.streams: [64]
+    seed:
+      kind: static
+      value: 20260909
+    data:
+      kind: synthetic_text
+      prompt_tokens: 256
+      output_tokens: 128
+      turns: 1
+      prefix_buckets:
+        - bucket_weight: 100
+          prefix_tokens: 1024
+          prefix_count: 2048
+    constraint:
+      - kind: max_duration
+        seconds: 300
+    pre_warmup:
+      rate: 32
+      constraint:
+        - kind: max_requests
+          count: 2048
+  requirements:
+    min_max_model_len: 32768
+  env:
+    GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "INFO"
+

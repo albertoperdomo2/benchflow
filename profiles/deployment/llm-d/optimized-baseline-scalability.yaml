@@ -14,6 +14,7 @@ spec:
     cache_dir: /models
     mount_path: /model-cache
   runtime:
+    image: vllm/vllm-openai:v0.27.0
     replicas: 1
     tensor_parallelism: 2
     env:
@@ -21,6 +22,7 @@ spec:
       PYTHONHASHSEED: "0"
     vllm_args:
       - --gpu-memory-utilization=0.55
+      - --max-num-seqs=256
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching

@@ -18,7 +18,7 @@ TRACING_SMOKE = (
     / "experiments/smoke/qwen3-06b-rhoai-distributed-default-tracing-smoke.yaml"
 )
 TRACE_REPRODUCTION = (
-    REPO_ROOT / "experiments/rhoai/qwen36-35b-vllm-027-traces-70pct.yaml"
+    REPO_ROOT / "experiments/rhoai/tracing/qwen36-35b-vllm-027-traces-70pct.yaml"
 )
 
 

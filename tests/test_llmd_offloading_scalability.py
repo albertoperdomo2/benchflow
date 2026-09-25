@@ -9,7 +9,7 @@ from benchflow.matrix import resolve_experiment_matrix
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPERIMENTS = REPO_ROOT / "experiments" / "llm-d"
+EXPERIMENTS = REPO_ROOT / "experiments" / "llm-d" / "offloading"
 REPLICAS = {1, 2, 4, 8}
 CONCURRENCIES = {4, 8, 16, 32, 64, 128, 256, 512, 1024}
 

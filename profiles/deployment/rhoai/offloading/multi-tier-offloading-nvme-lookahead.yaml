@@ -1,0 +1,97 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: multi-tier-offloading-nvme-lookahead
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+    # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
+    # larger than cpu_bytes_to_use below, plus some headroom.
+    shared_memory_size: 300Gi
+    # Required for hostPath volumes on OpenShift. For RHOAI LLMInferenceService,
+    # bind this service account to an SCC that allows both hostPath and
+    # runtime/default seccomp; on Poseidon, use:
+    # openshift-ai-llminferenceservice-multi-node-scc.
+    service_account_name: benchflow-hostpath-runtime
+    host_paths:
+      # poseidon H100 nodes mount local NVMe at /var/mnt/modelcache. This
+      # subdirectory is pre-created on each node with mode 1777 so random
+      # non-root OpenShift UIDs can write to it. Do not rely on DirectoryOrCreate
+      # here: kubelet-created hostPath directories are root-owned and may not be
+      # writable by the vLLM container.
+      #
+      # The filesystem tier does not enforce byte capacity in vLLM config. Size
+      # it by provisioning/quotaing this host directory, and wipe it between
+      # benchmark runs because old tier files are not reused by later engines.
+      # cleanup: true makes BenchFlow empty this mount before deleting the
+      # release, while a model pod is still available on each used node.
+      - name: nvme-kv-cache
+        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
+        mount_path: /mnt/nvme-kv-cache
+        type: Directory
+        read_only: false
+        cleanup: true
+    vllm_args:
+      - --max-model-len=8192
+      # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
+      #
+      # lookahead_requests turns on lookahead demand staging: after the
+      # admission loop stops, the connector runs the ordinary offload lookup
+      # for the next N waiting requests in scheduling order, so their
+      # NVMe->CPU promotions start while they queue instead of after they are
+      # admitted. Probes allocate no GPU blocks, and a promotion started by a
+      # probe is refused rather than evicting CPU blocks that a request
+      # scheduled earlier will need (counted by
+      # vllm:kv_offload_tiering_promotions_gated_total).
+      #
+      # This makes the profile the TREATMENT arm. Set lookahead_requests to 0,
+      # or drop both keys, to get the control the earlier runs used.
+      #
+      # The feature needs a runtime image carrying the lookahead change. vLLM
+      # does NOT validate unknown kv_connector_extra_config keys, so on a stock
+      # image these two are silently ignored and the run is a control wearing a
+      # treatment label. Confirm the arm from metrics, not from this file:
+      # vllm:kv_offload_lookahead_probes_total must be non-zero.
+      #
+      # lookahead_probe_ttl_steps is the minimum scheduler steps between two
+      # probes of the same request. It applies whether or not the previous
+      # verdict deferred; combined with the lookahead_max_probes cap (default
+      # 3) this is what holds probe volume down. In the v1 image a deferred
+      # verdict was exempt from the TTL, which re-scanned a queued request
+      # every step (~19 probes/request) and cost -10.0% throughput.
+      #
+      # lookahead_probe_chunks bounds how many chunks one probe may scan. The
+      # scan does not stop on RETRY, so an unbounded probe walks the whole
+      # request: ~2,628 chunks for a 42k-token AgentX prompt. Its results come
+      # back as one batch that drain_results processes on the scheduler thread,
+      # so the burst size, not the probe rate, is what sets the tail. Evidence:
+      # cutting probes 7x (11.50 -> 1.61/s) left the per-block synchronous
+      # lookup p99 unchanged at ~0.64 s against a 0.238 s control.
+      #
+      # 1024 is a deliberate mechanism test of that burst hypothesis. It cuts
+      # the scan ~2.6x (5.43 ms -> 1.76 ms measured) but pre-warms only ~39% of
+      # a request's keys, so expect the external-stall reduction to shrink from
+      # the -22.5% measured with a full scan. Read
+      # vllm:kv_offload_tiering_lookup_sync_delay_seconds p99 first: if it does
+      # not fall well below 0.64 s, the burst hypothesis is wrong and this knob
+      # is not worth sweeping further.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"lookahead_requests":4,"lookahead_probe_ttl_steps":8,"lookahead_probe_chunks":1024,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache","n_read_threads":64,"n_write_threads":64}]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false

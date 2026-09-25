@@ -1,0 +1,31 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: aiperf-agentx-inference-15m
+spec:
+  tool: aiperf
+  env:
+    AIPERF_HTTP_SSL_VERIFY: "false"
+  requirements:
+    min_max_model_len: 131072
+  aiperf:
+    # Reproduces MLflow run 9e8aa54f0fee4c04863fd2ff400c5c3f.
+    scenario: inferencex-agentx-mvp
+    public_dataset: weka_hf
+    hf_weka_dataset: semianalysisai/cc-traces-weka-062126
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    use_server_token_count: true
+    extra_inputs: ignore_eos:true
+    cache_bust: first_turn_prefix
+    system_idle_gap_cap_seconds: 10
+    ui: simple
+    trajectory_start_min_ratio: 0.0
+    trajectory_start_max_ratio: 1.0
+    benchmark_duration: 900
+    random_seed: 20260707
+    tokenizer_trust_remote_code: true
+    max_context_length: 128000
+    concurrency: 32
+    max_seconds: 7200

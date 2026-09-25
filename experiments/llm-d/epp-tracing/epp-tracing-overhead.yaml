@@ -1,0 +1,27 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: epp-tracing-overhead
+spec:
+  # Run this matrix three times. BenchFlow does not have a repetition axis, and
+  # the three executions provide independent samples for each configuration.
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: llm-d-epp-tracing-inference-sim
+  benchmark_profile: guidellm-epp-tracing-rate-400-200-100
+  metrics_profile:
+    - epp-tracing-off
+    - epp-tracing-one-percent
+    - epp-tracing-ten-percent
+    - epp-tracing-full
+    # This is a diagnostic run. Do not include its request performance in the
+    # primary tracing-cost comparison because CPU profiling adds overhead.
+    - epp-tracing-full-pprof
+  namespace: benchflow
+  mlflow:
+    experiment: epp-tracing-overhead
+    tags:
+      issue: llm-d-router#2665
+      study_phase: fixed-400-final
+  execution:
+    timeout: 2h

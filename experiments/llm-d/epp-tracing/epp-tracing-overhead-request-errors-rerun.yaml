@@ -1,0 +1,18 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: epp-tracing-overhead-request-errors-rerun
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: llm-d-epp-tracing-inference-sim
+  benchmark_profile: guidellm-epp-tracing-rate-200-100
+  metrics_profile: epp-tracing-zero
+  namespace: benchflow
+  mlflow:
+    experiment: epp-tracing-overhead
+    tags:
+      issue: llm-d-router#2665
+      rerun_reason: epp-unhealthy-retry
+  execution:
+    timeout: 2h

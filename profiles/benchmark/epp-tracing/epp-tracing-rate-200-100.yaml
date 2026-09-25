@@ -1,0 +1,27 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: guidellm-epp-tracing-rate-200-100
+spec:
+  guidellm:
+    backend:
+      kind: openai_http
+      stream: false
+    profile:
+      kind: poisson
+      max_concurrency: 512
+    override:
+      profile.rate: [25, 100, 400, 800]
+    metrics:
+      kind: generative
+      sample_size: 100
+    seed:
+      kind: static
+      value: 20260919
+    data:
+      kind: synthetic_text
+      prompt_tokens: 200
+      output_tokens: 100
+    constraint:
+      - kind: max_duration
+        seconds: 300

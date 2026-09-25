@@ -244,7 +244,11 @@ spec:
 def test_selective_loading_focused_crossover_resolves_independent_cells() -> None:
     catalog = ProfileCatalog.load(REPO_ROOT / "profiles")
     experiment = load_experiment(
-        REPO_ROOT / "experiments" / "rhoai" / "selective-loading-focused-crossover.yaml"
+        REPO_ROOT
+        / "experiments"
+        / "rhoai"
+        / "selective-loading"
+        / "selective-loading-focused-crossover.yaml"
     )
     plans = resolve_experiment_matrix(experiment, catalog)
 

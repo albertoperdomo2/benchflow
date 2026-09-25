@@ -1,0 +1,74 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: multi-tier-offloading-nvme-split-io
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+    # vLLM's tiered offload CPU tier creates a shared mmap in /dev/shm. Keep this
+    # larger than cpu_bytes_to_use below, plus some headroom.
+    shared_memory_size: 300Gi
+    # Required for hostPath volumes on OpenShift. For RHOAI LLMInferenceService,
+    # bind this service account to an SCC that allows both hostPath and
+    # runtime/default seccomp; on Poseidon, use:
+    # openshift-ai-llminferenceservice-multi-node-scc.
+    service_account_name: benchflow-hostpath-runtime
+    host_paths:
+      # poseidon H100 nodes mount local NVMe at /var/mnt/modelcache. This
+      # subdirectory is pre-created on each node with mode 1777 so random
+      # non-root OpenShift UIDs can write to it. Do not rely on DirectoryOrCreate
+      # here: kubelet-created hostPath directories are root-owned and may not be
+      # writable by the vLLM container.
+      #
+      # The filesystem tier does not enforce byte capacity in vLLM config. Size
+      # it by provisioning/quotaing this host directory, and wipe it between
+      # benchmark runs because old tier files are not reused by later engines.
+      # cleanup: true makes BenchFlow empty this mount before deleting the
+      # release, while a model pod is still available on each used node.
+      - name: nvme-kv-cache
+        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
+        mount_path: /mnt/nvme-kv-cache
+        type: Directory
+        read_only: false
+        cleanup: true
+    vllm_args:
+      - --max-model-len=8192
+      # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
+      #
+      # TREATMENT arm of the retrieval-parallelism A/B.
+      #
+      # blocks_per_task=32 splits one job into ceil(len(keys)/32) tasks that the
+      # read and write pools run concurrently, so a single request's transfer
+      # can use more than one thread and keep more than one I/O in flight.
+      #
+      # Measured standalone on the target NVMe: 512 2 MiB blocks took 372 ms
+      # (2.89 GB/s) as one task versus 160 ms (6.72 GB/s) at 32 blocks/task, a
+      # 2.33x speedup on a device the earlier runs left roughly 74% idle. This
+      # experiment tests whether that converts end to end.
+      #
+      # Failure semantics are unchanged: JobState ANDs the per-task results, so
+      # any failing task still fails the whole job.
+      #
+      # Lookahead is deliberately absent: with no lookahead_requests key it
+      # defaults to 0 (off). Both arms must have it off, so the only difference
+      # between them is the I/O split.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache","n_read_threads":64,"n_write_threads":64,"blocks_per_task":32}]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false

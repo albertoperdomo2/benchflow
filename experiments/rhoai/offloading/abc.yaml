@@ -1,0 +1,48 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: vllm-lookahead
+spec:
+  model:
+    name:
+      - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8
+  deployment_profile:
+    - cpu-kv-offload-distributed-default
+    - multi-tier-offloading-nvme
+  benchmark_profile:
+    - aiperf-agentx-inference
+  model_overrides:
+    nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.8
+  overrides:
+    images:
+      runtime: quay.io/rh-ee-aperdomo/vllm:v0.27.0-lookahead-v2
+      # runtime: quay.io/rh-ee-aperdomo/vllm:v0.27.0-selective-load-v1
+      # runtime: vllm/vllm-openai:v0.27.0
+    benchmark:
+      concurrency: 64
+    runtime:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - diadochos-hqxzk-gpu-h100-mt46x
+                      - diadochos-hqxzk-gpu-h100-6kl5z
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H100
+      revision: v0.27.0-lookahead-v2
+      # revision: v0.27.0-official
+  namespace: benchflow
+  execution:
+    timeout: 8h

@@ -6,18 +6,18 @@ spec:
   model:
     name: Qwen/Qwen3-32B
   deployment_profile:
-    - rhaiis-raw-vllm
-    - llm-d-optimized-baseline-standalone
-    - llm-d-optimized-baseline-gateway
+    # - rhaiis-raw-vllm
+    # - llm-d-optimized-baseline-standalone
+    # - llm-d-optimized-baseline-gateway
     - llm-d-precise-prefix-cache-routing-standalone
-    - llm-d-precise-prefix-cache-routing-gateway
+    # - llm-d-precise-prefix-cache-routing-gateway
   benchmark_profile: 
-    - guidellm-x-70r-6kSys
+    # - guidellm-x-70r-6kSys
+    - inference-perf-multimodal-shared-prefix
   metrics_profile: detailed
   mlflow:
     tags:
       accelerator: H200
-      epp_image: v0.9.0
       # version: "main"
       # deployment_type: "epp-v0.9.0"
       # deployment_profile: "epp-v0.9.0"

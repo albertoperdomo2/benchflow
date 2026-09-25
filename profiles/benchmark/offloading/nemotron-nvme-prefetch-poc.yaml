@@ -1,0 +1,65 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: guidellm-nemotron-nvme-prefetch-poc
+spec:
+  guidellm:
+    backend:
+      kind: openai_http
+      request_format: /v1/chat/completions
+      stream: true
+      # Keep generation repeatable so both deployment cells do the same work.
+      extras:
+        body:
+          temperature: 0
+          seed: 20260814
+          kv_transfer_params:
+            abc_admission_prefetch: true
+    profile:
+      kind: concurrent
+    # The Nemotron experiment pins vLLM to max_num_seqs=1. The extra client
+    # streams create a natural server-side queue so admission-time NVMe->CPU
+    # prefetch can overlap the request currently using the GPU.
+    override:
+      profile.streams: [8]
+    seed:
+      kind: static
+      value: 20260814
+    data:
+      kind: synthetic_text
+      # 4K prompts contain 256 16-token hash blocks. Prefetching N=100 covers
+      # the first 1,600 prompt tokens while leaving demand work to measure.
+      prompt_tokens: 4096
+      # GuideLLM forces the requested output length with ignore_eos. Keeping
+      # output short makes storage stalls and TTFT dominate the comparison.
+      output_tokens: 64
+    constraint:
+      - kind: max_requests
+        count: 256
+    pre_warmup:
+      rate: 8
+      # Populate NVMe without issuing blind assumed-resident reads. BenchFlow
+      # replaces the complete backend mapping for pre-warmup, so repeat the
+      # measured backend configuration here with the request gate disabled.
+      backend:
+        kind: openai_http
+        request_format: /v1/chat/completions
+        stream: true
+        extras:
+          body:
+            temperature: 0
+            seed: 20260814
+            kv_transfer_params:
+              abc_admission_prefetch: false
+      # The same seed and worker count replay the same prompt sequence in the
+      # measured phase. 1,024 unique 4K prompts represent about 262K 16-token
+      # blocks: enough to populate NVMe and churn the 131,072-block CPU tier.
+      # The measured phase starts again from the oldest 256 prompts, which
+      # should be absent from GPU/CPU but present on persistent NVMe.
+      constraint:
+        - kind: max_requests
+          count: 1024
+  requirements:
+    min_max_model_len: 8192
+  env:
+    GUIDELLM__LOGGING__CONSOLE_LOG_LEVEL: "INFO"

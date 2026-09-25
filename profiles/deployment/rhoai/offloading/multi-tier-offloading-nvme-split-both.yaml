@@ -1,7 +1,7 @@
 apiVersion: benchflow.io/v1alpha1
 kind: DeploymentProfile
 metadata:
-  name: multi-tier-offloading-nvme
+  name: multi-tier-offloading-nvme-split-both
 spec:
   platform: rhoai
   mode: distributed-default
@@ -45,7 +45,13 @@ spec:
     vllm_args:
       - --max-model-len=8192
       # Keep secondary_tiers[].root_dir in sync with runtime.host_paths[].mount_path.
-      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache","n_read_threads":64,"n_write_threads":64}]}}
+      #
+      # REFERENCE: both split. Reproduces the v1 configuration that regressed, so the three arms separate the load axis from the store axis in one batch rather than across days.
+      #
+      # min_blocks_per_load_task=32, min_blocks_per_store_task=32.
+      # Both are set explicitly: the image defaults them to 32 and 0, so an
+      # omitted key silently changes which arm this is.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache","n_read_threads":64,"n_write_threads":64,"min_blocks_per_load_task":32,"min_blocks_per_store_task":32}]}}
       - --trust-remote-code
       - --no-enable-log-requests
       - --enable-prefix-caching

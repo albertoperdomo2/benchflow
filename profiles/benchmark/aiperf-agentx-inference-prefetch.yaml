@@ -1,0 +1,44 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: aiperf-agentx-inference-prefetch
+spec:
+  tool: aiperf
+  env:
+    AIPERF_HTTP_SSL_VERIFY: "false"
+  requirements:
+    min_max_model_len: 131072
+  aiperf:
+    # Source: AIPerf InferenceX AgentX MVP scenario recipe.
+    # https://github.com/ai-dynamo/aiperf/blob/main/docs/tutorials/agentx-mvp.md
+    scenario: inferencex-agentx-mvp
+    # AgentX MVP accepts generic weka_hf only for this exact pinned corpus
+    public_dataset: weka_hf
+    hf_weka_dataset: semianalysisai/cc-traces-weka-062126
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    # AgentX scenario locks these values; make them explicit for auditability
+    streaming: true
+    use_server_token_count: true
+    # Opt every measured request into the experimental admission-prefetch path.
+    # Keep the strict Boolean and object-shaped request body identical in both
+    # cells. It is inert for the control deployment, whose server-side mode is
+    # disabled, and activates the working-set oracle only in treatment.
+    extra_inputs: '{"ignore_eos":true,"kv_transfer_params":{"abc_admission_prefetch":true}}'
+    cache_bust: first_turn_prefix
+    system_idle_gap_cap_seconds: 10
+    ui: simple
+    # Scenario defaults that must stay fixed for comparable runs
+    trajectory_start_min_ratio: 0.0
+    trajectory_start_max_ratio: 1.0
+    benchmark_duration: 1800
+    random_seed: 20260707
+    # Some models provide a tokenizer through custom Hugging Face code
+    tokenizer_trust_remote_code: true
+    max_context_length: 128000
+    # Realistic pressure is part of the mechanism: queued requests provide the
+    # admission-to-first-lookup interval in which storage work can overlap.
+    # Do not add --max-num-seqs=1; server scheduling stays at the vLLM default.
+    concurrency: 64
+    # BenchFlow process timeout, not an AIPerf workload argument
+    max_seconds: 7200

@@ -14,13 +14,22 @@ spec:
     scale:
       replicas: [1, 2, 4, 8]
     benchmark:
-      concurrency: [4, 8, 16, 32, 64, 128, 256, 512, 1024]
+      concurrency: [8, 16, 32, 64, 128, 256, 512, 1024]
     runtime:
       # Each child owns whole nodes, isolating the fixed host NVMe directory
       # while allowing children with disjoint node sets to run in parallel.
       placement:
         mode: node-exclusive
         spread_pool: h100-benchflow
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: kubernetes.io/hostname
+      #               operator: NotIn
+      #               values:
+      #                 - diadochos-hqxzk-gpu-h100-gjfjh
   metrics_profile: detailed
   target:
     # External Gateway traffic exercises the upstream EPP routing path.

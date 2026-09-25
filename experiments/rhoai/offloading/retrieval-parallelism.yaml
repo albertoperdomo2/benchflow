@@ -1,0 +1,95 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: rhoai-retrieval-parallelism
+spec:
+  # Does parallelizing the filesystem tier's data path convert to end-to-end
+  # TTFT and throughput?
+  #
+  # Before v3, submit_load and submit_store enqueued exactly one task per job,
+  # so one request's whole NVMe transfer held a single pool thread issuing one
+  # read at a time; n_read_threads parallelized only across requests. Splitting
+  # a job into 32-chunk tasks measured 2.33x standalone on this NVMe (372 ms ->
+  # 160 ms for 512 2 MiB blocks), on a device the earlier lookahead runs left
+  # roughly 74% idle.
+  #
+  # The two arms differ in exactly one JSON key, secondary_tiers[0].
+  # blocks_per_task: 0 in serial-io reproduces the pre-v3 behaviour, 32 in
+  # split-io is the fix. Lookahead is off in both, per the 2026-09-07 result
+  # that found it neutral and admission capacity-bound rather than
+  # metadata-bound.
+  #
+  # Read the result in this order, because throughput read first is what made
+  # the lookahead campaign expensive:
+  #   1. vllm:kv_offload_tiering_lookup_sync_delay_seconds p99 - did retrieval
+  #      actually get faster? If not, the split is not reaching the data path.
+  #   2. num_requests_running - did faster retrieval let more requests run? A
+  #      mechanism that moves (1) without moving (2) is not on the critical
+  #      path, which is exactly how lookahead failed.
+  #   3. Only then request throughput and TTFT.
+  #
+  # Run this file at least twice. BenchFlow has no repetitions field, and one
+  # no-offload replicate in this series came in 6x off its siblings (0.0217 vs
+  # ~0.13 req/s), so a single pair cannot carry a latency claim.
+  model:
+    name:
+      - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8
+  deployment_profile:
+    - multi-tier-offloading-nvme-serial-io
+    - multi-tier-offloading-nvme-split-io
+  benchmark_profile:
+    - aiperf-agentx-inference
+  model_overrides:
+    nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.8
+  overrides:
+    images:
+      # Pinned by digest, not tag, and deliberately so.
+      #
+      # The first attempt pushed an arm64 build to the tag
+      # v0.27.0-lookahead-v3. Every node cached that under the tag, and because
+      # the rendered pods use imagePullPolicy: IfNotPresent, a later amd64 push
+      # to the SAME tag was never pulled: the containers kept dying with
+      #   exec container process `/usr/bin/python3`: Exec format error
+      # The tag is now a multi-arch manifest holding both, so it is ambiguous.
+      # This digest is the amd64 manifest and the only thing that will run on
+      # these H100 nodes.
+      #
+      # Two earlier batches in this campaign were also invalidated by pods
+      # resolving a stale digest from an unchanged tag. Pin the digest for any
+      # run whose conclusion depends on which code is executing.
+      runtime: quay.io/rh-ee-aperdomo/vllm@sha256:0a4c0dd8fa8ceb2db8492600acbe95ce5d3142833ae0037ebae28e798a8d450e
+    benchmark:
+      concurrency: 64
+    runtime:
+      # Run the arms one after another. Earlier reports in this series were
+      # repeatedly weakened by "the nodes differed"; sequential placement plus
+      # the node pin below removes that confound.
+      placement:
+        mode: sequential
+      # Pin both arms to one H100 node. Fill in a currently free node from
+      #   oc get nodes -l nvidia.com/gpu.product --no-headers
+      # and keep it identical across repetitions.
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: kubernetes.io/hostname
+      #               operator: In
+      #               values:
+      #                 - <node>
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H100
+      revision: v0.27.0-lookahead-v3
+      benchmark_family: retrieval-parallelism
+  namespace: benchflow
+  execution:
+    timeout: 8h

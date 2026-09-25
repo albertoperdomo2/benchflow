@@ -1,0 +1,20 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen36-35b-traces
+spec:
+  model:
+    name: Qwen/Qwen3.6-35B-A3B
+  deployment_profile: rhoai-qwen36-35b-vllm-027-tracing
+  benchmark_profile: aiperf-agentx-inference-15m
+  metrics_profile: detailed-tracing-70pct
+  namespace: benchflow
+  target_cluster:
+    kubeconfig_secret: psap-h200-fire-athena
+  mlflow:
+    tags:
+      accelerator: H200
+      trace_sampling_rate: none
+      vllm_version: 0.27.0
+  execution:
+    timeout: 8h

@@ -1,0 +1,90 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-distributed-default-selective-loading-disabled
+spec:
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 2
+    env:
+      USER: benchflow
+    shared_memory_size: 300Gi
+    service_account_name: benchflow-hostpath-runtime
+    host_paths:
+      - name: nvme-kv-cache
+        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
+        mount_path: /mnt/nvme-kv-cache
+        type: Directory
+        read_only: false
+        cleanup: true
+    vllm_args:
+      - --max-model-len=8192
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":274877906944,"secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache","n_read_threads":64,"n_write_threads":64}]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
+    epp_allow_experimental_plugins: true
+    precise_prefix_cache_routing: true
+    startup_probe:
+      failureThreshold: 180
+    epp_config: |
+      apiVersion: llm-d.ai/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+        - type: token-producer
+          parameters:
+            modelName: {{ model_name }}
+            vllm:
+              url: https://{{ release_name }}-kserve-workload-svc.{{ namespace }}.svc:8000
+              caCertPath: /var/run/kserve/tls/ca.crt
+        - type: endpoint-notification-source
+        - type: precise-prefix-cache-producer
+          parameters:
+            tokenProcessorConfig:
+              blockSizeTokens: 64
+            speculativeIndexing: true
+            indexerConfig:
+              kvBlockIndexConfig:
+                enableMetrics: true
+            kvEventsConfig:
+              topicFilter: "kv@"
+              concurrency: 8
+              discoverPods: true
+              podDiscoveryConfig:
+                socketPort: 5556
+                replaySocketPort: 5559
+        - type: inflight-load-producer
+          parameters:
+            prefixMatchInfoProducerName: precise-prefix-cache-producer
+        - type: prefix-cache-affinity-filter
+          parameters:
+            prefixMatchInfoProducerName: precise-prefix-cache-producer
+            peakPrefillThroughput: 15926
+        - type: token-load-scorer
+        - type: selective-kv-policy
+          name: selective-kv-policy
+          parameters:
+            loadPolicy: disable
+      dataLayer:
+        sources:
+          - pluginRef: endpoint-notification-source
+            extractors:
+              - pluginRef: precise-prefix-cache-producer
+      schedulingProfiles:
+        - name: default
+          plugins:
+            - pluginRef: prefix-cache-affinity-filter
+            - pluginRef: token-load-scorer

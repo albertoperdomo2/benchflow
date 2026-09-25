@@ -1,0 +1,105 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: rhoai-fs-tier-job-split
+spec:
+  # Which half of per-job I/O splitting is worth having?
+  #
+  # v1 split loads and stores with one threshold and regressed on this exact
+  # workload (run b27ecd93 vs 53c79be6, same node, sequential):
+  #   prefill_time p50/p90/p99   -2.5% / -2.7% / -2.3%   (the intended win)
+  #   decode_time  p50/p90/p99  +20.1% / +6.7% / +3.3%
+  #   num_preemptions_rate      +181%
+  #   output token throughput    -6.8%,  ITL mean +13.8%
+  #
+  # The fix works -- prefill improved at every percentile -- but the cost landed
+  # on decode. Pool workers are Python threads: a worker spends nearly all of a
+  # task inside the batch I/O call with the GIL released, but each extra task
+  # adds a wake-up, a queue pop and job bookkeeping that competes with the
+  # engine loop. Loads run while a request prefills; stores cascade on nearly
+  # every scheduler step, so splitting stores puts that churn next to decode.
+  #
+  # Three arms separate the two axes in one batch, on one node, rather than
+  # across days:
+  #   split-none   load=0  store=0   upstream behaviour
+  #   split-loads  load=32 store=0   the hypothesis
+  #   split-both   load=32 store=32  reproduces the v1 regression
+  #
+  # The prediction, stated before the run so it can be wrong: split-loads keeps
+  # the prefill gain and returns decode_time and num_preemptions_rate to
+  # split-none levels. If split-loads also regresses decode, the mechanism is
+  # not store-specific and the whole approach needs rethinking on this engine.
+  #
+  # Read in this order. Reading throughput first is what made the lookahead
+  # campaign expensive:
+  #   1. prefill_time percentiles  - did the load path get faster?
+  #   2. decode_time percentiles and num_preemptions_rate - what did it cost?
+  #   3. num_requests_running - did any of it let more requests run?
+  #   4. Only then request throughput, ITL and TTFT.
+  #
+  # Run this file at least twice. BenchFlow has no repetitions field, and one
+  # no-offload replicate in this series came in 6x off its siblings.
+  model:
+    name:
+      - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8
+  deployment_profile:
+    - multi-tier-offloading-nvme-split-none
+    - multi-tier-offloading-nvme-split-loads
+    - multi-tier-offloading-nvme-split-both
+  benchmark_profile:
+    - aiperf-agentx-inference
+  model_overrides:
+    nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.8
+  overrides:
+    images:
+      # v0.29.0-fs-job-split-v2, pinned by digest, verified amd64.
+      #
+      # Pods use imagePullPolicy: IfNotPresent, so a tag a node has cached is
+      # never re-pulled -- that is how an arm64 build survived three relaunches
+      # and cost a day of cluster time. The digest makes that impossible.
+      #
+      # Note the digest below is NOT the one `podman images --digests` reports
+      # locally (sha256:6a7bcae6...); that value returns MANIFEST_UNKNOWN from
+      # Quay. This is the OCI manifest digest the registry actually serves, and
+      # it resolves to config sha256:1f9abef6..., the image built from
+      # Containerfile.fs-tier-job-split with its assertions passing. Quay also
+      # converts to Docker schema v1 for non-OCI Accept headers, which yields a
+      # third, different digest -- so verify a pin resolves before trusting it:
+      #
+      #   curl -s https://quay.io/v2/rh-ee-aperdomo/vllm/manifests/sha256:<d> \
+      #     -H 'Accept: application/vnd.oci.image.manifest.v1+json'
+      runtime: quay.io/rh-ee-aperdomo/vllm@sha256:ad7259f9150c80885fc95beacbcfb85f66a7308fc3277dea562f2a55413b3748
+    benchmark:
+      concurrency: 64
+    runtime:
+      # Run the arms one after another on one node. Several reports in this
+      # series were weakened by "the nodes differed".
+      placement:
+        mode: sequential
+      # Pin both arms to one H100. Fill in a currently free node from
+      #   oc get nodes -l nvidia.com/gpu.product --no-headers
+      # and keep it identical across repetitions.
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: kubernetes.io/hostname
+      #               operator: In
+      #               values:
+      #                 - <node>
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H100
+      revision: v0.29.0-fs-job-split-v2
+      benchmark_family: fs-tier-job-split-v2
+  namespace: benchflow
+  execution:
+    timeout: 8h
