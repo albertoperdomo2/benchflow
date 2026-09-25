@@ -17,6 +17,9 @@ TRACING_SMOKE = (
     REPO_ROOT
     / "experiments/smoke/qwen3-06b-rhoai-distributed-default-tracing-smoke.yaml"
 )
+TRACE_REPRODUCTION = (
+    REPO_ROOT / "experiments/rhoai/qwen36-35b-vllm-027-traces-70pct.yaml"
+)
 
 
 @pytest.fixture
@@ -104,6 +107,31 @@ def test_rhoai_tracing_instruments_vllm_model_server(tracing_plan) -> None:
         f"{tracing_plan.deployment.release_name}-vllm-modelserver"
     )
     assert env["OTEL_TRACES_SAMPLER_ARG"] == "1.0"
+
+
+def test_rhoai_trace_reproduction_matches_source_run(catalog: ProfileCatalog) -> None:
+    plan = resolve_experiment_matrix(load_experiment(TRACE_REPRODUCTION), catalog)[0]
+    manifest = render_rhoai_manifest(plan)
+    model_server = manifest["spec"]["template"]["containers"][0]
+
+    assert plan.model.name == "Qwen/Qwen3.6-35B-A3B"
+    assert plan.deployment.runtime.image == "vllm/vllm-openai:v0.27.0"
+    assert plan.deployment.runtime.replicas == 1
+    assert plan.deployment.runtime.tensor_parallelism == 1
+    assert plan.deployment.runtime.shared_memory_size == "300Gi"
+    assert plan.target_cluster.kubeconfig_secret == "psap-h200-fire-athena"
+    assert plan.benchmark.aiperf.args["concurrency"] == 32
+    assert plan.benchmark.aiperf.args["benchmark_duration"] == 900
+    assert plan.metrics.tracing.sample_ratio == 0.7
+    assert "--gpu-memory-utilization=0.55" in model_server["args"]
+    assert "--max-num-seqs=256" in model_server["args"]
+    assert "--max-model-len=131072" in model_server["args"]
+    assert "--collect-detailed-traces=all" in model_server["args"]
+    assert not any(
+        arg.startswith("--kv-transfer-config") for arg in model_server["args"]
+    )
+    env = {entry["name"]: entry["value"] for entry in model_server["env"]}
+    assert env["OTEL_TRACES_SAMPLER_ARG"] == "0.7"
 
 
 @pytest.mark.parametrize(
