@@ -102,6 +102,9 @@ spec:
           values: ["true"]
       taskRef:
         name: deploy-run-plan
+      # Large multi-shard models can legitimately need more than Tekton's
+      # default one-hour TaskRun timeout to become ready.
+      timeout: "2h"
       params:
         - name: IMAGE
           value: $(params.BENCHFLOW_IMAGE)
