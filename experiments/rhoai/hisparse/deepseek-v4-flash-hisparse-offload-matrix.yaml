@@ -1,0 +1,40 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: deepseek-v4-flash-hisparse-offload-matrix
+spec:
+  model:
+    name:
+      # DeepSeek V4 is retained as a model-specific comparison experiment.
+      # vLLM v0.30.0 rejects its three HiSparse-enabled cells; use the
+      # GLM-5.3 experiment for an end-to-end HiSparse test.
+      - deepseek-ai/DeepSeek-V4-Flash
+  deployment_profile:
+    - rhoai-hisparse-off-nooffload
+    - rhoai-hisparse-off-cpu
+    - rhoai-hisparse-off-cpu-nvme
+    - rhoai-hisparse-on-nooffload
+    - rhoai-hisparse-on-cpu
+    - rhoai-hisparse-on-cpu-nvme
+  benchmark_profile:
+    - aiperf-agentx-inference
+  model_overrides:
+    deepseek-ai/DeepSeek-V4-Flash:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.65
+          - --kv-cache-dtype=fp8
+  overrides:
+    images:
+      runtime: vllm/vllm-openai:v0.30.0
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H200
+      experiment_family: deepseek-v4-flash-hisparse-offload-matrix
+  namespace: benchflow
+  execution:
+    timeout: 12h

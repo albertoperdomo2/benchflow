@@ -1,0 +1,41 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: glm-53-hisparse-offload-matrix
+spec:
+  model:
+    name:
+      # GLM-5.3 is the model used by vLLM's reference HiSparse deployment on
+      # one 8xH200 node.
+      - zai-org/GLM-5.3
+  deployment_profile:
+    - rhoai-hisparse-on-nooffload
+    - rhoai-hisparse-on-cpu
+    - rhoai-hisparse-on-cpu-nvme
+    - rhoai-hisparse-off-nooffload
+    - rhoai-hisparse-off-cpu
+    - rhoai-hisparse-off-cpu-nvme
+  benchmark_profile:
+    - aiperf-agentx-inference
+  model_overrides:
+    zai-org/GLM-5.3:
+      scale:
+        tensor_parallelism: 8
+        replicas: 1
+      runtime:
+        vllm_extra_args:
+          - --gpu-memory-utilization=0.92
+          - --kv-cache-dtype=fp8
+          - --max-num-batched-tokens=32768
+          - --max-num-seqs=256
+  overrides:
+    images:
+      runtime: vllm/vllm-openai:v0.30.0
+  metrics_profile: detailed
+  mlflow:
+    tags:
+      accelerator: H200
+      experiment_family: glm-53-hisparse-offload-matrix
+  namespace: benchflow
+  execution:
+    timeout: 12h

@@ -1,0 +1,61 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-hisparse-off-cpu
+spec:
+  # Matrix cell 2 of 6. HiSparse off, OffloadingConnector CPU tier only.
+  #
+  # Uses TieringOffloadingSpec with an EMPTY secondary_tiers list rather than
+  # CPUOffloadingSpec. This is deliberate: the two specs differ in CPU buffer
+  # allocation (per-worker anonymous mmap vs one shared /dev/shm mmap), in
+  # cross-worker block visibility, and in LRU scope. Defaulting this cell to
+  # CPUOffloadingSpec would change spec implementation, shared-mmap semantics
+  # and tier depth all at once on the step to cell 3, and no delta on that step
+  # would be attributable to the secondary tier.
+  #
+  # Only secondary_tiers varies between this cell and cell 3.
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 8
+    tolerations:
+      - key: benchmark.llm-d.ai/test-gpu-amd64
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+    env:
+      USER: benchflow
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+      # Required for cross-process filesystem-tier block sharing, and harmless
+      # without a secondary tier. Kept here so cells 2 and 3 differ only in
+      # secondary_tiers.
+      PYTHONHASHSEED: "0"
+    # cpu_bytes_to_use is one shared budget per replica, divided among the TP
+    # workers. 64 GiB plus 16 GiB of alignment and runtime IPC headroom.
+    shared_memory_size: 80Gi
+    vllm_args:
+      - --max-model-len=131072
+      # 64 GiB CPU tier: the standardized capacity from the KV Cache Offloading
+      # calibration protocol. Identical in cells 2, 3, 5 and 6.
+      - --kv-transfer-config={"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":68719476736,"eviction_policy":"lru","secondary_tiers":[]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
+    startup_probe:
+      # Allow slow 141-shard model loads to finish without leaking the shared
+      # offload mmap through a probe-triggered container restart.
+      failureThreshold: 540
+      periodSeconds: 10
+      timeoutSeconds: 10

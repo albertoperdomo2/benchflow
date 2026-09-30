@@ -1,0 +1,58 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-hisparse-off-nooffload
+spec:
+  # Matrix cell 1 of 6. HiSparse off, no KV offloading.
+  #
+  # This is the only true HBM-only baseline in the matrix. Every delta in the
+  # HiSparse offload matrix is computed against this cell.
+  #
+  # The matrix has two independent factors over two different KV tiers:
+  #   factor 1 (rows) - HiSparse: sparse-MLA latent KV resident on the host
+  #   factor 2 (cols) - OffloadingConnector: prefix-cache offload
+  # They are NOT substitutes. See the header of hisparse-on-nooffload.yaml.
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 8
+    tolerations:
+      - key: benchmark.llm-d.ai/test-gpu-amd64
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+    env:
+      USER: benchflow
+      # Held constant across all six cells. HiSparse is Model Runner V2 only,
+      # so the three HiSparse-off cells run V2 as well to keep the runner out
+      # of the comparison.
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+    # Held identical across all six cells so shared-memory sizing never becomes
+    # a hidden variable. A 64 GiB TieringOffloadingSpec budget creates one
+    # shared mmap per replica, not one per TP rank; 80 GiB leaves 16 GiB for
+    # alignment and runtime IPC. tmpfs is allocated only as it is used.
+    shared_memory_size: 80Gi
+    vllm_args:
+      # AgentX requires min_max_model_len 131072.
+      - --max-model-len=131072
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
+    startup_probe:
+      # GLM-5.3 has 141 shards and can take over an hour to load from shared
+      # storage. Avoid killing it mid-load and leaving its shared mmap behind.
+      failureThreshold: 540
+      periodSeconds: 10
+      timeoutSeconds: 10

@@ -1,0 +1,80 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-hisparse-on-nooffload
+spec:
+  # Matrix cell 4 of 6. HiSparse on, no OffloadingConnector.
+  #
+  # NOT a no-offload cell. HiSparse itself puts the sparse-MLA latent KV on the
+  # host; "nooffload" here names the absence of OffloadingConnector only. The
+  # sole HBM-only cell in this matrix is rhoai-hisparse-off-nooffload.
+  #
+  # Why the two factors are not substitutes:
+  #   OffloadingConnector is cross-request prefix-cache offload. Whole blocks
+  #   spill to CPU/NVMe so a LATER request with a shared prefix skips recompute.
+  #   Driven by prefix reuse in the workload.
+  #
+  #   HiSparse is intra-request host-resident KV for sparse MLA. The decoding
+  #   request's context sits on the host and each decode step pulls only the
+  #   indexer's top-k rows into a fixed GPU hot buffer. Driven by sparsity
+  #   (index_topk << context), not reuse.
+  #
+  # Read cell deltas down a column or across a row, never as a ranking of
+  # factor 1 against factor 2. See hisparse-on-cpu.yaml for the further
+  # asymmetry that applies to the HiSparse-on row.
+  #
+  # Requirements enforced by vLLM at startup (vllm/config/vllm.py):
+  #   - CUDA only, Model Runner V2 only
+  #   - pipeline_parallel_size == 1, decode_context_parallel_size == 1
+  #   - model hf_config must expose index_topk (a DSA model)
+  #   - hybrid KV cache manager must stay enabled
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 8
+    tolerations:
+      - key: benchmark.llm-d.ai/test-gpu-amd64
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+    env:
+      USER: benchflow
+      # Mandatory for HiSparse.
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+    # No TieringOffloadingSpec CPU tier here; held identical across all six
+    # cells. HiSparse's host_pool_gib is pinned host memory, not /dev/shm.
+    # See cell 1 for the shared-memory sizing rationale.
+    shared_memory_size: 80Gi
+    vllm_args:
+      - --max-model-len=131072
+      # host_pool_gib is the usable sparse-MLA host-cache capacity per
+      # data-parallel replica, not a node-wide budget, and it is MANDATORY -
+      # HiSparseConnector refuses to start without it. The backing allocation is
+      # PINNED host memory. Under single-node MP tensor parallelism all TP ranks
+      # map one shared pinned pool (MLA source KV is replicated across ranks),
+      # so this is one physical 64 GiB copy, not 64 GiB per rank.
+      #
+      # Identical in cells 4, 5 and 6. Changing it changes the mechanism under
+      # test.
+      - --kv-transfer-config={"kv_connector":"HiSparseConnector","kv_role":"kv_both","kv_connector_extra_config":{"host_pool_gib":64}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
+    startup_probe:
+      # GLM-5.3 has 141 shards and can take over an hour to load from shared
+      # storage. Avoid a probe-triggered restart during legitimate startup.
+      failureThreshold: 540
+      periodSeconds: 10
+      timeoutSeconds: 10

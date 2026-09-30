@@ -1,0 +1,69 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: rhoai-hisparse-on-cpu-nvme
+spec:
+  # Matrix cell 6 of 6. HiSparse on, CPU tier + NVMe secondary tier.
+  #
+  # Identical to rhoai-hisparse-on-cpu except for secondary_tiers and the
+  # hostPath mount backing it.
+  #
+  # EXPECT THIS CELL TO BE NULL. With HiSparse active the offloader handles only
+  # the indexer group (see hisparse-on-cpu.yaml), and the indexer cache is small
+  # enough that it may never spill past the 64 GiB CPU tier. If cell 6 is
+  # indistinguishable from cell 5, that is a result - it says the indexer does
+  # not need a deep tier - but it is a cheap result. Drop this cell first if GPU
+  # hours are tight and spend them on repetitions of cells 1, 2 and 4 instead.
+  platform: rhoai
+  mode: distributed-default
+  platform_version: RHOAI-3.5.0
+  platform_channel: stable-3.5
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+  runtime:
+    replicas: 1
+    tensor_parallelism: 8
+    tolerations:
+      - key: benchmark.llm-d.ai/test-gpu-amd64
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+    env:
+      USER: benchflow
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+      PYTHONHASHSEED: "0"
+    # The 64 GiB CPU tier is one shared mmap per replica, divided among all TP
+    # workers. HiSparse's separate 64 GiB pool is pinned host memory.
+    shared_memory_size: 80Gi
+    service_account_name: benchflow-hostpath-runtime
+    host_paths:
+      # Same host directory and cleanup semantics as cell 3. Wiping between
+      # cells matters more here: a tier populated by cell 3 holds MLA latent
+      # blocks that this cell's offloader would never write, and leaving them
+      # behind changes what the NVMe tier reports.
+      - name: nvme-kv-cache
+        host_path: /var/mnt/benchflow-nvme/benchflow-kv-cache
+        mount_path: /mnt/nvme-kv-cache
+        type: Directory
+        read_only: false
+        cleanup: true
+    vllm_args:
+      - --max-model-len=131072
+      # Keep secondary_tiers[].root_dir in sync with host_paths[].mount_path.
+      - --kv-transfer-config={"kv_connector":"MultiConnector","kv_role":"kv_both","kv_connector_extra_config":{"connectors":[{"kv_connector":"HiSparseConnector","kv_role":"kv_both","kv_connector_extra_config":{"host_pool_gib":64}},{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":68719476736,"eviction_policy":"lru","secondary_tiers":[{"type":"fs","root_dir":"/mnt/nvme-kv-cache","n_read_threads":64,"n_write_threads":64}]}}]}}
+      - --trust-remote-code
+      - --no-enable-log-requests
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+      - --kv-cache-metrics
+      - --kv-cache-metrics-sample=0.01
+  options:
+    enable_auth: false
+    startup_probe:
+      # Allow slow 141-shard model loads to finish without leaking the shared
+      # offload mmap through a probe-triggered container restart.
+      failureThreshold: 540
+      periodSeconds: 10
+      timeoutSeconds: 10
