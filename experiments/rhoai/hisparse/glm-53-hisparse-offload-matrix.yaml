@@ -30,7 +30,7 @@ spec:
           - --max-num-seqs=256
   overrides:
     images:
-      runtime: vllm/vllm-openai:v0.30.0
+      runtime: vllm/vllm-openai:v0.31.0
   metrics_profile: detailed
   mlflow:
     tags:
