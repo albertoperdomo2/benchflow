@@ -5,6 +5,7 @@ import os
 import secrets
 import shutil
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
@@ -209,8 +210,34 @@ def _create_remote_job(
     env: dict[str, str] | None = None,
     volume_mounts: list[dict[str, Any]] | None = None,
     volumes: list[dict[str, Any]] | None = None,
+    inherit_runtime_placement: bool = False,
 ) -> None:
     safe_kind = sanitize_name(job_kind, max_length=20)
+    pod_spec: dict[str, Any] = {
+        "restartPolicy": "Never",
+        "serviceAccountName": plan.service_account,
+        "containers": [
+            {
+                "name": "main",
+                "image": _remote_image(),
+                "imagePullPolicy": "Always",
+                "command": ["bflow"],
+                "args": args,
+                "env": _remote_env(env),
+                "volumeMounts": volume_mounts or [],
+            }
+        ],
+        "volumes": volumes or [],
+    }
+    if inherit_runtime_placement:
+        runtime = plan.deployment.runtime
+        if runtime.node_selector:
+            pod_spec["nodeSelector"] = deepcopy(runtime.node_selector)
+        if runtime.affinity:
+            pod_spec["affinity"] = deepcopy(runtime.affinity)
+        if runtime.tolerations:
+            pod_spec["tolerations"] = deepcopy(runtime.tolerations)
+
     manifest = {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -234,22 +261,7 @@ def _create_remote_job(
                         "benchflow.io/remote-job-kind": safe_kind,
                     }
                 },
-                "spec": {
-                    "restartPolicy": "Never",
-                    "serviceAccountName": plan.service_account,
-                    "containers": [
-                        {
-                            "name": "main",
-                            "image": _remote_image(),
-                            "imagePullPolicy": "Always",
-                            "command": ["bflow"],
-                            "args": args,
-                            "env": _remote_env(env),
-                            "volumeMounts": volume_mounts or [],
-                        }
-                    ],
-                    "volumes": volumes or [],
-                },
+                "spec": pod_spec,
             },
         },
     }
@@ -753,6 +765,7 @@ def run_remote_job(
     timeout_seconds: int | None = 3600,
     mount_results_pvc: bool = False,
     job_name: str | None = None,
+    inherit_runtime_placement: bool = False,
 ) -> RemoteJobResult:
     if (args is None) == (args_builder is None):
         raise CommandError(
@@ -779,5 +792,6 @@ def run_remote_job(
         env=env,
         volume_mounts=resolved_volume_mounts,
         volumes=resolved_volumes,
+        inherit_runtime_placement=inherit_runtime_placement,
     )
     return wait_for_remote_job(plan, job_name=job_name, timeout_seconds=timeout_seconds)

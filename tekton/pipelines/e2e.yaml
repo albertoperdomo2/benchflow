@@ -77,6 +77,10 @@ spec:
 
     - name: download-model
       runAfter: [setup-run-plan]
+      # Large sharded models can legitimately need more than Tekton's default
+      # one-hour TaskRun timeout. Concurrent matrix children serialize safely
+      # on the model cache lock and may spend most of this time waiting.
+      timeout: "8h"
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-download)"
           operator: in

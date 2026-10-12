@@ -69,6 +69,45 @@ def test_ambiguous_create_accepts_an_existing_named_resource(monkeypatch) -> Non
     assert create_calls == 1
 
 
+def test_remote_job_can_inherit_runtime_placement(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    plan = SimpleNamespace(
+        metadata=SimpleNamespace(name="placement-test"),
+        deployment=SimpleNamespace(
+            namespace="benchflow",
+            runtime=SimpleNamespace(
+                node_selector={"accelerator": "h100"},
+                affinity={"nodeAffinity": {"required": "gpu-node"}},
+                tolerations=[{"key": "nvidia.com/gpu", "operator": "Exists"}],
+            ),
+        ),
+        service_account="benchflow-runner",
+        ttl_seconds_after_finished=3600,
+        target_cluster=SimpleNamespace(kubeconfig=str(kubeconfig)),
+    )
+
+    monkeypatch.setattr(
+        remote_jobs,
+        "_create_manifest_idempotently",
+        lambda manifest, **_kwargs: captured.update(yaml.safe_load(manifest)),
+    )
+
+    remote_jobs._create_remote_job(
+        plan,
+        job_name="placement-test",
+        job_kind="model-download",
+        args=["model", "download"],
+        inherit_runtime_placement=True,
+    )
+
+    pod_spec = captured["spec"]["template"]["spec"]
+    assert pod_spec["nodeSelector"] == {"accelerator": "h100"}
+    assert pod_spec["affinity"] == {"nodeAffinity": {"required": "gpu-node"}}
+    assert pod_spec["tolerations"] == [{"key": "nvidia.com/gpu", "operator": "Exists"}]
+
+
 def test_ambiguous_mlflow_upload_is_success_when_exact_size_was_committed(
     tmp_path: Path,
 ) -> None:
