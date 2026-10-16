@@ -134,7 +134,7 @@ spec:
     assert env["KV_EVENTS_REPLAY_ENDPOINT"]["value"] == "tcp://*:5559"
 
 
-def test_rhoai_nvme_offloading_renders_precise_prefix_routing_without_selective_kv(
+def test_rhoai_nvme_offloading_uses_default_rhoai_scheduler(
     tmp_path: Path,
 ) -> None:
     experiment_path = tmp_path / "experiment.yaml"
@@ -142,7 +142,7 @@ def test_rhoai_nvme_offloading_renders_precise_prefix_routing_without_selective_
         """apiVersion: benchflow.io/v1alpha1
 kind: Experiment
 metadata:
-  name: rhoai-nvme-precise-test
+  name: rhoai-nvme-default-scheduler-test
 spec:
   model:
     name: Qwen/Qwen3-32B
@@ -153,7 +153,6 @@ spec:
   overrides:
     images:
       runtime: quay.io/example/vllm:precise
-      scheduler: quay.io/example/epp:precise
 """,
         encoding="utf-8",
     )
@@ -163,28 +162,15 @@ spec:
     )[0]
 
     manifest = render_rhoai_manifest(plan)
-    scheduler = manifest["spec"]["router"]["scheduler"]["template"]["containers"][0]
-    assert "--allow-experimental-plugins" in scheduler["args"]
-    config_index = scheduler["args"].index("--config-text")
-    config = yaml.safe_load(scheduler["args"][config_index + 1])
-    plugin_types = [plugin["type"] for plugin in config["plugins"]]
-    assert "precise-prefix-cache-producer" in plugin_types
-    assert "inflight-load-producer" in plugin_types
-    assert "prefix-cache-affinity-filter" in plugin_types
-    assert "token-load-scorer" in plugin_types
-    assert "selective-kv-policy" not in plugin_types
-    assert config["dataLayer"] == {
-        "sources": [
-            {
-                "pluginRef": "endpoint-notification-source",
-                "extractors": [{"pluginRef": "precise-prefix-cache-producer"}],
-            }
-        ]
-    }
+    assert manifest["spec"]["router"]["scheduler"] == {}
+
     model_server = manifest["spec"]["template"]["containers"][0]
     assert "--enable-prefix-caching" in model_server["args"]
-    assert "--block-size=64" in model_server["args"]
-    assert any(arg.startswith("--kv-events-config=") for arg in model_server["args"])
+    assert "--block-size=64" not in model_server["args"]
+    assert not any(
+        arg.startswith("--kv-events-config=") for arg in model_server["args"]
+    )
+    assert "ports" not in model_server
 
 
 def test_rhoai_selective_loading_disabled_renders_always_recompute_policy(
