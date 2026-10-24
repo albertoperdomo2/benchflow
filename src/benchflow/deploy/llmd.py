@@ -257,7 +257,15 @@ def _llmd_recipe_render_dir(
         / _llmd_recipe_guide_name(plan, router_chart=router_chart)
         / "render"
     )
-    return render_dir if render_dir.exists() else None
+    # Older precise-prefix-cache-routing guides deployed a standalone vLLM
+    # renderer directly from render/. Current guides render on the vLLM model
+    # servers and keep nested render overlays only for backends such as SGLang.
+    # BenchFlow currently deploys the vLLM overlay, so treat only a complete
+    # root-level Kustomize overlay as the legacy renderer contract.
+    required_files = ("deployment.yaml", "service.yaml", "kustomization.yaml")
+    if all((render_dir / filename).is_file() for filename in required_files):
+        return render_dir
+    return None
 
 
 def _llmd_recipe_render_service_name(release_name: str) -> str:
@@ -1486,6 +1494,34 @@ def _recipe_modelserver_container(values: dict[str, Any]) -> dict[str, Any]:
     return containers[0]
 
 
+def _vllm_arg_tokens(args: list[Any], flag: str) -> list[str]:
+    """Return one upstream vLLM option while preserving its original form."""
+    for index, raw_item in enumerate(args):
+        item = str(raw_item)
+        if item == flag:
+            if index + 1 < len(args) and not str(args[index + 1]).startswith("--"):
+                return [item, str(args[index + 1])]
+            return [item]
+        if item.startswith(f"{flag}="):
+            return [item]
+    return []
+
+
+def _vllm_json_arg(args: list[Any], flag: str) -> dict[str, Any] | None:
+    tokens = _vllm_arg_tokens(args, flag)
+    if len(tokens) == 2:
+        raw_value = tokens[1]
+    elif len(tokens) == 1 and tokens[0].startswith(f"{flag}="):
+        raw_value = tokens[0].split("=", 1)[1]
+    else:
+        return None
+    try:
+        value = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _ensure_container_port(container: dict[str, Any], name: str, port: int) -> None:
     ports = container.setdefault("ports", [])
     for port_spec in ports:
@@ -1749,9 +1785,13 @@ def _patch_recipe_modelserver_overlay(
     spec = patch.setdefault("spec", {})
     spec["replicas"] = runtime.replicas
     container = _recipe_modelserver_container(patch)
+    upstream_args = list(container.get("args") or [])
+    access_log_args = _vllm_arg_tokens(
+        upstream_args, "--disable-access-log-for-endpoints"
+    ) or ["--disable-access-log-for-endpoints=/health,/metrics,/v1/models"]
     args = [
         _model_mount_path(plan),
-        "--disable-access-log-for-endpoints=/health,/metrics,/v1/models",
+        *access_log_args,
         f"--tensor-parallel-size={runtime.tensor_parallelism}",
         "--served-model-name",
         plan.model.name,
@@ -1773,19 +1813,22 @@ def _patch_recipe_modelserver_overlay(
                 {"name": "DO_NOT_TRACK", "value": "1"},
             ]
         )
+        kv_events_config = _vllm_json_arg(upstream_args, "--kv-events-config") or {
+            "enable_kv_cache_events": True,
+            "publisher": "zmq",
+            "endpoint": "$(KV_EVENTS_ENDPOINT)",
+        }
+        kv_events_config["topic"] = f"kv@$(POD_IP):$(POD_PORT)@{plan.model.name}"
+        block_size_args = _vllm_arg_tokens(upstream_args, "--block-size") or [
+            "--block-size=64"
+        ]
         args.extend(
             [
-                "--block-size=64",
+                *_vllm_arg_tokens(upstream_args, "--enable-scale-out"),
+                *block_size_args,
                 "--kv-events-config",
-                json.dumps(
-                    {
-                        "enable_kv_cache_events": True,
-                        "publisher": "zmq",
-                        "endpoint": "$(KV_EVENTS_ENDPOINT)",
-                        "topic": (f"kv@$(POD_IP):$(POD_PORT)@{plan.model.name}"),
-                    },
-                    separators=(",", ":"),
-                ),
+                json.dumps(kv_events_config, separators=(",", ":")),
+                *_vllm_arg_tokens(upstream_args, "--shutdown-timeout"),
             ]
         )
 
