@@ -11,10 +11,10 @@ spec:
   deployment_profile:
     - rhoai-hisparse-on-nooffload
     - rhoai-hisparse-on-cpu
-    - rhoai-hisparse-on-cpu-nvme
-    - rhoai-hisparse-off-nooffload
-    - rhoai-hisparse-off-cpu
-    - rhoai-hisparse-off-cpu-nvme
+    # - rhoai-hisparse-on-cpu-nvme
+    # - rhoai-hisparse-off-nooffload
+    # - rhoai-hisparse-off-cpu
+    # - rhoai-hisparse-off-cpu-nvme
   benchmark_profile:
     - aiperf-agentx-inference
   model_overrides:

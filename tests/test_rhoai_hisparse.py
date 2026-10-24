@@ -18,7 +18,10 @@ def test_hisparse_matrix_renders_bounded_startup_and_shared_memory() -> None:
         ProfileCatalog.load(REPO_ROOT / "profiles"),
     )
 
-    assert len(plans) == 6
+    assert {plan.profiles.deployment for plan in plans} == {
+        "rhoai-hisparse-on-nooffload",
+        "rhoai-hisparse-on-cpu",
+    }
     cpu_offload_cells = 0
     for plan in plans:
         runtime = plan.deployment.runtime
@@ -54,7 +57,7 @@ def test_hisparse_matrix_renders_bounded_startup_and_shared_memory() -> None:
             transfer_config = json.loads(transfer_arg.split("=", 1)[1])
             assert "68719476736" in json.dumps(transfer_config)
 
-    assert cpu_offload_cells == 4
+    assert cpu_offload_cells == 1
 
 
 def test_deploy_task_outlives_hisparse_startup_probe() -> None:
