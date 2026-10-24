@@ -38,10 +38,6 @@ def download_cached_model(
                     },
                 }
             ],
-            # A node-local models PVC (for example a hostPath-backed NVMe
-            # cache) is only useful when the downloader and model server land
-            # on the same node. Shared PVCs are also safe with this placement.
-            inherit_runtime_placement=True,
             # Large sharded models can take longer than the generic remote-job
             # timeout. The enclosing workflow owns the execution deadline.
             timeout_seconds=None,
