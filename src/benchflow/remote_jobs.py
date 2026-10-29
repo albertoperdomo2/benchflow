@@ -14,6 +14,7 @@ import yaml
 from .cluster import (
     CommandError,
     create_manifest,
+    is_transient_kubernetes_error,
     require_any_command,
     require_command,
     run_command,
@@ -29,26 +30,6 @@ REMOTE_RESULTS_MOUNT = "/benchmark-results"
 REMOTE_RESULTS_ROOT = f"{REMOTE_RESULTS_MOUNT}/remote-jobs"
 REMOTE_API_RETRY_TIMEOUT_SECONDS = 600
 REMOTE_API_RETRY_MAX_DELAY_SECONDS = 30
-
-_TRANSIENT_KUBERNETES_ERROR_MARKERS = (
-    "connection refused",
-    "connection reset",
-    "context deadline exceeded",
-    "end of file",
-    "error from server (internalerror)",
-    "error from server (serviceunavailable)",
-    "error from server (timeout)",
-    "failed calling webhook",
-    "i/o timeout",
-    "internal error occurred",
-    "no endpoints available for service",
-    "server was unable to return a response in the time allotted",
-    "service unavailable",
-    "temporarily unavailable",
-    "too many requests",
-    "tls handshake timeout",
-    "unexpected eof",
-)
 
 _PASSTHROUGH_ENV = (
     "HF_TOKEN",
@@ -79,11 +60,6 @@ class RemoteJobFailed(CommandError):
         super().__init__(f"remote job {job_name} failed")
         self.job_name = job_name
         self.pod_name = pod_name
-
-
-def is_transient_kubernetes_error(exc: BaseException) -> bool:
-    message = str(exc).strip().lower()
-    return any(marker in message for marker in _TRANSIENT_KUBERNETES_ERROR_MARKERS)
 
 
 def _retry_transient_kubernetes_operation(

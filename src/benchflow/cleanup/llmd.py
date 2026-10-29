@@ -20,6 +20,7 @@ from ..storage_offloading import (
     storage_offloading_config,
 )
 from ..ui import detail
+from .retry import run_cleanup_command_with_retry
 
 
 def _release_names(plan: ResolvedRunPlan) -> list[str]:
@@ -337,7 +338,7 @@ def _delete_runtime_host_path_contents(
                 f"find {target} -mindepth 1 -maxdepth 1 -exec rm -rf -- {{}} +; "
                 "fi"
             )
-            result = run_command(
+            result = run_cleanup_command_with_retry(
                 [
                     kubectl_cmd,
                     "exec",
@@ -351,8 +352,10 @@ def _delete_runtime_host_path_contents(
                     "-lc",
                     script,
                 ],
-                capture_output=True,
-                check=False,
+                description=(
+                    f"cleaning llm-d runtime hostPath {host_path.mount_path} "
+                    f"through pod {pod_name}"
+                ),
             )
             if result.returncode != 0:
                 failures.append(

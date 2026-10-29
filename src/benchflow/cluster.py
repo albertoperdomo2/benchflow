@@ -12,9 +12,34 @@ from typing import Any
 
 TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION = "benchflow.io/host-aliases"
 
+_TRANSIENT_KUBERNETES_ERROR_MARKERS = (
+    "connection refused",
+    "connection reset",
+    "context deadline exceeded",
+    "end of file",
+    "error from server (internalerror)",
+    "error from server (serviceunavailable)",
+    "error from server (timeout)",
+    "failed calling webhook",
+    "i/o timeout",
+    "internal error occurred",
+    "no endpoints available for service",
+    "server was unable to return a response in the time allotted",
+    "service unavailable",
+    "temporarily unavailable",
+    "too many requests",
+    "tls handshake timeout",
+    "unexpected eof",
+)
+
 
 class CommandError(RuntimeError):
     """Raised when a required external command fails."""
+
+
+def is_transient_kubernetes_error(error: BaseException | str) -> bool:
+    message = str(error).strip().lower()
+    return any(marker in message for marker in _TRANSIENT_KUBERNETES_ERROR_MARKERS)
 
 
 def discover_repo_root(start: Path | None = None) -> Path:

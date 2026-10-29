@@ -15,6 +15,7 @@ from ..rhoai_mooncake import (
 )
 from ..rhoai_gateway import RHOAI_GATEWAY_NAMESPACE, rhoai_release_gateway_name
 from ..ui import detail
+from .retry import run_cleanup_command_with_retry
 
 
 def _deployment_kind(plan: ResolvedRunPlan) -> str:
@@ -131,7 +132,7 @@ def _clean_mooncake_nvme_store(
         if "mooncake-store" not in container_names:
             continue
         target = shlex.quote(f"{release_dir}/{pod_name}")
-        result = run_command(
+        result = run_cleanup_command_with_retry(
             [
                 kubectl_cmd,
                 "exec",
@@ -145,8 +146,7 @@ def _clean_mooncake_nvme_store(
                 "-ec",
                 f"rm -rf -- {target}",
             ],
-            capture_output=True,
-            check=False,
+            description=(f"cleaning rhoai Mooncake NVMe cache through pod {pod_name}"),
         )
         if result.returncode != 0:
             detail(
@@ -229,7 +229,7 @@ def _clean_runtime_host_path_contents(
             f"find {target} -mindepth 1 -maxdepth 1 -exec rm -rf -- {{}} +; "
             "fi"
         )
-        result = run_command(
+        result = run_cleanup_command_with_retry(
             [
                 kubectl_cmd,
                 "exec",
@@ -243,8 +243,10 @@ def _clean_runtime_host_path_contents(
                 "-lc",
                 script,
             ],
-            capture_output=True,
-            check=False,
+            description=(
+                f"cleaning rhoai runtime hostPath {host_path.mount_path} "
+                f"through pod {pod_name}"
+            ),
         )
         if result.returncode != 0:
             failures.append(

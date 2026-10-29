@@ -341,6 +341,7 @@ spec:
     - name: cleanup
       # Tekton finally tasks run concurrently. The cleanup task waits for the
       # upload/finalizer marker before deleting target workload pods.
+      retries: 2
       when:
         - input: "$(tasks.resolve-run-plan.results.stage-cleanup)"
           operator: in
