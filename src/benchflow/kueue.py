@@ -16,6 +16,7 @@ from .cluster import (
     CommandError,
     create_manifest,
     require_any_command,
+    retry_transient_kubernetes_operation,
     run_command,
     run_json_command,
     use_kubeconfig,
@@ -608,18 +609,20 @@ def delete_submission_configmap(namespace: str, configmap_name: str) -> None:
 
 def list_reservation_workloads(namespace: str) -> list[dict[str, Any]]:
     kubectl_cmd = require_any_command("oc", "kubectl")
-    payload = run_json_command(
-        [
-            kubectl_cmd,
-            "get",
-            "workloads",
-            "-n",
-            namespace,
-            "-l",
-            "app.kubernetes.io/name=benchflow,benchflow.io/managed-by=benchflow",
-            "-o",
-            "json",
-        ]
+    argv = [
+        kubectl_cmd,
+        "get",
+        "workloads",
+        "-n",
+        namespace,
+        "-l",
+        "app.kubernetes.io/name=benchflow,benchflow.io/managed-by=benchflow",
+        "-o",
+        "json",
+    ]
+    payload = retry_transient_kubernetes_operation(
+        lambda: run_json_command(argv),
+        description=f"listing BenchFlow reservation workloads in {namespace}",
     )
     return list(payload.get("items", []) or [])
 

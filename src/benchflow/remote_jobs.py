@@ -15,6 +15,7 @@ from .cluster import (
     CommandError,
     create_manifest,
     is_transient_kubernetes_error,
+    retry_transient_kubernetes_operation as _retry_transient_kubernetes_operation,
     require_any_command,
     require_command,
     run_command,
@@ -29,7 +30,6 @@ REMOTE_RESULTS_PVC = "benchmark-results"
 REMOTE_RESULTS_MOUNT = "/benchmark-results"
 REMOTE_RESULTS_ROOT = f"{REMOTE_RESULTS_MOUNT}/remote-jobs"
 REMOTE_API_RETRY_TIMEOUT_SECONDS = 600
-REMOTE_API_RETRY_MAX_DELAY_SECONDS = 30
 
 _PASSTHROUGH_ENV = (
     "HF_TOKEN",
@@ -60,38 +60,6 @@ class RemoteJobFailed(CommandError):
         super().__init__(f"remote job {job_name} failed")
         self.job_name = job_name
         self.pod_name = pod_name
-
-
-def _retry_transient_kubernetes_operation(
-    operation: Callable[[], Any],
-    *,
-    description: str,
-    timeout_seconds: float = REMOTE_API_RETRY_TIMEOUT_SECONDS,
-) -> Any:
-    deadline = time.monotonic() + max(0.0, timeout_seconds)
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            return operation()
-        except CommandError as exc:
-            if not is_transient_kubernetes_error(exc):
-                raise
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise CommandError(
-                    f"{description} did not recover within {timeout_seconds:.0f}s: {exc}"
-                ) from exc
-            delay = min(
-                REMOTE_API_RETRY_MAX_DELAY_SECONDS,
-                2 ** min(attempt - 1, 5),
-                remaining,
-            )
-            detail(
-                f"Transient Kubernetes error while {description}; "
-                f"retrying in {delay:.0f}s: {exc}"
-            )
-            time.sleep(delay)
 
 
 def _resource_payload_or_none(

@@ -9,7 +9,13 @@ import sys
 import time
 from typing import Any
 
-from ..cluster import CommandError, require_command, run_command, run_json_command
+from ..cluster import (
+    CommandError,
+    require_command,
+    retry_transient_kubernetes_operation,
+    run_command,
+    run_json_command,
+)
 from ..contracts import ExecutionSummary, ResolvedRunPlan, ValidationError
 from ..kueue import execution_labels_for_matrix, execution_labels_for_plan
 from ..platform_state import SETUP_KEY_ANNOTATION, setup_key_for_plan
@@ -281,14 +287,27 @@ def render_matrix_pipelinerun(
 
 def _get_pipelinerun(namespace: str, name: str) -> dict[str, Any] | None:
     require_command("oc")
-    result = run_command(
-        ["oc", "get", "pipelinerun", name, "-n", namespace, "-o", "json"],
-        capture_output=True,
-        check=False,
+
+    def read() -> dict[str, Any] | None:
+        result = run_command(
+            ["oc", "get", "pipelinerun", name, "-n", namespace, "-o", "json"],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+        output = str(result.stderr or result.stdout or "").strip()
+        if "notfound" in output.lower() or "not found" in output.lower():
+            return None
+        raise CommandError(
+            f"oc get pipelinerun {name} -n {namespace} -o json: "
+            f"{output or 'command failed'}"
+        )
+
+    return retry_transient_kubernetes_operation(
+        read,
+        description=f"reading PipelineRun {namespace}/{name}",
     )
-    if result.returncode != 0:
-        return None
-    return json.loads(result.stdout)
 
 
 def _list_pipelineruns(
@@ -299,7 +318,10 @@ def _list_pipelineruns(
     if label_selector:
         argv.extend(["-l", label_selector])
     argv.extend(["-o", "json"])
-    payload = run_json_command(argv)
+    payload = retry_transient_kubernetes_operation(
+        lambda: run_json_command(argv),
+        description=f"listing PipelineRuns in namespace {namespace}",
+    )
     items = payload.get("items", [])
     return items if isinstance(items, list) else []
 
@@ -318,18 +340,22 @@ def _get_pipeline(namespace: str, name: str) -> dict[str, Any] | None:
 
 def _list_taskruns(namespace: str, pipeline_run_name: str) -> list[dict[str, Any]]:
     require_command("oc")
-    payload = run_json_command(
-        [
-            "oc",
-            "get",
-            "taskrun",
-            "-n",
-            namespace,
-            "-l",
-            f"tekton.dev/pipelineRun={pipeline_run_name}",
-            "-o",
-            "json",
-        ]
+    argv = [
+        "oc",
+        "get",
+        "taskrun",
+        "-n",
+        namespace,
+        "-l",
+        f"tekton.dev/pipelineRun={pipeline_run_name}",
+        "-o",
+        "json",
+    ]
+    payload = retry_transient_kubernetes_operation(
+        lambda: run_json_command(argv),
+        description=(
+            f"listing TaskRuns for PipelineRun {namespace}/{pipeline_run_name}"
+        ),
     )
     items = payload.get("items", [])
     return items if isinstance(items, list) else []

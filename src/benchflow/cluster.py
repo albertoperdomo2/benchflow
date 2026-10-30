@@ -4,10 +4,14 @@ import os
 import json
 import shutil
 import subprocess
+import time
 from contextlib import contextmanager
+from collections.abc import Callable
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 from typing import Any
+
+from .ui import detail
 
 
 TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION = "benchflow.io/host-aliases"
@@ -15,6 +19,7 @@ TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION = "benchflow.io/host-aliases"
 _TRANSIENT_KUBERNETES_ERROR_MARKERS = (
     "connection refused",
     "connection reset",
+    "code = unavailable",
     "context deadline exceeded",
     "end of file",
     "error from server (internalerror)",
@@ -23,6 +28,7 @@ _TRANSIENT_KUBERNETES_ERROR_MARKERS = (
     "failed calling webhook",
     "i/o timeout",
     "internal error occurred",
+    "keepalive ping failed",
     "no endpoints available for service",
     "server was unable to return a response in the time allotted",
     "service unavailable",
@@ -40,6 +46,40 @@ class CommandError(RuntimeError):
 def is_transient_kubernetes_error(error: BaseException | str) -> bool:
     message = str(error).strip().lower()
     return any(marker in message for marker in _TRANSIENT_KUBERNETES_ERROR_MARKERS)
+
+
+def retry_transient_kubernetes_operation(
+    operation: Callable[[], Any],
+    *,
+    description: str,
+    timeout_seconds: float = 600,
+    max_delay_seconds: float = 30,
+) -> Any:
+    """Retry a read-like Kubernetes operation across transient API failures."""
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return operation()
+        except CommandError as exc:
+            if not is_transient_kubernetes_error(exc):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CommandError(
+                    f"{description} did not recover within {timeout_seconds:.0f}s: {exc}"
+                ) from exc
+            delay = min(
+                max_delay_seconds,
+                2 ** min(attempt - 1, 5),
+                remaining,
+            )
+            detail(
+                f"Transient Kubernetes API error while {description}; "
+                f"retrying in {delay:.0f}s: {exc}"
+            )
+            time.sleep(delay)
 
 
 def discover_repo_root(start: Path | None = None) -> Path:
