@@ -30,6 +30,16 @@ pip install -e '.[dev]'
 pre-commit install
 ```
 
+Install BenchFlow's portable agent skill for both Codex and Claude Code:
+
+```bash
+bflow skill install
+```
+
+The command installs the same versioned skill under `CODEX_HOME` (or
+`~/.codex`) and `~/.claude`. Existing skills not managed by BenchFlow are
+preserved unless `--force` is explicitly supplied.
+
 Before bootstrapping, create the real secret manifests next to the examples under `config/cluster/secrets/`. BenchFlow applies every `*.yaml` file there except `*.example.yaml`, so `cp` the examples secrets and remove the `.example` suffix, and populate them with your credentials.
 
 BenchFlow supports two cluster topologies.

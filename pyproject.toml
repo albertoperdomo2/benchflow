@@ -44,5 +44,10 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"benchflow" = ["assets/**/*.yaml", "assets/**/*.json", "assets/**/*.j2"]
+"benchflow" = [
+  "assets/**/*.yaml",
+  "assets/**/*.json",
+  "assets/**/*.j2",
+  "assets/**/*.md",
+]
 "benchflow.benchmark.processor" = ["config/*.yaml"]
