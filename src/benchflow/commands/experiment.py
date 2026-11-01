@@ -45,6 +45,16 @@ from .shared import (
 
 
 TARGET_KUBECONFIG_SECRET_LABEL = "benchflow.io/target-kubeconfig-secret"
+LIST_STATUS_CHOICES = (
+    "all",
+    "active",
+    "pending",
+    "queued",
+    "starting",
+    "running",
+    "succeeded",
+    "failed",
+)
 
 
 def _namespace_from_args(args: argparse.Namespace) -> str:
@@ -60,6 +70,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 def cmd_list(args: argparse.Namespace) -> int:
     namespace = _namespace_from_args(args)
     entries = list_benchflow_executions(namespace, include_completed=True)
+    entries = [entry for entry in entries if _list_status_matches(entry, args.status)]
     if args.format == "json":
         print(dump(entries, "json"))
         return 0
@@ -71,6 +82,19 @@ def cmd_list(args: argparse.Namespace) -> int:
         return 0
     print(format_experiment_list(entries))
     return 0
+
+
+def _list_status_matches(summary: dict[str, object], status: str) -> bool:
+    if status == "all":
+        return True
+    finished = bool(summary.get("finished"))
+    if status == "active":
+        return not finished
+    if status == "succeeded":
+        return finished and bool(summary.get("succeeded"))
+    if status == "failed":
+        return finished and not bool(summary.get("succeeded"))
+    return str(summary.get("status") or "").strip().lower() == status
 
 
 def _resolve_cancel_targets(
@@ -460,6 +484,13 @@ def experiment_group() -> None:
 @click.option(
     "--namespace",
     help="Namespace to inspect. Defaults to the current oc project.",
+)
+@click.option(
+    "--status",
+    type=click.Choice(LIST_STATUS_CHOICES, case_sensitive=False),
+    default="all",
+    show_default=True,
+    help="Filter executions by lifecycle status.",
 )
 @click.option(
     "--format",
