@@ -207,6 +207,7 @@ def expand_experiment_matrix(experiment: Experiment) -> list[Experiment]:
                         tags=dict(experiment.spec.mlflow.tags),
                     ),
                     execution=ExecutionSpec(
+                        mode=experiment.spec.execution.mode,
                         timeout=experiment.spec.execution.timeout,
                         priority=experiment.spec.execution.priority,
                         verify_completions=experiment.spec.execution.verify_completions,

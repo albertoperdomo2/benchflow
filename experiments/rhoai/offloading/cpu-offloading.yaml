@@ -86,12 +86,11 @@ spec:
                       # - diadochos-hqxzk-gpu-h100-6kl5z
                       - diadochos-hqxzk-gpu-h100-mt46x
                       # - diadochos-hqxzk-gpu-h100-fx7c8
-      placement:
-        mode: sequential
   metrics_profile: detailed
   mlflow:
     tags:
       accelerator: H100
   namespace: benchflow
   execution:
+    mode: sequential
     timeout: 8h

@@ -237,6 +237,7 @@ class ProfilingSpec:
 
 @dataclass(slots=True)
 class ExecutionSpec:
+    mode: str = "parallel"
     timeout: str = "3h"
     priority: int = 0
     verify_completions: bool = True
@@ -245,6 +246,11 @@ class ExecutionSpec:
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> "ExecutionSpec":
         raw = raw or {}
+        if not isinstance(raw, dict):
+            raise ValidationError("execution must be a mapping")
+        mode = str(raw.get("mode", "parallel") or "parallel").strip()
+        if mode not in {"parallel", "sequential"}:
+            raise ValidationError("execution.mode must be one of: parallel, sequential")
         timeout = str(raw.get("timeout", "3h") or "3h").strip()
         if not timeout:
             raise ValidationError("execution.timeout must not be empty")
@@ -264,6 +270,7 @@ class ExecutionSpec:
         if priority < 0 or priority > 2_147_483_647:
             raise ValidationError("execution.priority must be between 0 and 2147483647")
         return cls(
+            mode=mode,
             timeout=timeout,
             priority=priority,
             verify_completions=_as_bool(raw.get("verify_completions"), True),

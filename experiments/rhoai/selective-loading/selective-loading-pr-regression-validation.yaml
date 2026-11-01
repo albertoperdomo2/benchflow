@@ -38,8 +38,6 @@ spec:
                   kserve.io/component: workload
               matchLabelKeys:
                 - app.kubernetes.io/name
-      placement:
-        mode: sequential
   metrics_profile: detailed
   target:
     endpoint_scope: external
@@ -57,4 +55,5 @@ spec:
       validation_scope: saturated-and-low-pressure
   namespace: benchflow
   execution:
+    mode: sequential
     timeout: 10h

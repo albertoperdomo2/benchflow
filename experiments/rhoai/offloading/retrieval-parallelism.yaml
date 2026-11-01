@@ -68,10 +68,8 @@ spec:
       concurrency: 64
     runtime:
       # Run the arms one after another. Earlier reports in this series were
-      # repeatedly weakened by "the nodes differed"; sequential placement plus
+      # repeatedly weakened by "the nodes differed"; sequential execution plus
       # the node pin below removes that confound.
-      placement:
-        mode: sequential
       # Pin both arms to one H100 node. Fill in a currently free node from
       #   oc get nodes -l nvidia.com/gpu.product --no-headers
       # and keep it identical across repetitions.
@@ -92,4 +90,5 @@ spec:
       benchmark_family: retrieval-parallelism
   namespace: benchflow
   execution:
+    mode: sequential
     timeout: 8h

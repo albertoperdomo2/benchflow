@@ -15,4 +15,5 @@ spec:
       issue: llm-d-router#2665
       rerun_reason: epp-unhealthy-retry
   execution:
+    mode: sequential
     timeout: 2h

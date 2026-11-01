@@ -964,13 +964,6 @@ def resolve_run_plan(
             "runtime.placement.mode 'same-node' is currently supported only for "
             "rhoai LLMInferenceService deployments"
         )
-    if runtime.placement.mode == "sequential" and (
-        deployment_profile.spec.platform not in {"llm-d", "rhoai"}
-    ):
-        raise ValidationError(
-            "runtime.placement.mode 'sequential' is currently supported only for "
-            "llm-d and rhoai matrix executions"
-        )
     if runtime.placement.mode == "same-node" and deployment_profile.spec.mode == "isvc":
         raise ValidationError(
             "runtime.placement.mode 'same-node' is not supported for rhoai isvc "

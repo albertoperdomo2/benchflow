@@ -53,7 +53,8 @@ class LlmdOffloadingScalabilityTest(unittest.TestCase):
         plans = self._plans("qwen36-35b-cephfs-offloading-scalability.yaml")
 
         self.assertEqual(len(plans), len(REPLICAS) * len(CONCURRENCIES))
-        self._assert_common_matrix(plans, placement_mode="sequential")
+        self._assert_common_matrix(plans, placement_mode="")
+        self.assertEqual({plan.execution.mode for plan in plans}, {"sequential"})
         for plan in plans:
             self.assertEqual(
                 plan.profiles.deployment,

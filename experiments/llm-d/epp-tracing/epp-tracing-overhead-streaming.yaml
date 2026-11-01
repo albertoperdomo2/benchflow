@@ -26,4 +26,5 @@ spec:
       issue: llm-d-router#2665
       response_mode: streaming
   execution:
+    mode: sequential
     timeout: 2h

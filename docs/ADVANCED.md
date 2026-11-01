@@ -476,7 +476,7 @@ Override semantics:
 - list-valued `model.name`, profile refs, and override axes produce a cartesian-product matrix
 - matrix children are submitted as independent child executions
 - `rhoai` and `llm-d` child executions can be admitted in parallel when target-cluster GPU capacity allows it
-- `runtime.placement.mode: sequential` makes the matrix supervisor wait for each child execution before submitting the next; it does not add pod affinity, so separate matrices can use different available nodes concurrently
+- `execution.mode: sequential` makes the matrix supervisor wait for each child execution before submitting the next; it is independent of `runtime.placement`, so a sequential matrix can still use `node-exclusive`, `same-node`, or `topology-spread`; separate matrices can still run concurrently
 - `runtime.placement.mode: node-exclusive` makes Kueue reserve enough complete target nodes before admitting each child, then writes required hostname affinity into that child's `RunPlan`; set `runtime.placement.spread_pool` to a pool label value and label eligible target nodes with `benchflow.io/placement-pool=<value>`
 - node-exclusive reservations are released when the child deployment is cleaned up or its Kueue Workload is canceled; use a dedicated or otherwise protected placement pool if non-BenchFlow workloads must also be excluded from those nodes
 - `runtime.placement.mode: topology-spread` restricts model-server replicas to nodes labeled `benchflow.io/placement-pool=<spread_pool>` and strictly balances them across hostnames with `maxSkew: 1`, `minDomains: 2`, and `DoNotSchedule`; BenchFlow scopes the generated selector to the current llm-d, RHOAI, or RHAIIS workload so unrelated runs do not affect its skew
@@ -493,6 +493,15 @@ spec:
     placement:
       mode: topology-spread
       spread_pool: my-two-node-pool
+```
+
+Keep a matrix sequential without changing that placement policy in the
+experiment:
+
+```yaml
+spec:
+  execution:
+    mode: sequential
 ```
 
 Then label the intended target nodes before running the experiment:

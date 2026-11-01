@@ -248,7 +248,8 @@ def test_selective_loading_focused_crossover_resolves_independent_cells() -> Non
         for prefix in (1024, 2048, 4096, 8192)
         for concurrency in (16, 32, 64)
     }
-    assert all(plan.deployment.runtime.placement.mode == "sequential" for plan in plans)
+    assert all(plan.execution.mode == "sequential" for plan in plans)
+    assert all(plan.deployment.runtime.placement.mode == "" for plan in plans)
     expected_prefix_counts = {1024: 2048, 2048: 1024, 4096: 512, 8192: 256}
     for plan in plans:
         node_affinity = plan.deployment.runtime.affinity["nodeAffinity"]

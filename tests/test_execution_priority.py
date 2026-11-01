@@ -19,7 +19,7 @@ from benchflow.models import ValidationError
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _experiment_yaml(priority: object = 0) -> str:
+def _experiment_yaml(priority: object = 0, mode: str = "parallel") -> str:
     return f"""apiVersion: benchflow.io/v1alpha1
 kind: Experiment
 metadata:
@@ -31,6 +31,7 @@ spec:
   benchmark_profile: guidellm-smoke
   metrics_profile: detailed
   execution:
+    mode: {mode}
     priority: {priority}
   overrides:
     scale:
@@ -60,6 +61,18 @@ class ExecutionPriorityTest(unittest.TestCase):
         self.assertEqual({plan.execution.priority for plan in plans}, {100})
         restored = load_run_plan_data(plans[0].to_dict())
         self.assertEqual(restored.execution.priority, 100)
+
+    def test_execution_mode_survives_matrix_and_run_plan_serialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "experiment.yaml"
+            path.write_text(_experiment_yaml(100, mode="sequential"), encoding="utf-8")
+            plans = resolve_experiment_matrix(
+                load_experiment(path), ProfileCatalog.load(REPO_ROOT / "profiles")
+            )
+
+        self.assertEqual({plan.execution.mode for plan in plans}, {"sequential"})
+        restored = load_run_plan_data(plans[0].to_dict())
+        self.assertEqual(restored.execution.mode, "sequential")
 
     def test_priority_reaches_pipelinerun_label_and_kueue_workload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -98,6 +111,13 @@ class ExecutionPriorityTest(unittest.TestCase):
                 path.write_text(_experiment_yaml(priority), encoding="utf-8")
                 with self.assertRaisesRegex(ValidationError, "execution.priority"):
                     load_experiment(path)
+
+    def test_invalid_execution_mode_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "experiment.yaml"
+            path.write_text(_experiment_yaml(mode="serial"), encoding="utf-8")
+            with self.assertRaisesRegex(ValidationError, "execution.mode"):
+                load_experiment(path)
 
 
 if __name__ == "__main__":

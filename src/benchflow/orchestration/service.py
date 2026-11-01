@@ -405,6 +405,14 @@ def submit_execution_manifest(manifest: dict[str, Any], namespace: str) -> str:
         raise
 
 
+def _submit_matrix_children_in_parallel(
+    plans: list[ResolvedRunPlan], matrix_platform: str
+) -> bool:
+    return matrix_platform in {"llm-d", "rhoai"} and not any(
+        plan.execution.mode == "sequential" for plan in plans
+    )
+
+
 def run_matrix_supervisor(
     plans: list[ResolvedRunPlan],
     *,
@@ -465,15 +473,13 @@ def run_matrix_supervisor(
             setup_plan,
             context=ExecutionContext(state_path=setup_state_path),
         )
-    sequential_placement = any(
-        plan.deployment.runtime.placement.mode == "sequential" for plan in plans
+    sequential_execution = any(plan.execution.mode == "sequential" for plan in plans)
+    submit_children_in_parallel = _submit_matrix_children_in_parallel(
+        plans, matrix_platform
     )
-    submit_children_in_parallel = (
-        matrix_platform in {"llm-d", "rhoai"} and not sequential_placement
-    )
-    if sequential_placement:
+    if sequential_execution:
         detail(
-            "Sequential placement requested; child executions will run one at a time"
+            "Sequential execution requested; child executions will run one at a time"
         )
     if parent_execution_name:
         parent_payload = _TEKTON.get(
@@ -578,7 +584,6 @@ def run_matrix_supervisor(
     finally:
         if setup_state_dir is not None:
             setup_state_dir.cleanup()
-
     if results_configmap_name:
         print_matrix_results_summary(
             namespace=plans[0].deployment.namespace,

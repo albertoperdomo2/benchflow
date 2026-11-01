@@ -80,8 +80,6 @@ spec:
     runtime:
       # Run the arms one after another on one node. Several reports in this
       # series were weakened by "the nodes differed".
-      placement:
-        mode: sequential
       # Pin both arms to one H100. Fill in a currently free node from
       #   oc get nodes -l nvidia.com/gpu.product --no-headers
       # and keep it identical across repetitions.
@@ -102,4 +100,5 @@ spec:
       benchmark_family: fs-tier-job-split-v2
   namespace: benchflow
   execution:
+    mode: sequential
     timeout: 8h

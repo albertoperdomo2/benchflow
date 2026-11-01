@@ -95,11 +95,6 @@ spec:
       runtime: quay.io/rh-ee-aperdomo/vllm:v0.29.0-fs-job-split-v2
     benchmark:
       concurrency: 64
-    runtime:
-      # Run the arms one after another. Several reports in this series were
-      # weakened by "the nodes differed".
-      placement:
-        mode: sequential
   metrics_profile: detailed
   mlflow:
     tags:
@@ -107,4 +102,7 @@ spec:
       benchmark_family: fs-tier-job-split-portable
   namespace: benchflow
   execution:
+    # Run the arms one after another. Several reports in this series were
+    # weakened by "the nodes differed".
+    mode: sequential
     timeout: 8h

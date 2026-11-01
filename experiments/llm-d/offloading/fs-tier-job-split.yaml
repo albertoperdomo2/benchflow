@@ -135,8 +135,6 @@ spec:
       #
       # Cost: the three arms run back to back rather than in parallel, so wall
       # time is roughly 3x. That is the price of a clean comparison.
-      placement:
-        mode: sequential
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -158,4 +156,5 @@ spec:
       offload_type: local-nvme
   namespace: benchflow
   execution:
+    mode: sequential
     timeout: 8h

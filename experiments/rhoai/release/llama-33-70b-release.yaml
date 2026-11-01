@@ -34,8 +34,7 @@ spec:
                   matchLabels:
                     app.kubernetes.io/name: benchflow
                     benchflow.io/experiment: llama-33-70b-rhoai-release
-      placement:
-        mode: sequential
   namespace: benchflow
   execution:
+    mode: sequential
     timeout: 8h

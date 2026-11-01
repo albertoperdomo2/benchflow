@@ -13,6 +13,7 @@ from benchflow.loaders import (
 from benchflow.deploy.llmd import _patch_values
 from benchflow.matrix import resolve_experiment_matrix
 from benchflow.models import RuntimePlacementSpec, ValidationError
+from benchflow.orchestration.service import _submit_matrix_children_in_parallel
 from benchflow.placement import (
     PLACEMENT_POOL_NODE_LABEL,
     runtime_node_selector,
@@ -46,6 +47,27 @@ def _plan(experiment_path: str, *, pool: str = "two-h200-nodes"):
 def test_loader_requires_pool_for_topology_spread() -> None:
     with pytest.raises(ValidationError, match="spread_pool"):
         _runtime_placement_from_dict({"mode": "topology-spread"}, "runtime.placement")
+
+
+def test_loader_rejects_sequential_as_a_placement_mode() -> None:
+    with pytest.raises(ValidationError, match="runtime.placement.mode"):
+        _runtime_placement_from_dict({"mode": "sequential"}, "runtime.placement")
+
+
+def test_sequential_execution_preserves_topology_spread() -> None:
+    plan = _plan("experiments/smoke/qwen3-06b-llm-d-smoke.yaml")
+    plan = replace(plan, execution=replace(plan.execution, mode="sequential"))
+
+    assert plan.deployment.runtime.placement.mode == "topology-spread"
+    assert not _submit_matrix_children_in_parallel([plan], "llm-d")
+
+
+def test_parallel_execution_preserves_topology_spread() -> None:
+    plan = _plan("experiments/smoke/qwen3-06b-llm-d-smoke.yaml")
+
+    assert plan.execution.mode == "parallel"
+    assert plan.deployment.runtime.placement.mode == "topology-spread"
+    assert _submit_matrix_children_in_parallel([plan], "llm-d")
 
 
 def test_node_selector_rejects_conflicting_pool() -> None:

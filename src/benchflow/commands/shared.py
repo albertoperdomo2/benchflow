@@ -449,6 +449,7 @@ def experiment_from_args(args: argparse.Namespace) -> Experiment:
                 tags=mlflow_tags,
             ),
             execution=ExecutionSpec(
+                mode=base_experiment.spec.execution.mode,
                 timeout=(
                     str(getattr(args, "timeout", None))
                     if getattr(args, "timeout", None) is not None

@@ -43,8 +43,6 @@ spec:
                   kserve.io/component: workload
               matchLabelKeys:
                 - app.kubernetes.io/name
-      placement:
-        mode: sequential
   metrics_profile: detailed
   target:
     endpoint_scope: external
@@ -61,4 +59,5 @@ spec:
       calibration_node: diadochos-hqxzk-gpu-h100-mt46x
   namespace: benchflow
   execution:
+    mode: sequential
     timeout: 16h

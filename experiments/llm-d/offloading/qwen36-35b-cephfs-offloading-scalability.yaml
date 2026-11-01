@@ -15,10 +15,6 @@ spec:
       replicas: [1, 2, 4, 8]
     benchmark:
       concurrency: [4, 8, 16, 32, 64, 128, 256, 512, 1024]
-    runtime:
-      # Run one child at a time so each receives an isolated, empty CephFS cache.
-      placement:
-        mode: sequential
   metrics_profile: detailed
   target:
     # External Gateway traffic exercises the upstream EPP routing path.
@@ -30,4 +26,6 @@ spec:
       offload_type: cephfs
   namespace: benchflow
   execution:
+    # Give every child an isolated, empty CephFS cache.
+    mode: sequential
     timeout: 8h

@@ -322,7 +322,6 @@ def _runtime_placement_from_dict(
     spread_pool = str(raw.get("spread_pool", "") or "").strip()
     allowed_modes = {
         "same-node",
-        "sequential",
         "node-exclusive",
         "topology-spread",
     }
