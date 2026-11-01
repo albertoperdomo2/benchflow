@@ -7,7 +7,10 @@ import pytest
 from click.testing import CliRunner
 
 from benchflow.cli import cli
-from benchflow.commands.experiment import _list_status_matches
+from benchflow.commands.experiment import (
+    _list_entries_with_matrix_context,
+    _list_status_matches,
+)
 from benchflow.commands.shared import format_experiment_list
 from benchflow.orchestration.tekton import TektonOrchestrator
 
@@ -81,6 +84,31 @@ def test_experiment_list_filters_running_executions() -> None:
 
     assert result.exit_code == 0, result.output
     assert [entry["name"] for entry in json.loads(result.output)] == ["running-run"]
+
+
+def test_experiment_list_keeps_children_of_matching_matrix_parent() -> None:
+    parent = {**_entry("matrix-parent", "Running"), "platform": "matrix"}
+    completed_child = {
+        **_entry("completed-child", "Completed", finished=True, succeeded=True),
+        "parent_execution": "matrix-parent",
+        "matrix_index": "1",
+    }
+    queued_child = {
+        **_entry("queued-child", "Queued"),
+        "parent_execution": "matrix-parent",
+        "matrix_index": "2",
+    }
+
+    entries = _list_entries_with_matrix_context(
+        [completed_child, queued_child, parent],
+        [parent],
+    )
+
+    assert {entry["name"] for entry in entries} == {
+        "matrix-parent",
+        "completed-child",
+        "queued-child",
+    }
 
 
 def test_experiment_list_renders_matrix_children_as_a_tree() -> None:

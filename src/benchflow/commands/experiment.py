@@ -69,8 +69,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     namespace = _namespace_from_args(args)
-    entries = list_benchflow_executions(namespace, include_completed=True)
-    entries = [entry for entry in entries if _list_status_matches(entry, args.status)]
+    all_entries = list_benchflow_executions(namespace, include_completed=True)
+    entries = [
+        entry for entry in all_entries if _list_status_matches(entry, args.status)
+    ]
     if args.format == "json":
         print(dump(entries, "json"))
         return 0
@@ -80,6 +82,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     if not entries:
         print("No BenchFlow experiments found.")
         return 0
+    entries = _list_entries_with_matrix_context(all_entries, entries)
     print(format_experiment_list(entries))
     return 0
 
@@ -95,6 +98,27 @@ def _list_status_matches(summary: dict[str, object], status: str) -> bool:
     if status == "failed":
         return finished and not bool(summary.get("succeeded"))
     return str(summary.get("status") or "").strip().lower() == status
+
+
+def _list_entries_with_matrix_context(
+    all_entries: list[dict[str, object]],
+    matching_entries: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    selected_names = {str(entry.get("name") or "") for entry in matching_entries}
+    parent_names = {
+        str(entry.get("parent_execution") or "")
+        for entry in matching_entries
+        if entry.get("parent_execution")
+    }
+    selected_names.update(parent_names)
+    selected_names.update(
+        str(entry.get("name") or "")
+        for entry in all_entries
+        if str(entry.get("parent_execution") or "") in selected_names
+    )
+    return [
+        entry for entry in all_entries if str(entry.get("name") or "") in selected_names
+    ]
 
 
 def _resolve_cancel_targets(
