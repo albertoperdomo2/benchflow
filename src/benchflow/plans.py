@@ -976,6 +976,13 @@ def resolve_run_plan(
             "runtime.placement.mode 'same-node' is not supported for rhoai isvc "
             "deployments"
         )
+    if runtime.placement.mode == "topology-spread" and (
+        deployment_profile.spec.platform not in {"llm-d", "rhoai", "rhaiis"}
+    ):
+        raise ValidationError(
+            "runtime.placement.mode 'topology-spread' is supported only for "
+            "llm-d, rhoai, and rhaiis deployments"
+        )
     if runtime.pipeline_parallelism > 1 and not (
         deployment_profile.spec.platform == "rhaiis"
         and deployment_profile.spec.mode == "raw-vllm"

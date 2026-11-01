@@ -24,6 +24,9 @@ spec:
 {% if runtime_affinity %}
     affinity: {{ runtime_affinity | tojson }}
 {% endif %}
+{% if runtime_topology_spread_constraints %}
+    topologySpreadConstraints: {{ runtime_topology_spread_constraints | tojson }}
+{% endif %}
 {% if runtime_tolerations %}
     tolerations: {{ runtime_tolerations | tojson }}
 {% endif %}

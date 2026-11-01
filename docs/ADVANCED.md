@@ -463,7 +463,7 @@ Override semantics:
 - `runtime.env` merges by key and override values win on collisions
 - `runtime.resources.requests` and `runtime.resources.limits` merge by resource name and override values win; CPU request and limit can also be set with `--runtime-cpu-request` and `--runtime-cpu-limit`
 - `runtime.resources.remove_requests` and `runtime.resources.remove_limits` remove named resource keys from the rendered runtime container; use this when a guide or deployment profile has a default resource that should not apply, for example `remove_limits: [memory]`
-- `runtime.node_selector`, `runtime.affinity`, and `runtime.tolerations` replace the profile value when set in `spec.overrides.runtime`
+- `runtime.node_selector`, `runtime.affinity`, and `runtime.tolerations` replace the profile value when set in `spec.overrides.runtime`; topology spreading is profile-owned through `runtime.placement`, not a separate raw override
 - `runtime.image_pull_secrets` is profile-owned and currently rendered for RHOAI runtime pods
 - `benchmark.env` merges by key and override values win on collisions
 - `benchmark.concurrency` overrides AIPerf's scalar concurrency; a list creates a matrix axis, while GuideLLM and Inference Perf reject this field
@@ -479,8 +479,28 @@ Override semantics:
 - `runtime.placement.mode: sequential` makes the matrix supervisor wait for each child execution before submitting the next; it does not add pod affinity, so separate matrices can use different available nodes concurrently
 - `runtime.placement.mode: node-exclusive` makes Kueue reserve enough complete target nodes before admitting each child, then writes required hostname affinity into that child's `RunPlan`; set `runtime.placement.spread_pool` to a pool label value and label eligible target nodes with `benchflow.io/placement-pool=<value>`
 - node-exclusive reservations are released when the child deployment is cleaned up or its Kueue Workload is canceled; use a dedicated or otherwise protected placement pool if non-BenchFlow workloads must also be excluded from those nodes
+- `runtime.placement.mode: topology-spread` restricts model-server replicas to nodes labeled `benchflow.io/placement-pool=<spread_pool>` and strictly balances them across hostnames with `maxSkew: 1`, `minDomains: 2`, and `DoNotSchedule`; BenchFlow scopes the generated selector to the current llm-d, RHOAI, or RHAIIS workload so unrelated runs do not affect its skew
+- topology-spread does not reserve nodes or exclude unrelated workloads. For an exact 2+2 placement, label exactly two nodes in the pool and ensure each can fit two replicas; if fewer than two eligible domains are available, Kubernetes cannot satisfy the intended balanced placement and replicas may remain pending
 - a failed or rejected child does not stop later matrix children; after every child has been attempted, the parent reports an aggregate failure if any child did not submit or complete successfully
 - use `runtime.affinity`, `runtime.node_selector`, and `runtime.tolerations` when a matrix child needs a particular node or hardware class
+
+Define topology spreading in the deployment profile:
+
+```yaml
+spec:
+  runtime:
+    replicas: 4
+    placement:
+      mode: topology-spread
+      spread_pool: my-two-node-pool
+```
+
+Then label the intended target nodes before running the experiment:
+
+```bash
+oc label node <node-a> <node-b> \
+  benchflow.io/placement-pool=my-two-node-pool --overwrite
+```
 
 ### llm-d inference simulator deployments
 

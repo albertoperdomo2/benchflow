@@ -320,11 +320,16 @@ def _runtime_placement_from_dict(
         raise ValidationError(f"{field_name} must be a mapping")
     mode = str(raw.get("mode", "") or "").strip()
     spread_pool = str(raw.get("spread_pool", "") or "").strip()
-    allowed_modes = {"same-node", "sequential", "node-exclusive"}
+    allowed_modes = {
+        "same-node",
+        "sequential",
+        "node-exclusive",
+        "topology-spread",
+    }
     if mode and mode not in allowed_modes:
         allowed = ", ".join(sorted(allowed_modes))
         raise ValidationError(f"{field_name}.mode must be one of: {allowed}")
-    if mode in {"same-node", "node-exclusive"} and not spread_pool:
+    if mode in {"same-node", "node-exclusive", "topology-spread"} and not spread_pool:
         raise ValidationError(
             f"{field_name}.spread_pool is required when mode is '{mode}'"
         )

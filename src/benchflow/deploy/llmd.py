@@ -24,6 +24,7 @@ from ..cluster import (
 from ..llmd_layout import recipe_gateway_name as _llmd_recipe_gateway_name
 from ..llmd_epp import resolve_llmd_epp_identity
 from ..models import ResolvedRunPlan, model_storage_relative_path, sanitize_name
+from ..placement import runtime_node_selector, runtime_topology_spread_constraints
 from ..renderers.deployment import render_runtime_pvc_manifests
 from ..platform_state import (
     load_cluster_platform_state,
@@ -1063,10 +1064,14 @@ def _patch_values(plan: ResolvedRunPlan, values_file: Path) -> dict[str, Any]:
     decode["replicas"] = runtime.replicas
     decode.setdefault("parallelism", {})
     decode["parallelism"]["tensor"] = runtime.tensor_parallelism
-    if runtime.node_selector:
-        decode["nodeSelector"] = dict(runtime.node_selector)
+    node_selector = runtime_node_selector(plan)
+    if node_selector:
+        decode["nodeSelector"] = node_selector
     if runtime.affinity:
         decode["affinity"] = dict(runtime.affinity)
+    topology_spread_constraints = runtime_topology_spread_constraints(plan)
+    if topology_spread_constraints:
+        decode["topologySpreadConstraints"] = topology_spread_constraints
     if runtime.tolerations:
         decode["tolerations"] = list(runtime.tolerations)
 
@@ -1187,8 +1192,11 @@ def _llmd_custom_epp_config_context(plan: ResolvedRunPlan) -> dict[str, Any]:
         "runtime_image": runtime.image,
         "runtime_env": runtime.env,
         "runtime_vllm_args": runtime.vllm_args,
-        "runtime_node_selector": runtime.node_selector,
+        "runtime_node_selector": runtime_node_selector(plan),
         "runtime_affinity": runtime.affinity,
+        "runtime_topology_spread_constraints": runtime_topology_spread_constraints(
+            plan
+        ),
         "runtime_tolerations": runtime.tolerations,
         "runtime_image_pull_secrets": runtime.image_pull_secrets,
         "runtime_resources": runtime.resources,
@@ -1920,10 +1928,14 @@ def _patch_recipe_modelserver_overlay(
     )
     if is_inference_sim_image(runtime.image):
         _patch_inference_sim_modelserver(container, pod_spec, plan)
-    if runtime.node_selector:
-        pod_spec["nodeSelector"] = dict(runtime.node_selector)
+    node_selector = runtime_node_selector(plan)
+    if node_selector:
+        pod_spec["nodeSelector"] = node_selector
     if runtime.affinity:
         pod_spec["affinity"] = dict(runtime.affinity)
+    topology_spread_constraints = runtime_topology_spread_constraints(plan)
+    if topology_spread_constraints:
+        pod_spec["topologySpreadConstraints"] = topology_spread_constraints
     if runtime.tolerations:
         pod_spec["tolerations"] = list(runtime.tolerations)
     if runtime.image_pull_secrets:
@@ -2199,8 +2211,9 @@ def _patch_recipe_render_overlay(plan: ResolvedRunPlan, render_dir: Path) -> Non
     # The renderer mounts the same model PVC as the model servers. Keep it on
     # the selected runtime nodes so it does not land on an unrelated worker
     # with a different storage-plugin state.
-    if runtime.node_selector:
-        pod_spec["nodeSelector"] = dict(runtime.node_selector)
+    node_selector = runtime_node_selector(plan)
+    if node_selector:
+        pod_spec["nodeSelector"] = node_selector
     if runtime.affinity:
         pod_spec["affinity"] = dict(runtime.affinity)
     if runtime.tolerations:

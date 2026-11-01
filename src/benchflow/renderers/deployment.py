@@ -9,6 +9,10 @@ import yaml
 
 from ..assets import asset_text, render_jinja_text, render_jinja_yaml_document
 from ..models import ResolvedRunPlan, ValidationError, model_storage_relative_path
+from ..placement import (
+    runtime_node_selector,
+    runtime_topology_spread_constraints,
+)
 from ..rhoai_mooncake import (
     mooncake_configmap_name,
     rhoai_mooncake_model_env,
@@ -150,8 +154,9 @@ def render_llmd_values(plan: ResolvedRunPlan) -> dict[str, Any]:
             "env": plan.deployment.runtime.env,
             "sharedMemorySize": plan.deployment.runtime.shared_memory_size,
             "serviceAccountName": plan.deployment.runtime.service_account_name,
-            "nodeSelector": plan.deployment.runtime.node_selector,
+            "nodeSelector": runtime_node_selector(plan),
             "affinity": plan.deployment.runtime.affinity,
+            "topologySpreadConstraints": runtime_topology_spread_constraints(plan),
             "tolerations": plan.deployment.runtime.tolerations,
             "imagePullSecrets": plan.deployment.runtime.image_pull_secrets,
             "hostPaths": [
@@ -535,8 +540,11 @@ def _rhoai_llminferenceservice_template_context(
         "scheduler_image": plan.deployment.scheduler_image,
         "runtime_args": _rhoai_vllm_args(plan),
         "runtime_env": _rhoai_runtime_env(plan),
-        "runtime_node_selector": plan.deployment.runtime.node_selector,
+        "runtime_node_selector": runtime_node_selector(plan),
         "runtime_affinity": _runtime_affinity(plan),
+        "runtime_topology_spread_constraints": runtime_topology_spread_constraints(
+            plan
+        ),
         "runtime_tolerations": plan.deployment.runtime.tolerations,
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
@@ -592,8 +600,11 @@ def _rhoai_inferenceservice_template_context(plan: ResolvedRunPlan) -> dict[str,
         "runtime_image": plan.deployment.runtime.image,
         "runtime_args": _rhoai_basic_vllm_args(plan),
         "runtime_env": _rhoai_basic_runtime_env(plan),
-        "runtime_node_selector": plan.deployment.runtime.node_selector,
+        "runtime_node_selector": runtime_node_selector(plan),
         "runtime_affinity": _runtime_affinity(plan),
+        "runtime_topology_spread_constraints": runtime_topology_spread_constraints(
+            plan
+        ),
         "runtime_tolerations": plan.deployment.runtime.tolerations,
         "runtime_image_pull_secrets": plan.deployment.runtime.image_pull_secrets,
         "runtime_resources": _runtime_resource_requirements(plan, include_gpu=True),
@@ -818,10 +829,14 @@ def _rhaiis_raw_vllm_pod_spec(
         "volumes": volumes,
     }
     runtime = plan.deployment.runtime
-    if runtime.node_selector:
-        pod_spec["nodeSelector"] = dict(runtime.node_selector)
+    node_selector = runtime_node_selector(plan)
+    if node_selector:
+        pod_spec["nodeSelector"] = node_selector
     if runtime.affinity:
         pod_spec["affinity"] = deepcopy(runtime.affinity)
+    topology_spread_constraints = runtime_topology_spread_constraints(plan)
+    if topology_spread_constraints:
+        pod_spec["topologySpreadConstraints"] = topology_spread_constraints
     if runtime.tolerations:
         pod_spec["tolerations"] = list(runtime.tolerations)
     if runtime.service_account_name:
