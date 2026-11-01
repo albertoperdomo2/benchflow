@@ -667,6 +667,8 @@ def summarize_reservation_workload(workload: dict[str, Any]) -> ExecutionSummary
         start_time=str(metadata.get("creationTimestamp", "")),
         completion_time="",
         message=message,
+        parent_execution=str(labels.get("benchflow.io/parent-execution", "")),
+        matrix_index=str(labels.get("benchflow.io/matrix-index", "")),
     )
 
 

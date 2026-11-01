@@ -8,6 +8,8 @@ from click.testing import CliRunner
 
 from benchflow.cli import cli
 from benchflow.commands.experiment import _list_status_matches
+from benchflow.commands.shared import format_experiment_list
+from benchflow.orchestration.tekton import TektonOrchestrator
 
 
 def _entry(
@@ -79,3 +81,41 @@ def test_experiment_list_filters_running_executions() -> None:
 
     assert result.exit_code == 0, result.output
     assert [entry["name"] for entry in json.loads(result.output)] == ["running-run"]
+
+
+def test_experiment_list_renders_matrix_children_as_a_tree() -> None:
+    parent = _entry("matrix-parent", "Running")
+    child_two = {
+        **_entry("child-two", "Queued"),
+        "parent_execution": "matrix-parent",
+        "matrix_index": "2",
+    }
+    child_one = {
+        **_entry("child-one", "Succeeded", finished=True, succeeded=True),
+        "parent_execution": "matrix-parent",
+        "matrix_index": "1",
+    }
+
+    output = format_experiment_list([child_two, parent, child_one])
+
+    assert output.index("matrix-parent") < output.index("├── child-one")
+    assert output.index("├── child-one") < output.index("└── child-two")
+
+
+def test_tekton_summary_exposes_matrix_parent_metadata() -> None:
+    summary = TektonOrchestrator().summarize(
+        {
+            "metadata": {
+                "name": "child-one",
+                "namespace": "benchflow",
+                "labels": {
+                    "benchflow.io/parent-execution": "matrix-parent",
+                    "benchflow.io/matrix-index": "1",
+                },
+            },
+            "status": {},
+        }
+    )
+
+    assert summary.parent_execution == "matrix-parent"
+    assert summary.matrix_index == "1"

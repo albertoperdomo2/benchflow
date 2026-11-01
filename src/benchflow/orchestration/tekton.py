@@ -658,6 +658,8 @@ class TektonOrchestrator:
             ),
             completion_time=str(status_payload.get("completionTime", "")),
             message=str(message),
+            parent_execution=str(labels.get("benchflow.io/parent-execution", "")),
+            matrix_index=str(labels.get("benchflow.io/matrix-index", "")),
         )
 
     def cancel(self, namespace: str, name: str) -> None:

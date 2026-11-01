@@ -783,10 +783,13 @@ def format_experiment_list(entries: list[dict[str, object]]) -> str:
     if not entries:
         return ""
 
+    tree_entries = _experiment_tree_entries(entries)
     status_width = max(
         len("STATUS"), max(len(str(entry["status"])) for entry in entries)
     )
-    name_width = max(len("RUN"), max(len(str(entry["name"])) for entry in entries))
+    name_width = max(
+        len("RUN"), max(len(display_name) for _, display_name in tree_entries)
+    )
     experiment_width = max(
         len("EXPERIMENT"), max(len(str(entry["experiment"])) for entry in entries)
     )
@@ -803,14 +806,48 @@ def format_experiment_list(entries: list[dict[str, object]]) -> str:
         f"{'EXPERIMENT':<{experiment_width}}  {'PLATFORM':<{platform_width}}  "
         f"{'MODE':<{mode_width}}  {'STARTED':<{started_width}}",
     ]
-    for entry in entries:
+    for entry, display_name in tree_entries:
         lines.append(
-            f"{entry['status']:<{status_width}}  {entry['name']:<{name_width}}  "
+            f"{entry['status']:<{status_width}}  {display_name:<{name_width}}  "
             f"{entry['experiment']:<{experiment_width}}  {entry['platform']:<{platform_width}}  "
             f"{entry['mode']:<{mode_width}}  "
             f"{entry['start_time']:<{started_width}}"
         )
     return "\n".join(lines)
+
+
+def _experiment_tree_entries(
+    entries: list[dict[str, object]],
+) -> list[tuple[dict[str, object], str]]:
+    names = {str(entry.get("name") or "") for entry in entries}
+    children: dict[str, list[tuple[int, dict[str, object]]]] = {}
+    roots: list[dict[str, object]] = []
+
+    for position, entry in enumerate(entries):
+        parent = str(entry.get("parent_execution") or "")
+        if parent and parent in names:
+            children.setdefault(parent, []).append((position, entry))
+        else:
+            roots.append(entry)
+
+    rendered: list[tuple[dict[str, object], str]] = []
+    for entry in roots:
+        name = str(entry.get("name") or "")
+        rendered.append((entry, name))
+        child_entries = children.get(name, [])
+        child_entries.sort(key=lambda item: _matrix_child_sort_key(item[1], item[0]))
+        for index, (_, child) in enumerate(child_entries):
+            branch = "└──" if index == len(child_entries) - 1 else "├──"
+            rendered.append((child, f"{branch} {child.get('name') or ''}"))
+    return rendered
+
+
+def _matrix_child_sort_key(entry: dict[str, object], position: int) -> tuple[int, int]:
+    raw_index = str(entry.get("matrix_index") or "").strip()
+    try:
+        return (int(raw_index), position)
+    except ValueError:
+        return (2_147_483_647, position)
 
 
 def load_profile_document(profiles_dir: Path, name: str, kind: str | None) -> dict:

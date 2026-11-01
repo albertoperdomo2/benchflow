@@ -36,6 +36,8 @@ class ExecutionSummary:
     start_time: str
     completion_time: str
     message: str
+    parent_execution: str = ""
+    matrix_index: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,4 +53,6 @@ class ExecutionSummary:
             "start_time": self.start_time,
             "completion_time": self.completion_time,
             "message": self.message,
+            "parent_execution": self.parent_execution,
+            "matrix_index": self.matrix_index,
         }
