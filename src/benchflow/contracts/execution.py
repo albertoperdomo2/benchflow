@@ -38,6 +38,7 @@ class ExecutionSummary:
     message: str
     parent_execution: str = ""
     matrix_index: str = ""
+    matrix_size: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,4 +56,5 @@ class ExecutionSummary:
             "message": self.message,
             "parent_execution": self.parent_execution,
             "matrix_index": self.matrix_index,
+            "matrix_size": self.matrix_size,
         }

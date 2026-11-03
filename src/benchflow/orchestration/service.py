@@ -47,6 +47,7 @@ DEFAULT_EXECUTION_NAME = "benchflow-e2e"
 DEFAULT_MATRIX_EXECUTION_NAME = "benchflow-matrix"
 MATRIX_PARENT_EXECUTION_LABEL = "benchflow.io/parent-execution"
 MATRIX_CHILD_INDEX_LABEL = "benchflow.io/matrix-index"
+MATRIX_SIZE_LABEL = "benchflow.io/matrix-size"
 
 _TEKTON = TektonOrchestrator()
 
@@ -557,6 +558,7 @@ def run_matrix_supervisor(
                 labels = metadata.setdefault("labels", {})
                 labels[MATRIX_PARENT_EXECUTION_LABEL] = parent_execution_name
                 labels[MATRIX_CHILD_INDEX_LABEL] = str(index)
+                labels[MATRIX_SIZE_LABEL] = str(total)
             if results_configmap_name:
                 spec = manifest.setdefault("spec", {})
                 params = list(spec.get("params", []) or [])

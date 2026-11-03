@@ -112,7 +112,7 @@ def test_experiment_list_keeps_children_of_matching_matrix_parent() -> None:
 
 
 def test_experiment_list_renders_matrix_children_as_a_tree() -> None:
-    parent = _entry("matrix-parent", "Running")
+    parent = {**_entry("matrix-parent", "Running"), "matrix_size": "2"}
     child_two = {
         **_entry("child-two", "Queued"),
         "parent_execution": "matrix-parent",
@@ -126,8 +126,21 @@ def test_experiment_list_renders_matrix_children_as_a_tree() -> None:
 
     output = format_experiment_list([child_two, parent, child_one])
 
-    assert output.index("matrix-parent") < output.index("├── child-one")
-    assert output.index("├── child-one") < output.index("└── child-two")
+    assert output.index("matrix-parent") < output.index("├── (1/2) child-one")
+    assert output.index("├── (1/2) child-one") < output.index("└── (2/2) child-two")
+
+
+def test_experiment_list_uses_unknown_matrix_size_for_legacy_runs() -> None:
+    parent = _entry("matrix-parent", "Running")
+    child = {
+        **_entry("child-one", "Queued"),
+        "parent_execution": "matrix-parent",
+        "matrix_index": "1",
+    }
+
+    output = format_experiment_list([parent, child])
+
+    assert "└── (1/n) child-one" in output
 
 
 def test_tekton_summary_exposes_matrix_parent_metadata() -> None:
@@ -139,6 +152,7 @@ def test_tekton_summary_exposes_matrix_parent_metadata() -> None:
                 "labels": {
                     "benchflow.io/parent-execution": "matrix-parent",
                     "benchflow.io/matrix-index": "1",
+                    "benchflow.io/matrix-size": "2",
                 },
             },
             "status": {},
@@ -147,3 +161,4 @@ def test_tekton_summary_exposes_matrix_parent_metadata() -> None:
 
     assert summary.parent_execution == "matrix-parent"
     assert summary.matrix_index == "1"
+    assert summary.matrix_size == "2"

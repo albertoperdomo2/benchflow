@@ -696,6 +696,7 @@ def summarize_reservation_workload(workload: dict[str, Any]) -> ExecutionSummary
         message=message,
         parent_execution=str(labels.get("benchflow.io/parent-execution", "")),
         matrix_index=str(labels.get("benchflow.io/matrix-index", "")),
+        matrix_size=str(labels.get("benchflow.io/matrix-size", "")),
     )
 
 

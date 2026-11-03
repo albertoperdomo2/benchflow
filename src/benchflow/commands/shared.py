@@ -838,7 +838,17 @@ def _experiment_tree_entries(
         child_entries.sort(key=lambda item: _matrix_child_sort_key(item[1], item[0]))
         for index, (_, child) in enumerate(child_entries):
             branch = "└──" if index == len(child_entries) - 1 else "├──"
-            rendered.append((child, f"{branch} {child.get('name') or ''}"))
+            matrix_index = str(child.get("matrix_index") or "?").strip()
+            matrix_size = str(
+                child.get("matrix_size") or entry.get("matrix_size") or "n"
+            ).strip()
+            rendered.append(
+                (
+                    child,
+                    f"{branch} ({matrix_index}/{matrix_size}) "
+                    f"{child.get('name') or ''}",
+                )
+            )
     return rendered
 
 

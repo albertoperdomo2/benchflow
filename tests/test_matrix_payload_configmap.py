@@ -177,6 +177,9 @@ class MatrixPayloadConfigMapTest(unittest.TestCase):
             child_pipeline_name="benchflow-e2e",
         )
         self.assertEqual(
+            manifest["metadata"]["labels"]["benchflow.io/matrix-size"], "1"
+        )
+        self.assertEqual(
             manifest["spec"]["workspaces"],
             [
                 {

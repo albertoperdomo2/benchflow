@@ -263,6 +263,7 @@ def render_matrix_pipelinerun(
                 "benchflow.io/platform": "matrix",
                 "benchflow.io/mode": "matrix",
                 "benchflow.io/execution-backend": "tekton",
+                "benchflow.io/matrix-size": str(len(plans)),
                 **execution_labels_for_matrix(plans, skip_reservation=True),
             },
         },
@@ -660,6 +661,7 @@ class TektonOrchestrator:
             message=str(message),
             parent_execution=str(labels.get("benchflow.io/parent-execution", "")),
             matrix_index=str(labels.get("benchflow.io/matrix-index", "")),
+            matrix_size=str(labels.get("benchflow.io/matrix-size", "")),
         )
 
     def cancel(self, namespace: str, name: str) -> None:
