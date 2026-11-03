@@ -12,6 +12,7 @@ from benchflow.kueue import (
     NODE_EXCLUSIVE_FINALIZER,
     SETUP_KEY_ANNOTATION,
     _cluster_active_setup_key,
+    _migrate_legacy_queued_run_plan,
     _release_and_unfinalize_workload,
     _workload_json,
     _workload_has_quota_reservation,
@@ -20,6 +21,7 @@ from benchflow.kueue import (
     _workload_status_summary,
     run_remote_capacity_controller,
 )
+from benchflow.models import ValidationError
 from benchflow.node_exclusive import NODE_EXCLUSIVE_RELEASE_LABEL
 
 
@@ -51,6 +53,23 @@ class StopController(RuntimeError):
 
 
 class KueueRemoteCapacityTest(unittest.TestCase):
+    def test_legacy_sequential_placement_is_migrated_for_queued_run(self) -> None:
+        payload = {
+            "deployment": {
+                "runtime": {"placement": {"mode": "sequential", "spread_pool": ""}}
+            },
+            "execution": {"timeout": "3h"},
+        }
+
+        migrated = _migrate_legacy_queued_run_plan(payload)
+
+        self.assertTrue(migrated)
+        self.assertEqual(
+            payload["deployment"]["runtime"]["placement"],
+            {"mode": "", "spread_pool": ""},
+        )
+        self.assertEqual(payload["execution"]["mode"], "sequential")
+
     def test_quota_reservation_is_not_admission(self) -> None:
         reserved = _workload(admitted=False)
 
@@ -137,6 +156,34 @@ class KueueRemoteCapacityTest(unittest.TestCase):
         create.assert_not_called()
         self.assertEqual(patch_check.call_args.kwargs["state"], "Retry")
         self.assertIn("whole nodes", patch_check.call_args.kwargs["message"])
+
+    def test_invalid_queued_run_retries_without_stopping_controller(self) -> None:
+        reserved = _workload(admitted=False)
+
+        with (
+            patch("benchflow.kueue._patch_admission_check_active"),
+            patch(
+                "benchflow.kueue.list_reservation_workloads", return_value=[reserved]
+            ),
+            patch("benchflow.kueue._pipeline_run_payload", return_value=None),
+            patch(
+                "benchflow.kueue._submission_configmap_payload",
+                return_value={"data": {"manifest.json": "{}"}},
+            ),
+            patch("benchflow.kueue.discover_cluster_gpu_capacity", return_value=8),
+            patch("benchflow.kueue.discover_live_gpu_usage", return_value=0),
+            patch(
+                "benchflow.kueue._reserve_node_exclusive_workload",
+                side_effect=ValidationError("bad placement"),
+            ),
+            patch("benchflow.kueue._patch_workload_check") as patch_check,
+            patch("benchflow.kueue.time.sleep", side_effect=StopController),
+            self.assertRaises(StopController),
+        ):
+            run_remote_capacity_controller(namespace="benchflow")
+
+        self.assertEqual(patch_check.call_args.kwargs["state"], "Retry")
+        self.assertIn("bad placement", patch_check.call_args.kwargs["message"])
 
     def test_node_exclusive_workload_carries_cleanup_finalizer(self) -> None:
         workload = _workload_json(

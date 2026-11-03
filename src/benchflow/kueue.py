@@ -554,7 +554,29 @@ def _manifest_from_submission_configmap(configmap: dict[str, Any]) -> dict[str, 
     return manifest
 
 
-def _run_plan_param(manifest: dict[str, Any]) -> tuple[dict[str, Any], ResolvedRunPlan]:
+def _migrate_legacy_queued_run_plan(payload: dict[str, Any]) -> bool:
+    deployment = payload.get("deployment")
+    if not isinstance(deployment, dict):
+        return False
+    runtime = deployment.get("runtime")
+    if not isinstance(runtime, dict):
+        return False
+    placement = runtime.get("placement")
+    if not isinstance(placement, dict) or placement.get("mode") != "sequential":
+        return False
+
+    placement["mode"] = ""
+    placement["spread_pool"] = ""
+    execution = payload.setdefault("execution", {})
+    if not isinstance(execution, dict):
+        raise CommandError("queued execution has invalid execution configuration")
+    execution["mode"] = "sequential"
+    return True
+
+
+def _run_plan_param(
+    manifest: dict[str, Any],
+) -> tuple[dict[str, Any], ResolvedRunPlan, bool]:
     params = (manifest.get("spec", {}) or {}).get("params", []) or []
     for param in params:
         if str((param or {}).get("name") or "") != _RUN_PLAN_PARAM:
@@ -566,7 +588,12 @@ def _run_plan_param(manifest: dict[str, Any]) -> tuple[dict[str, Any], ResolvedR
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise CommandError("queued execution has invalid RunPlan JSON") from exc
-        return param, load_run_plan_data(payload)
+        if not isinstance(payload, dict):
+            raise CommandError("queued execution RunPlan must be a JSON object")
+        migrated = _migrate_legacy_queued_run_plan(payload)
+        if migrated:
+            param["value"] = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        return param, load_run_plan_data(payload), migrated
     raise CommandError("queued execution manifest has no RunPlan")
 
 
@@ -1171,7 +1198,9 @@ def _reserve_node_exclusive_workload(
             f"submission ConfigMap {configmap_name} was not found for node placement"
         )
     manifest = _manifest_from_submission_configmap(configmap)
-    param, plan = _run_plan_param(manifest)
+    param, plan, migrated = _run_plan_param(manifest)
+    if migrated:
+        _replace_submission_manifest(namespace, configmap, manifest)
     if plan.deployment.runtime.placement.mode != "node-exclusive":
         return None
 
@@ -1415,9 +1444,19 @@ def run_remote_capacity_controller(
                         continue
 
                     if available >= requested:
-                        placement_reserved = _reserve_node_exclusive_workload(
-                            namespace, workload
-                        )
+                        try:
+                            placement_reserved = _reserve_node_exclusive_workload(
+                                namespace, workload
+                            )
+                        except (CommandError, ValidationError) as exc:
+                            _patch_workload_check(
+                                namespace,
+                                workload,
+                                state="Retry",
+                                message=f"queued execution is invalid: {exc}",
+                                requeue_after_seconds=30,
+                            )
+                            continue
                         if placement_reserved is False:
                             _patch_workload_check(
                                 namespace,
