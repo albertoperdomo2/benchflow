@@ -48,6 +48,29 @@ def test_pipelinerun_read_retries_transient_api_failure(
     sleep.assert_called_once_with(1)
 
 
+@patch("benchflow.cluster.time.sleep")
+@patch("benchflow.orchestration.tekton.require_command")
+@patch("benchflow.orchestration.tekton.run_command")
+def test_pipelinerun_read_retries_openshift_connection_refusal(
+    run_command, _require_command, sleep
+) -> None:
+    payload = {"metadata": {"name": "child"}}
+    run_command.side_effect = [
+        _result(
+            1,
+            stderr=(
+                "The connection to the server 172.30.0.1:443 was refused - "
+                "did you specify the right host or port?"
+            ),
+        ),
+        _result(0, stdout=json.dumps(payload)),
+    ]
+
+    assert tekton._get_pipelinerun("benchflow", "child") == payload
+    assert run_command.call_count == 2
+    sleep.assert_called_once_with(1)
+
+
 @patch("benchflow.orchestration.tekton.require_command")
 @patch("benchflow.orchestration.tekton.run_command")
 def test_pipelinerun_read_does_not_hide_non_transient_failure(

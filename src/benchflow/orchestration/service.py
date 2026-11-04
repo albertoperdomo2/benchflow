@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..cluster import CommandError, create_manifest
+from ..cluster import CommandError, create_manifest, is_transient_kubernetes_error
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
 from ..kueue import (
     create_reservation_workload,
@@ -414,6 +414,59 @@ def _submit_matrix_children_in_parallel(
     )
 
 
+def _wait_for_matrix_children(
+    child_names: list[str],
+    *,
+    namespace: str,
+    failures: list[str],
+) -> None:
+    if not child_names:
+        return
+    step_label = (
+        f"Watching {len(child_names)} child execution(s)"
+        if len(child_names) > 1
+        else f"Watching child execution {child_names[0]}"
+    )
+    step(step_label)
+    last_states: dict[str, tuple[str, bool, str]] = {}
+    pending = set(child_names)
+    while pending:
+        for name in list(pending):
+            try:
+                summary = summarize_execution(namespace, name)
+            except CommandError as exc:
+                if not is_transient_kubernetes_error(exc):
+                    raise
+                warning(
+                    f"Transient Kubernetes API error while watching {name}; "
+                    f"the matrix will keep waiting: {exc}"
+                )
+                continue
+            state = (
+                str(summary.get("status") or ""),
+                bool(summary.get("finished")),
+                str(summary.get("message") or ""),
+            )
+            if last_states.get(name) != state:
+                status_text = state[0]
+                message_text = state[2]
+                if message_text:
+                    detail(f"{name}: {status_text} ({message_text})")
+                else:
+                    detail(f"{name}: {status_text}")
+                last_states[name] = state
+            if not summary.get("finished"):
+                continue
+            pending.remove(name)
+            if summary.get("succeeded"):
+                success(f"{name} succeeded")
+                continue
+            warning(f"{name} failed")
+            failures.append(name)
+        if pending:
+            time.sleep(5)
+
+
 def run_matrix_supervisor(
     plans: list[ResolvedRunPlan],
     *,
@@ -494,44 +547,6 @@ def run_matrix_supervisor(
         )
         detail(f"Matrix results ConfigMap: {results_configmap_name}")
 
-    def wait_for_children(child_names: list[str]) -> None:
-        if not child_names:
-            return
-        step_label = (
-            f"Watching {len(child_names)} child execution(s)"
-            if len(child_names) > 1
-            else f"Watching child execution {child_names[0]}"
-        )
-        step(step_label)
-        last_states: dict[str, tuple[str, bool, str]] = {}
-        pending = set(child_names)
-        while pending:
-            for name in list(pending):
-                summary = summarize_execution(plans[0].deployment.namespace, name)
-                state = (
-                    str(summary.get("status") or ""),
-                    bool(summary.get("finished")),
-                    str(summary.get("message") or ""),
-                )
-                if last_states.get(name) != state:
-                    status_text = state[0]
-                    message_text = state[2]
-                    if message_text:
-                        detail(f"{name}: {status_text} ({message_text})")
-                    else:
-                        detail(f"{name}: {status_text}")
-                    last_states[name] = state
-                if not summary.get("finished"):
-                    continue
-                pending.remove(name)
-                if summary.get("succeeded"):
-                    success(f"{name} succeeded")
-                    continue
-                warning(f"{name} failed")
-                failures.append(name)
-            if pending:
-                time.sleep(5)
-
     try:
         for index, plan in enumerate(plans, start=1):
             descriptor = (
@@ -579,10 +594,18 @@ def run_matrix_supervisor(
             submitted[name] = descriptor
             detail(f"Queued execution {name} in namespace {plan.deployment.namespace}")
             if not submit_children_in_parallel:
-                wait_for_children([name])
+                _wait_for_matrix_children(
+                    [name],
+                    namespace=plan.deployment.namespace,
+                    failures=failures,
+                )
 
         if submit_children_in_parallel:
-            wait_for_children(list(submitted))
+            _wait_for_matrix_children(
+                list(submitted),
+                namespace=plans[0].deployment.namespace,
+                failures=failures,
+            )
     finally:
         if setup_state_dir is not None:
             setup_state_dir.cleanup()

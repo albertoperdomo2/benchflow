@@ -18,6 +18,7 @@ TARGET_KUBECONFIG_HOST_ALIASES_ANNOTATION = "benchflow.io/host-aliases"
 
 _TRANSIENT_KUBERNETES_ERROR_MARKERS = (
     "connection refused",
+    "connection to the server",
     "connection reset",
     "code = unavailable",
     "context deadline exceeded",
