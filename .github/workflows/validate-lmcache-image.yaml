@@ -1,0 +1,54 @@
+name: Validate Upstream LMCache Image
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/validate-lmcache-image.yaml'
+      - 'src/benchflow/lmcache.py'
+      - 'profiles/deployment/**/offloading/*lmcache*'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/validate-lmcache-image.yaml'
+      - 'src/benchflow/lmcache.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk for upstream serving image
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Resolve pinned serving image
+        id: image
+        run: |
+          python3 - <<'PY'
+          import ast
+          import os
+          from pathlib import Path
+          tree = ast.parse(Path('src/benchflow/lmcache.py').read_text())
+          image = next(ast.literal_eval(node.value) for node in tree.body
+                       if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == 'DEFAULT_RUNTIME_IMAGE'
+                               for target in node.targets))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'image={image}\n')
+          PY
+
+      - name: Validate bundled libraries and MP connector
+        env:
+          SERVING_IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          docker pull "$SERVING_IMAGE"
+          docker run --rm --entrypoint python3 "$SERVING_IMAGE" -c \
+            "import importlib.metadata as m; import torch; import lmcache.cuda_ops; import cuda.bindings.driver; from lmcache.integration.vllm.lmcache_mp_connector import LMCacheMPConnector; assert m.version('vllm') == '0.32.0'; assert m.version('lmcache') == '0.5.6'; print({n:m.version(n) for n in ('vllm','lmcache','torch')})"
+          docker run --rm --entrypoint lmcache "$SERVING_IMAGE" server --help > lmcache-server-help.txt
+          for flag in --isolated-ipc --http-host --http-port --l1-size-gb --chunk-size; do
+            grep -q -- "$flag" lmcache-server-help.txt
+          done

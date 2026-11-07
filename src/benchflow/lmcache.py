@@ -20,11 +20,9 @@ from .lmcache_gpu import ensure_lmcache_gpu_access, release_lmcache_gpu_access
 
 NAME = "benchflow-lmcache"
 LABELS = {"app.kubernetes.io/name": NAME, "benchflow.io/managed-by": "benchflow"}
-LMCACHE_VERSION = "0.5.7"
+LMCACHE_VERSION = "0.5.6"
 VLLM_VERSION = "0.32.0"
-DEFAULT_RUNTIME_IMAGE = (
-    "ghcr.io/albertoperdomo2/benchflow:lmcache-vllm0.32.0-lmcache0.5.7"
-)
+DEFAULT_RUNTIME_IMAGE = "vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34"
 
 
 @dataclass(frozen=True)
@@ -74,7 +72,7 @@ def lmcache_spec(deployment: ResolvedDeployment) -> LMCacheSpec | None:
         and (":" not in tag or any(x in tag.lower() for x in ("latest", "nightly")))
     ):
         raise ValidationError(
-            "LMCache requires an explicit versioned runtime.image (prefer a digest) containing vLLM 0.32.0 and LMCache 0.5.7"
+            "LMCache requires an explicit versioned runtime.image (prefer a digest) containing vLLM 0.32.0 and LMCache 0.5.6"
         )
     for key in ("cpu_gib", "chunk_size"):
         value = raw.get(key, getattr(LMCacheSpec(), key))

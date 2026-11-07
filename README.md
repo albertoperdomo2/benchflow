@@ -17,7 +17,7 @@ Each submitted execution scopes its target-cluster release and any BenchFlow-cre
 
 An initial [LMCache CPU-offload integration](docs/lmcache.md) manages node-local
 MP servers through platform setup/teardown for RHOAI and llm-d. It includes
-native-vLLM comparison profiles, automated serving-image builds, and
+native-vLLM comparison profiles, a pinned upstream serving image, and
 [RHOAI](experiments/smoke/qwen3-06b-rhoai-lmcache-smoke.yaml) /
 [llm-d](experiments/smoke/qwen3-06b-llm-d-lmcache-smoke.yaml) smoke experiments
 that require KV readback. GPU validation and image qualification are pending.

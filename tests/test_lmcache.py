@@ -22,7 +22,7 @@ from benchflow.renderers.deployment import write_deployment_assets
 from benchflow.toolbox import platform
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = "quay.io/benchflow-test/vllm-lmcache:v0.32.0-0.5.7"
+IMAGE = "quay.io/benchflow-test/vllm-lmcache:v0.32.0-0.5.6"
 
 
 @pytest.fixture

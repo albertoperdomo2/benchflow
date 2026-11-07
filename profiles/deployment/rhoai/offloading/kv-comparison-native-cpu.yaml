@@ -11,8 +11,8 @@ spec:
     pvc_name: models-storage
     cache_dir: /models
   runtime:
-    # CI builds the same serving image for every comparison arm.
-    image: ghcr.io/albertoperdomo2/benchflow:lmcache-vllm0.32.0-lmcache0.5.7
+    # Use the same pinned upstream serving image for every comparison arm.
+    image: vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
     replicas: 1
     tensor_parallelism: 1
     shared_memory_size: 80Gi

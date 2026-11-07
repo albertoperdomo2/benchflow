@@ -42,30 +42,33 @@ clients from the BenchFlow namespace and HTTP scraping from the OpenShift
 monitoring namespaces. Treat that namespace as the trust boundary for this
 unauthenticated MP transport; use a cluster network that enforces NetworkPolicy.
 
-## Serving image
+## Images and processes
 
-CI builds one default serving image for **all three** comparison arms. The same image runs
-the LMCache server and vLLM, avoiding independently selected Torch/CUDA/Python
-ABIs. The initial development contract is vLLM `0.32.0`, LMCache `0.5.7`, and
-`cuda-python`, with the external `lmcache.integration.vllm.lmcache_mp_connector`
-module available. Server startup checks package versions, connector import,
-and CUDA access, and logs the software versions and visible GPU count.
+The upstream `vllm/vllm-openai:v0.32.0` image already bundles LMCache `0.5.6`.
+All smoke and comparison profiles use the same pinned upstream image digest.
+BenchFlow does not compile, install, upgrade, or republish LMCache.
 
-`build/Containerfile.lmcache` builds LMCache from its immutable v0.5.7 source
-commit against `vllm/vllm-openai:v0.32.0`, preserving the existing Torch/CUDA ABI
-and core serving dependencies. The image build imports the external connector
-and CUDA extension, checks package dependencies, and verifies the server CLI.
-Dependency checks honor the base image's explicit NCCL override and run before
-compilation as well as after LMCache installation.
-The `Build LMCache Serving Image` workflow publishes
-`ghcr.io/albertoperdomo2/benchflow:lmcache-vllm0.32.0-lmcache0.5.7` on main.
-Every shipped profile uses that image by default; no local image build,
-package installation, server deployment, or connector configuration is required.
+| Role | Image | Process |
+| --- | --- | --- |
+| Orchestration and benchmarking | BenchFlow control image | `bflow` |
+| Model serving | Pinned upstream vLLM image | vLLM with the LMCache MP connector |
+| Node-local cache service | The same upstream vLLM image | `lmcache server` |
 
-PR builds publish `lmcache-pr-<number>-<sha>` tags and their digest in the workflow
-summary. Use `--runtime-image` to test that PR revision with its BenchFlow
-control image. The version/import checks are prerequisites, not GPU readback
-or performance qualification. Floating `latest`/`nightly` images are rejected.
+These are separate pods. The cache server shares its Python/Torch/CUDA/LMCache
+versions with the model runtime because both use the same image. LMCache is
+not added to the BenchFlow control image. The Python library is needed in the
+model runtime because the connector executes inside vLLM; the cache service
+is deployed separately and offloads KV into its own CPU memory.
+
+`Validate Upstream LMCache Image` checks the pinned image's package versions,
+CUDA extension and external connector imports, and required MP server flags.
+Platform setup additionally checks actual CUDA access on the GPU nodes.
+No local image build, package installation, server manifests, or connector
+configuration is required. A PR test only needs the matching BenchFlow control
+image; the default serving image is already available upstream.
+
+The version/import checks are prerequisites, not GPU readback or performance
+qualification. Floating `latest`/`nightly` images are rejected.
 
 ## Automated smoke tests
 
