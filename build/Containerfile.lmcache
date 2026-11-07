@@ -7,7 +7,12 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LMCACHE=0.5.7 \
     NVCC_THREADS=1 \
     TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0;10.0;12.0+PTX"
 
-RUN apt-get update && apt-get install -y --no-install-recommends git build-essential \
+# vLLM ships CUDA tools for JIT, but not all headers needed by Torch's
+# CUDAContextLight.h when building an external extension from source.
+RUN CUDA_SERIES="$(python3 -c 'import torch; print("-".join(torch.version.cuda.split(".")[:2]))')" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends git build-essential \
+        "libcusparse-dev-${CUDA_SERIES}" "libcusolver-dev-${CUDA_SERIES}" \
     && rm -rf /var/lib/apt/lists/*
 
 # Compile LMCache against the Torch/CUDA already used by this vLLM image.
