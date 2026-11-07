@@ -1,0 +1,39 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-lmcache-smoke
+spec:
+  platform: llm-d
+  mode: inference-scheduling
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v0.9.0
+  gateway: istio
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /model-cache
+  runtime:
+    image: ghcr.io/albertoperdomo2/benchflow:lmcache-vllm0.32.0-lmcache0.5.7
+    replicas: 1
+    tensor_parallelism: 1
+    shared_memory_size: 1Gi
+    resources:
+      requests:
+        memory: 8Gi
+      limits:
+        memory: 12Gi
+    env:
+      USER: benchflow
+      PYTHONHASHSEED: '0'
+    vllm_args:
+    - --max-model-len=1024
+    - --block-size=16
+    - --dtype=bfloat16
+    - --kv-cache-memory-bytes=134217728
+    - --enable-prefix-caching
+    - --enable-prompt-tokens-details
+  options:
+    lmcache:
+      cpu_gib: 1
+      chunk_size: 256
+      verify_readback: true

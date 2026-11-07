@@ -1,0 +1,36 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-kv-comparison-hbm
+spec:
+  platform: llm-d
+  mode: inference-scheduling
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v0.9.0
+  gateway: istio
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /model-cache
+  runtime:
+    # CI builds the same serving image for every comparison arm.
+    image: ghcr.io/albertoperdomo2/benchflow:lmcache-vllm0.32.0-lmcache0.5.7
+    replicas: 1
+    tensor_parallelism: 1
+    shared_memory_size: 80Gi
+    resources:
+      requests:
+        memory: 80Gi
+      limits:
+        memory: 96Gi
+    env:
+      USER: benchflow
+      PYTHONHASHSEED: "0"
+    vllm_args:
+      - --max-model-len=8192
+      - --block-size=16
+      - --gpu-memory-utilization=0.55
+      - --enable-prefix-caching
+      - --enable-prompt-tokens-details
+  options:
+    {}

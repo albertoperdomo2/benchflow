@@ -1476,6 +1476,9 @@ def load_run_plan_data(raw: dict[str, Any]) -> ResolvedRunPlan:
         ),
     )
 
+    from .lmcache import configure_lmcache
+
+    deployment = configure_lmcache(deployment, model_name=model.name)
     benchmark_raw = raw.get("benchmark") or {}
     benchmark = _resolved_benchmark_profile_spec_from_dict(benchmark_raw)
 

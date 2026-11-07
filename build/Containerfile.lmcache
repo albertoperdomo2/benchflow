@@ -1,0 +1,29 @@
+FROM vllm/vllm-openai:v0.32.0
+
+USER root
+ARG LMCACHE_COMMIT=236f3eec32a2d330662a1795d90a01a1e0782c49
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LMCACHE=0.5.7 \
+    MAX_JOBS=2 \
+    NVCC_THREADS=1 \
+    TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0;10.0;12.0+PTX"
+
+RUN apt-get update && apt-get install -y --no-install-recommends git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Compile LMCache against the Torch/CUDA already used by this vLLM image.
+# Protect that ABI and vLLM's core dependencies during dependency resolution.
+RUN python3 -c "import importlib.metadata as m; names=('vllm','torch','torchvision','torchaudio','triton','numpy','transformers'); installed={d.metadata['Name'].lower():d.version for d in m.distributions()}; open('/tmp/serving-constraints.txt','w').write(''.join(n+'=='+installed[n]+'\\n' for n in names if n in installed))" \
+    && python3 -m pip install --no-cache-dir -c /tmp/serving-constraints.txt \
+        ninja packaging 'setuptools>=77.0.3,<81' 'setuptools_scm>=8' wheel \
+        'grpcio==1.78.0' 'grpcio-tools==1.78.0' \
+    && export ENABLE_CXX11_ABI="$(python3 -c 'import torch; print(int(torch._C._GLIBCXX_USE_CXX11_ABI))')" \
+    && python3 -m pip install --no-cache-dir --no-build-isolation -c /tmp/serving-constraints.txt \
+        "lmcache @ git+https://github.com/LMCache/LMCache.git@${LMCACHE_COMMIT}" \
+    && python3 -m pip check \
+    && python3 -c "import importlib.metadata as m; import lmcache.cuda_ops; from lmcache.integration.vllm.lmcache_mp_connector import LMCacheMPConnector; import cuda.bindings.driver; assert m.version('vllm') == '0.32.0'; assert m.version('lmcache') == '0.5.7'" \
+    && lmcache server --help >/dev/null
+
+# Compatible with the arbitrary UID assigned by OpenShift's restricted SCC.
+ENV HOME=/tmp USER=benchflow PYTHONHASHSEED=0
+USER 2000:0
+ENTRYPOINT ["vllm", "serve"]

@@ -1427,7 +1427,7 @@ def setup_group() -> None:
 
 @setup_group.command(
     "llm-d",
-    help="Setup llm-d gateway prerequisites from a resolved RunPlan.",
+    help="Setup llm-d gateway and profile-selected services (including LMCache) from a resolved RunPlan.",
     short_help="Setup llm-d prerequisites",
 )
 @runtime_plan_source_options
@@ -1447,7 +1447,7 @@ def setup_llmd_command(**kwargs: object) -> int:
 
 @setup_group.command(
     "rhoai",
-    help="Setup RHOAI operator, DataScienceCluster, and Gateway prerequisites from a resolved RunPlan.",
+    help="Setup RHOAI operator, DataScienceCluster, Gateway, and profile-selected services (including LMCache) from a resolved RunPlan.",
     short_help="Setup RHOAI prerequisites",
 )
 @runtime_plan_source_options

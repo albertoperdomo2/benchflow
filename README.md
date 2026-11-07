@@ -15,6 +15,13 @@ BenchFlow is a packaged control plane for running benchmark scenarios, not a loo
 
 Each submitted execution scopes its target-cluster release and any BenchFlow-created runtime PVCs to the concrete execution name, so concurrent runs of the same experiment do not deploy, share, or clean up each other's managed resources. Pre-provisioned PVCs remain shared.
 
+An initial [LMCache CPU-offload integration](docs/lmcache.md) manages node-local
+MP servers through platform setup/teardown for RHOAI and llm-d. It includes
+native-vLLM comparison profiles, automated serving-image builds, and
+[RHOAI](experiments/smoke/qwen3-06b-rhoai-lmcache-smoke.yaml) /
+[llm-d](experiments/smoke/qwen3-06b-llm-d-lmcache-smoke.yaml) smoke experiments
+that require KV readback. GPU validation and image qualification are pending.
+
 ## Quickstart
 
 Install the CLI from the repository root:

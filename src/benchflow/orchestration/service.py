@@ -93,6 +93,10 @@ def _scope_manifest_run_plan(manifest: dict[str, Any], execution_name: str) -> N
         param["value"] = json.dumps(
             scoped_plan.to_dict(), separators=(",", ":"), sort_keys=True
         )
+        # Some shared services (LMCache) have execution-scoped compatibility.
+        manifest.setdefault("metadata", {}).setdefault("annotations", {})[
+            "benchflow.io/setup-key"
+        ] = setup_key_for_plan(scoped_plan)
         if scoped_plan.deployment.runtime.placement.mode == "node-exclusive":
             labels = manifest.setdefault("metadata", {}).setdefault("labels", {})
             labels[NODE_EXCLUSIVE_RELEASE_LABEL] = scoped_plan.deployment.release_name
@@ -515,6 +519,7 @@ def run_matrix_supervisor(
     if (
         matrix_platform in {"llm-d", "rhoai"}
         and len(matrix_setup_keys) == 1
+        and not any("lmcache" in plan.deployment.options for plan in plans)
         and all(plan.stages.deploy for plan in plans)
         and all(plan.stages.cleanup for plan in plans)
     ):

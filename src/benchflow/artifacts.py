@@ -11,6 +11,7 @@ from .benchmark import benchmark_version_from_plan
 from .benchmark.common import resolved_accelerator
 from .cluster import CommandError, require_any_command, run_command, run_json_command
 from .llmd_epp import resolve_llmd_epp_identity
+from .lmcache import LABELS as LMCACHE_LABELS, lmcache_spec
 from .models import ResolvedRunPlan, RuntimeArtifactDirectorySpec
 from .storage_offloading import storage_offloading_config
 from .tracing import collect_traces
@@ -909,6 +910,13 @@ def collect_artifacts(
     _ensure_artifact_layout(artifacts_dir)
 
     namespace = plan.deployment.namespace
+
+    def matches_lmcache(metadata: dict) -> bool:
+        return lmcache_spec(plan.deployment) is not None and all(
+            metadata.get("labels", {}).get(key) == value
+            for key, value in LMCACHE_LABELS.items()
+        )
+
     release_name = plan.deployment.release_name
     release_aliases: tuple[str, ...] = ()
     if str(plan.deployment.platform or "").strip().lower() == "llm-d":
@@ -972,8 +980,9 @@ def collect_artifacts(
         )
         for item in payload.get("items", []):
             metadata = item.get("metadata", {})
-            if not isinstance(metadata, dict) or not _matches_release(
-                metadata, release_name, release_aliases
+            if not isinstance(metadata, dict) or not (
+                _matches_release(metadata, release_name, release_aliases)
+                or matches_lmcache(metadata)
             ):
                 continue
             pod_name = metadata.get("name", "")
@@ -999,6 +1008,30 @@ def collect_artifacts(
                     gaie_count += 1
                 else:
                     infra_count += 1
+            if matches_lmcache(metadata):
+                metrics = run_command(
+                    [
+                        kubectl_cmd,
+                        "exec",
+                        "-n",
+                        namespace,
+                        pod_name,
+                        "-c",
+                        "lmcache-server",
+                        "--",
+                        "python3",
+                        "-c",
+                        "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/metrics', timeout=15).read().decode())",
+                    ],
+                    capture_output=True,
+                    check=False,
+                )
+                if metrics.returncode == 0:
+                    metrics_dir = artifacts_dir / "metrics" / "lmcache"
+                    metrics_dir.mkdir(parents=True, exist_ok=True)
+                    (metrics_dir / f"{pod_name}.prom").write_text(
+                        metrics.stdout, encoding="utf-8"
+                    )
             if (
                 pod_type == "model"
                 and storage_offloading
@@ -1102,6 +1135,8 @@ def collect_artifacts(
         detail("Collecting Kubernetes manifests for deployed resources")
         for resource_type in (
             "deployments",
+            "daemonsets",
+            "networkpolicies",
             "pods",
             "services",
             "configmaps",
@@ -1129,8 +1164,9 @@ def collect_artifacts(
             resource_dir.mkdir(parents=True, exist_ok=True)
             for item in items:
                 metadata = item.get("metadata", {})
-                if not isinstance(metadata, dict) or not _matches_release(
-                    metadata, release_name, release_aliases
+                if not isinstance(metadata, dict) or not (
+                    _matches_release(metadata, release_name, release_aliases)
+                    or matches_lmcache(metadata)
                 ):
                     continue
                 name = metadata.get("name")

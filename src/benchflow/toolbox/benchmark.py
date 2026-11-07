@@ -14,6 +14,8 @@ from ..benchmark import (
     run_benchmark,
 )
 from ..contracts import BenchmarkOutcome, ResolvedRunPlan
+from ..cluster import CommandError, require_any_command
+from ..lmcache import lmcache_spec, lmcache_readback_snapshot, verify_lmcache_readback
 from ..profiling import EppPprofCaptureError, EppPprofSession
 from ..remote_jobs import (
     RemoteJobFailed,
@@ -229,6 +231,12 @@ def run_plan_benchmark(
     )
 
     previous_execution_name = os.environ.get("EXECUTION_NAME")
+    cache_spec = lmcache_spec(plan.deployment)
+    cache_before = None
+    cache_kubectl = ""
+    if cache_spec is not None and cache_spec.verify_readback:
+        cache_kubectl = require_any_command("oc", "kubectl")
+        cache_before = lmcache_readback_snapshot(plan, cache_kubectl)
     pprof_session: EppPprofSession | None = None
     effective_tags = dict(extra_tags or {})
     if plan.metrics.epp_pprof is not None:
@@ -289,6 +297,14 @@ def run_plan_benchmark(
                 run_id=run_id,
                 start_time=start_time,
                 end_time=end_time,
+            ) from exc
+
+    if cache_before is not None:
+        try:
+            verify_lmcache_readback(plan, cache_kubectl, cache_before, output_dir)
+        except CommandError as exc:
+            raise BenchmarkRunFailed(
+                str(exc), run_id=run_id, start_time=start_time, end_time=end_time
             ) from exc
 
     success(

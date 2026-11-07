@@ -1187,6 +1187,9 @@ def resolve_run_plan(
         target=target,
     )
 
+    from .lmcache import configure_lmcache
+
+    deployment = configure_lmcache(deployment, model_name=model_name)
     tags = dict(experiment.spec.mlflow.tags)
     tags.setdefault("deployment_type", f"{deployment.platform}-{deployment.mode}")
     tags.setdefault("deployment_profile", deployment_profile.metadata.name)
