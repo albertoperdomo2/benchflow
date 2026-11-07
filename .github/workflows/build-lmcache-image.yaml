@@ -5,12 +5,14 @@ on:
     paths:
       - '.github/workflows/build-lmcache-image.yaml'
       - 'build/Containerfile.lmcache'
+      - 'build/check_serving_environment.py'
       - 'src/benchflow/lmcache.py'
   push:
     branches: [main]
     paths:
       - '.github/workflows/build-lmcache-image.yaml'
       - 'build/Containerfile.lmcache'
+      - 'build/check_serving_environment.py'
   workflow_dispatch:
 
 jobs:

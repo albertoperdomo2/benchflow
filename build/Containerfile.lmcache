@@ -17,14 +17,20 @@ RUN CUDA_SERIES="$(python3 -c 'import torch; print("-".join(torch.version.cuda.s
 
 # Compile LMCache against the Torch/CUDA already used by this vLLM image.
 # Protect that ABI and vLLM's core dependencies during dependency resolution.
+# Use uv so the base image's intentional NCCL override remains effective.
+# The unused new OTLP common exporter conflicts with the inherited 1.40 SDK.
+COPY build/check_serving_environment.py /tmp/check-serving-environment.py
 RUN python3 -c "import importlib.metadata as m; names=('vllm','torch','torchvision','torchaudio','triton','numpy','transformers'); installed={d.metadata['Name'].lower():d.version for d in m.distributions()}; open('/tmp/serving-constraints.txt','w').write(''.join(n+'=='+installed[n]+'\\n' for n in names if n in installed))" \
-    && python3 -m pip install --no-cache-dir -c /tmp/serving-constraints.txt \
+    && uv pip uninstall --system opentelemetry-exporter-otlp-common \
+    && uv pip install --system --no-cache -c /tmp/serving-constraints.txt \
         ninja packaging 'setuptools>=77.0.3,<81' 'setuptools_scm>=8' wheel \
         'grpcio==1.78.0' 'grpcio-tools==1.78.0' \
+    && python3 /tmp/check-serving-environment.py \
+    && python3 -c "from opentelemetry.exporter.prometheus import PrometheusMetricReader; from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter" \
     && export ENABLE_CXX11_ABI="$(python3 -c 'import torch; print(int(torch._C._GLIBCXX_USE_CXX11_ABI))')" \
-    && python3 -m pip install --no-cache-dir --no-build-isolation -c /tmp/serving-constraints.txt \
+    && uv pip install --system --no-cache --no-build-isolation -c /tmp/serving-constraints.txt \
         "lmcache @ git+https://github.com/LMCache/LMCache.git@${LMCACHE_COMMIT}" \
-    && python3 -m pip check \
+    && python3 /tmp/check-serving-environment.py \
     && python3 -c "import importlib.metadata as m; import lmcache.cuda_ops; from lmcache.integration.vllm.lmcache_mp_connector import LMCacheMPConnector; import cuda.bindings.driver; assert m.version('vllm') == '0.32.0'; assert m.version('lmcache') == '0.5.7'" \
     && lmcache server --help >/dev/null
 

@@ -55,6 +55,8 @@ and CUDA access, and logs the software versions and visible GPU count.
 commit against `vllm/vllm-openai:v0.32.0`, preserving the existing Torch/CUDA ABI
 and core serving dependencies. The image build imports the external connector
 and CUDA extension, checks package dependencies, and verifies the server CLI.
+Dependency checks honor the base image's explicit NCCL override and run before
+compilation as well as after LMCache installation.
 The `Build LMCache Serving Image` workflow publishes
 `ghcr.io/albertoperdomo2/benchflow:lmcache-vllm0.32.0-lmcache0.5.7` on main.
 Every shipped profile uses that image by default; no local image build,
