@@ -11,7 +11,8 @@ spec:
     pvc_name: models-storage
     cache_dir: /models
   runtime:
-    image: vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+    # Supply the vLLM+LMCache image through runtime.image or --runtime-image.
+    image: ""
     replicas: 1
     tensor_parallelism: 1
     shared_memory_size: 1Gi

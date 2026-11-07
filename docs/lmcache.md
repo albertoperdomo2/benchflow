@@ -44,15 +44,16 @@ unauthenticated MP transport; use a cluster network that enforces NetworkPolicy.
 
 ## Images and processes
 
-The upstream `vllm/vllm-openai:v0.32.0` image already bundles LMCache `0.5.6`.
-All smoke and comparison profiles use the same pinned upstream image digest.
-BenchFlow does not compile, install, upgrade, or republish LMCache.
+Supply a compatible vLLM+LMCache image through the deployment profile's
+`runtime.image` or the existing `--runtime-image` option. Image preparation and
+publication are external to BenchFlow. There is no default serving image and
+no LMCache image build or validation workflow in CI.
 
 | Role | Image | Process |
 | --- | --- | --- |
 | Orchestration and benchmarking | BenchFlow control image | `bflow` |
-| Model serving | Pinned upstream vLLM image | vLLM with the LMCache MP connector |
-| Node-local cache service | The same upstream vLLM image | `lmcache server` |
+| Model serving | Supplied vLLM+LMCache image | vLLM with the LMCache MP connector |
+| Node-local cache service | The same supplied image | `lmcache server` |
 
 These are separate pods. The cache server shares its Python/Torch/CUDA/LMCache
 versions with the model runtime because both use the same image. LMCache is
@@ -60,23 +61,29 @@ not added to the BenchFlow control image. The Python library is needed in the
 model runtime because the connector executes inside vLLM; the cache service
 is deployed separately and offloads KV into its own CPU memory.
 
-`Validate Upstream LMCache Image` checks the pinned image's package versions,
-CUDA extension and external connector imports, and required MP server flags.
-Platform setup additionally checks actual CUDA access on the GPU nodes.
-No local image build, package installation, server manifests, or connector
-configuration is required. A PR test only needs the matching BenchFlow control
-image; the default serving image is already available upstream.
+The supplied image must include the external
+`lmcache.integration.vllm.lmcache_mp_connector.LMCacheMPConnector`, CUDA Python
+bindings for isolated IPC, and the `lmcache server` CLI with the MP flags used
+by the platform manifests. Platform setup checks connector import and actual
+CUDA access on the GPU nodes. The server's startup and health checks verify
+the CLI and HTTP API. Versions are logged for provenance, without enforcing a
+specific vLLM or LMCache version pair.
 
-The version/import checks are prerequisites, not GPU readback or performance
-qualification. Floating `latest`/`nightly` images are rejected.
+BenchFlow owns the platform service manifests, connector configuration,
+readiness, benchmarking, artifacts, and teardown. It does not install, upgrade,
+compile, or republish the supplied image's software. Import and readiness checks
+are prerequisites, not GPU readback or performance qualification.
 
 ## Automated smoke tests
 
-After normal BenchFlow bootstrap, run either experiment:
+After normal BenchFlow bootstrap, set `VLLM_LMCACHE_IMAGE` to the image you
+provide and run either experiment:
 
 ```bash
-bflow experiment run experiments/smoke/qwen3-06b-rhoai-lmcache-smoke.yaml
-bflow experiment run experiments/smoke/qwen3-06b-llm-d-lmcache-smoke.yaml
+bflow experiment run experiments/smoke/qwen3-06b-rhoai-lmcache-smoke.yaml \
+  --runtime-image "$VLLM_LMCACHE_IMAGE"
+bflow experiment run experiments/smoke/qwen3-06b-llm-d-lmcache-smoke.yaml \
+  --runtime-image "$VLLM_LMCACHE_IMAGE"
 ```
 
 Each uses Qwen3-0.6B, TP1, one replica, a 128 MiB GPU KV cache, a 1 GiB CPU
@@ -122,7 +129,7 @@ Resolve a functional run without changing the cluster:
 
 ```bash
 bflow experiment resolve experiments/smoke/qwen3-06b-rhoai-lmcache-smoke.yaml \
-  --format json > lmcache-runplan.json
+  --runtime-image "$VLLM_LMCACHE_IMAGE" --format json > lmcache-runplan.json
 ```
 
 Normal Tekton execution owns setup, deployment, benchmarking, collection,
@@ -153,7 +160,8 @@ bflow experiment run --model Qwen/Qwen3-0.6B \
   --deployment-profile rhoai-kv-comparison-hbm \
   --deployment-profile rhoai-kv-comparison-native-cpu \
   --deployment-profile rhoai-kv-comparison-lmcache-cpu \
-  --benchmark-profile guidellm-smoke --metrics-profile kv-cache-comparison
+  --benchmark-profile guidellm-smoke --metrics-profile kv-cache-comparison \
+  --runtime-image "$VLLM_LMCACHE_IMAGE"
 ```
 
 This command is a workflow smoke test. Replace `guidellm-smoke` with a calibrated

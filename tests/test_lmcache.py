@@ -22,7 +22,7 @@ from benchflow.renderers.deployment import write_deployment_assets
 from benchflow.toolbox import platform
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = "quay.io/benchflow-test/vllm-lmcache:v0.32.0-0.5.6"
+IMAGE = "quay.io/benchflow-test/vllm-lmcache:provided"
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ def test_reject_invalid_options(plan, options, match):
     [
         ({"replicas": 2}, "one replica"),
         ({"pipeline_parallelism": 2}, "pipeline_parallelism"),
-        ({"image": "vllm/vllm-openai:latest"}, "versioned"),
+        ({"image": ""}, "--runtime-image"),
         (
             {
                 "vllm_args": [
@@ -130,6 +130,19 @@ def test_manifests_keep_cuda_local_and_do_not_reserve_gpus(plan):
     assert documents["ServiceMonitor"]["spec"]["endpoints"][0]["port"] == "http"
     assert documents["NetworkPolicy"]["spec"]["policyTypes"] == ["Ingress"]
     compile(server["command"][2], "<lmcache-preflight>", "exec")
+
+
+def test_supplied_image_is_preserved_for_model_and_cache_server(plan):
+    image = "registry.example/team/vllm-lmcache:latest"
+    deployment = lmcache.configure_lmcache(
+        replace(plan.deployment, runtime=replace(plan.deployment.runtime, image=image))
+    )
+    supplied = replace(plan, deployment=deployment)
+    server = next(
+        doc for doc in lmcache.lmcache_documents(supplied) if doc["kind"] == "DaemonSet"
+    )
+    assert deployment.runtime.image == image
+    assert server["spec"]["template"]["spec"]["containers"][0]["image"] == image
 
 
 def test_setup_key_isolates_executions_and_configuration(plan):
@@ -420,14 +433,20 @@ def test_collect_includes_shared_cache_pods_metrics_and_manifests(
 
 
 @pytest.mark.parametrize("platform_name", ["rhoai", "llm-d"])
-def test_smoke_experiment_resolves_without_image_override(platform_name):
+def test_smoke_experiment_requires_and_uses_supplied_image(platform_name, tmp_path):
+    source = ROOT / f"experiments/smoke/qwen3-06b-{platform_name}-lmcache-smoke.yaml"
+    catalog = ProfileCatalog.load(ROOT / "profiles")
+    with pytest.raises(ValidationError, match="--runtime-image"):
+        resolve_experiment_matrix(load_experiment(source), catalog)
+    raw = yaml.safe_load(source.read_text())
+    raw["spec"]["overrides"] = {"images": {"runtime": IMAGE}}
+    configured = tmp_path / "experiment.yaml"
+    configured.write_text(yaml.safe_dump(raw))
     resolved = resolve_experiment_matrix(
-        load_experiment(
-            ROOT / f"experiments/smoke/qwen3-06b-{platform_name}-lmcache-smoke.yaml"
-        ),
-        ProfileCatalog.load(ROOT / "profiles"),
+        load_experiment(configured),
+        catalog,
     )[0]
-    assert resolved.deployment.runtime.image == lmcache.DEFAULT_RUNTIME_IMAGE
+    assert resolved.deployment.runtime.image == IMAGE
     assert resolved.benchmark.guidellm.args["constraint"][0] == {
         "kind": "max_requests",
         "count": 24,

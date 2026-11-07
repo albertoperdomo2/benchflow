@@ -20,9 +20,6 @@ from .lmcache_gpu import ensure_lmcache_gpu_access, release_lmcache_gpu_access
 
 NAME = "benchflow-lmcache"
 LABELS = {"app.kubernetes.io/name": NAME, "benchflow.io/managed-by": "benchflow"}
-LMCACHE_VERSION = "0.5.6"
-VLLM_VERSION = "0.32.0"
-DEFAULT_RUNTIME_IMAGE = "vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34"
 
 
 @dataclass(frozen=True)
@@ -65,14 +62,9 @@ def lmcache_spec(deployment: ResolvedDeployment) -> LMCacheSpec | None:
         raise ValidationError(
             "LMCache cannot be combined with Mooncake or native storage_offloading"
         )
-    image = runtime.image.strip()
-    tag = image.rsplit("/", 1)[-1]
-    if not image or (
-        "@sha256:" not in image
-        and (":" not in tag or any(x in tag.lower() for x in ("latest", "nightly")))
-    ):
+    if not runtime.image.strip():
         raise ValidationError(
-            "LMCache requires an explicit versioned runtime.image (prefer a digest) containing vLLM 0.32.0 and LMCache 0.5.6"
+            "LMCache requires a supplied runtime.image in the deployment profile or --runtime-image"
         )
     for key in ("cpu_gib", "chunk_size"):
         value = raw.get(key, getattr(LMCacheSpec(), key))
@@ -125,13 +117,6 @@ def configure_lmcache(
     deployment: ResolvedDeployment, *, model_name: str = ""
 ) -> ResolvedDeployment:
     """Resolve once into the RunPlan; also validate deserialized RunPlans."""
-    if (
-        deployment.options.get("lmcache") is not None
-        and not deployment.runtime.image.strip()
-    ):
-        deployment = replace(
-            deployment, runtime=replace(deployment.runtime, image=DEFAULT_RUNTIME_IMAGE)
-        )
     if lmcache_spec(deployment) is None:
         return deployment
     if model_name and model_name not in {"Qwen/Qwen3-0.6B", "Qwen/Qwen3-32B"}:
@@ -201,18 +186,19 @@ def lmcache_documents(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     runtime = deployment.runtime
     namespace = deployment.namespace
     metadata = {"name": NAME, "namespace": namespace, "labels": LABELS}
-    # Use the serving image on both sides: torch/CUDA/Python and LMCache ABI
-    # cannot silently drift between independently selected images.
+    # Use the supplied serving image for both roles, avoiding a second image
+    # compatibility configuration for the cache service.
     preflight = (
-        "import importlib.metadata as m,json,os,torch; "
-        f"assert m.version('lmcache') == '{LMCACHE_VERSION}', 'expected LMCache {LMCACHE_VERSION}'; "
-        f"assert m.version('vllm') == '{VLLM_VERSION}', 'expected vLLM {VLLM_VERSION}'; "
-        "import cuda.bindings.driver; "
-        "from lmcache.integration.vllm.lmcache_mp_connector import LMCacheMPConnector; "
-        "assert torch.cuda.is_available(), 'LMCache server cannot access CUDA'; "
-        "print(json.dumps({'lmcache':m.version('lmcache'),'vllm':m.version('vllm'),"
-        "'torch':torch.__version__,'cuda':torch.version.cuda,'gpus':torch.cuda.device_count()}),flush=True); "
-        "os.execvp('lmcache', ['lmcache','server'] + __import__('sys').argv[1:])"
+        "import importlib.metadata as m,json,os,torch\n"
+        "import cuda.bindings.driver\n"
+        "from lmcache.integration.vllm.lmcache_mp_connector import LMCacheMPConnector\n"
+        "assert torch.cuda.is_available(), 'LMCache server cannot access CUDA'\n"
+        "def version(name):\n"
+        "    try: return m.version(name)\n"
+        "    except m.PackageNotFoundError: return 'unknown'\n"
+        "print(json.dumps({'lmcache':version('lmcache'),'vllm':version('vllm'),"
+        "'torch':torch.__version__,'cuda':torch.version.cuda,'gpus':torch.cuda.device_count()}),flush=True)\n"
+        "os.execvp('lmcache', ['lmcache','server'] + __import__('sys').argv[1:])\n"
     )
     pod_spec: dict[str, Any] = {
         "runtimeClassName": "nvidia",
