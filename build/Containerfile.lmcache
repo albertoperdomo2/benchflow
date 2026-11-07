@@ -20,7 +20,7 @@ RUN CUDA_SERIES="$(python3 -c 'import torch; print("-".join(torch.version.cuda.s
 # Use uv so the base image's intentional NCCL override remains effective.
 # The unused new OTLP common exporter conflicts with the inherited 1.40 SDK.
 COPY build/check_serving_environment.py /tmp/check-serving-environment.py
-RUN python3 -c "import importlib.metadata as m; names=('vllm','torch','torchvision','torchaudio','triton','numpy','transformers'); installed={d.metadata['Name'].lower():d.version for d in m.distributions()}; open('/tmp/serving-constraints.txt','w').write(''.join(n+'=='+installed[n]+'\\n' for n in names if n in installed))" \
+RUN python3 -c "import importlib.metadata as m; names=('vllm','torch','torchvision','torchaudio','triton','numpy','transformers'); installed={d.metadata['Name'].lower() for d in m.distributions()}; open('/tmp/serving-constraints.txt','w').write(''.join(n+'=='+m.version(n)+'\\n' for n in names if n in installed))" \
     && uv pip uninstall --system opentelemetry-exporter-otlp-common \
     && uv pip install --system --no-cache -c /tmp/serving-constraints.txt \
         ninja packaging 'setuptools>=77.0.3,<81' 'setuptools_scm>=8' wheel \

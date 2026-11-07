@@ -53,3 +53,27 @@ def test_missing_dependency_still_fails():
 def test_unrelated_override_is_rejected():
     with pytest.raises(ValueError, match="Unexpected"):
         checker.dependency_errors([], ["opentelemetry-sdk==1.40.0"])
+
+
+@pytest.mark.parametrize(
+    "versions,valid", [(("2.10.1", "2.7.0"), True), (("2.7.0", "2.10.1"), False)]
+)
+def test_system_package_duplicates_follow_python_search_order(
+    tmp_path, versions, valid
+):
+    from importlib import metadata
+
+    paths = []
+    for index, version in enumerate(versions):
+        root = tmp_path / str(index)
+        info = root / f"PyJWT-{version}.dist-info"
+        info.mkdir(parents=True)
+        (info / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: PyJWT\nVersion: {version}\n"
+        )
+        paths.append(str(root))
+    packages = [
+        distribution("mcp", "2.3.0", ["pyjwt[crypto]>=2.10.1"]),
+        *metadata.distributions(path=paths),
+    ]
+    assert bool(checker.dependency_errors(packages, [])) is not valid

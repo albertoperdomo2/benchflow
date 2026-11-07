@@ -13,9 +13,11 @@ from packaging.utils import canonicalize_name
 
 
 def dependency_errors(distributions, overrides):
-    installed = {
-        canonicalize_name(dist.metadata["Name"]): dist for dist in distributions
-    }
+    # A system interpreter can expose both /usr/local and Ubuntu dist-packages.
+    # Match importlib.metadata.version(): the first search-path match wins.
+    installed = {}
+    for dist in distributions:
+        installed.setdefault(canonicalize_name(dist.metadata["Name"]), dist)
     rules = {}
     for text in overrides:
         requirement = Requirement(text)
