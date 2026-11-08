@@ -25,6 +25,37 @@ _REPOSITORY = r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
 _TAG = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}"
 
 
+def _amd64_probe_command(config: dict[str, str]) -> list[str]:
+    return [
+        "podman",
+        "run",
+        "--rm",
+        "--platform",
+        "linux/amd64",
+        "--network=none",
+        "--entrypoint",
+        "python3",
+        config["base_image"],
+        "-c",
+        "import platform, torch; "
+        "assert platform.machine() in ('x86_64', 'amd64'), platform.machine(); "
+        "print('amd64 base image ready; PyTorch ' + torch.__version__)",
+    ]
+
+
+def _ensure_amd64_execution(config: dict[str, str]) -> None:
+    detail("Checking amd64 base-image execution through Podman's emulator")
+    try:
+        run_command(_amd64_probe_command(config), capture_output=True)
+    except CommandError as exc:
+        raise CommandError(
+            "Cannot execute the configured linux/amd64 base image. "
+            "The Podman server needs working Rosetta/QEMU emulation or native amd64. "
+            f"Underlying error: {exc}"
+        ) from exc
+    detail("amd64 base-image check passed; compilation will run through emulation")
+
+
 def load_image_build_config(path: Path) -> dict[str, str]:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -93,6 +124,8 @@ def _commands(config: dict[str, str], context: Path) -> list[list[str]]:
             "podman",
             "run",
             "--rm",
+            "--platform",
+            "linux/amd64",
             "--network=none",
             "--entrypoint",
             "python3",
@@ -142,7 +175,9 @@ def build_lmcache_image(
     config = load_image_build_config(config_path)
     if dry_run:
         emit(asset_text(f"{ASSET_DIRECTORY}/Containerfile"))
-        detail("Requires a running linux/amd64 Podman builder and Quay credentials.")
+        detail("Requires a Linux Podman server, amd64 execution, and Quay credentials.")
+        detail("On non-amd64 servers, check base-image execution before building:")
+        emit(shlex.join(_amd64_probe_command(config)))
         for command in _commands(config, Path("<temporary-build-context>")):
             emit(shlex.join(command))
         detail(f"Image record: {config_path.resolve().with_suffix('.image.json')}")
@@ -159,12 +194,11 @@ def build_lmcache_image(
         or server_version.get("Os")
         or str(server_version.get("OsArch", "")).split("/")[0]
     )
-    if server_os != "linux" or host.get("arch") != "amd64":
-        raise ValidationError(
-            "local LMCache builds require a linux/amd64 Podman builder; "
-            "ARM builders are not supported"
-        )
+    if server_os != "linux":
+        raise ValidationError("local LMCache builds require a Linux Podman server")
     _quay_login()
+    if host.get("arch") != "amd64":
+        _ensure_amd64_execution(config)
     with tempfile.TemporaryDirectory(prefix="benchflow-lmcache-image-") as temporary:
         context = Path(temporary)
         for name in ("Containerfile", "install.py", "check.py"):

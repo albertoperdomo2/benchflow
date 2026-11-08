@@ -96,10 +96,13 @@ Ubuntu vLLM base with `uv` and configured NVIDIA CUDA apt repositories. It
 requires vLLM >=0.20.0 to load the external MP connector. Arbitrary base images
 and version combinations are not guaranteed to work.
 
-Use a running amd64 Linux Podman builder with ample disk and memory for the
-base image and CUDA compilation. An ARM Podman machine, including the default
-on Apple Silicon, is rejected before login or build. The utility does not
-create or reconfigure Podman machines. A physical GPU is not required to build.
+Use a running Linux Podman server with ample disk and memory for the base image
+and CUDA compilation. Native amd64 runs directly. On ARM, including Apple
+Silicon, BenchFlow checks that the configured amd64 base image can execute
+Python and import PyTorch through Rosetta/QEMU before starting the build. Both
+compilation and image validation explicitly target `linux/amd64`. Emulated
+compilation can take longer. The utility does not create or reconfigure Podman
+machines. A physical GPU is not required to build.
 The compiled GPU targets cover Ampere, Ada, and Hopper, plus Blackwell when
 the base uses CUDA >=12.8. Older GPU architectures are outside this recipe.
 

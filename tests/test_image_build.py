@@ -120,6 +120,17 @@ class Podman:
             }
             (self.context / "image.id").write_text(IMAGE_ID)
         elif action == "run":
+            assert command[command.index("--platform") + 1] == "linux/amd64"
+            if "-c" in command:
+                if self.failure == "probe":
+                    raise CommandError("exec format error")
+                assert (
+                    command[command.index("python3") + 1]
+                    == "docker.io/" + CONFIG["base_image"]
+                )
+                return subprocess.CompletedProcess(
+                    command, 0, "amd64 base image ready", ""
+                )
             assert command[-2] == IMAGE_ID
             stdout = "library log before provenance\n" + json.dumps(
                 {"lmcache": "0.5.7"}
@@ -175,15 +186,42 @@ def test_failures_stop_publication_and_preserve_previous_record(
     assert podman.context is not None and not podman.context.exists()
 
 
-def test_arm_builder_stops_before_login_or_build(config_path: Path) -> None:
+def test_arm_builder_checks_emulation_and_publishes_amd64(
+    config_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("QUAY_USERNAME", raising=False)
+    monkeypatch.delenv("QUAY_PASSWORD", raising=False)
     podman = Podman(arch="arm64")
     with (
         patch("benchflow.toolbox.image.require_command"),
         patch("benchflow.toolbox.image.run_command", side_effect=podman),
-        pytest.raises(ValidationError, match="ARM"),
+    ):
+        result = build_lmcache_image(config_path)
+    assert [command[1] for command, _ in podman.calls] == [
+        "info",
+        "login",
+        "run",
+        "build",
+        "run",
+        "push",
+    ]
+    assert result["platform"] == "linux/amd64"
+
+
+def test_failed_emulation_probe_stops_before_build_or_push(
+    config_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("QUAY_USERNAME", raising=False)
+    monkeypatch.delenv("QUAY_PASSWORD", raising=False)
+    podman = Podman(arch="arm64", failure="probe")
+    with (
+        patch("benchflow.toolbox.image.require_command"),
+        patch("benchflow.toolbox.image.run_command", side_effect=podman),
+        pytest.raises(CommandError, match="Rosetta/QEMU.*exec format error"),
     ):
         build_lmcache_image(config_path)
-    assert len(podman.calls) == 1
+    assert [command[1] for command, _ in podman.calls] == ["info", "login", "run"]
+    assert not config_path.with_suffix(".image.json").exists()
 
 
 def test_robot_password_uses_stdin_and_is_not_written(

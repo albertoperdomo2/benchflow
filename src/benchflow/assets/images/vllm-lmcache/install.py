@@ -85,7 +85,8 @@ def install(version: str) -> None:
         "BUILD_WITH_CUDA": "1",
         "LMCACHE_CUDA_MAJOR": str(cuda_series[0]),
         "CUDA_HOME": f"/usr/local/cuda-{'.'.join(str(value) for value in cuda_series)}",
-        "MAX_JOBS": "2",
+        # Keep compilation within small Podman VM memory budgets.
+        "MAX_JOBS": "1",
         "NVCC_THREADS": "1",
         "ENABLE_CXX11_ABI": str(int(torch._C._GLIBCXX_USE_CXX11_ABI)),
         # A GPU is not needed for compilation. Include Ampere, Ada, Hopper,
