@@ -1,8 +1,12 @@
 from contextlib import nullcontext
 from dataclasses import replace
+from datetime import datetime, timezone
+from io import StringIO
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import yaml
@@ -516,6 +520,114 @@ def test_smoke_experiment_requires_and_uses_supplied_image(tmp_path):
     assert resolved.stages.cleanup
     assert resolved.profiles.metrics == "lmcache-smoke"
     assert "lmcache_chunks_loaded_total" in resolved.metrics.queries
+
+
+@pytest.mark.parametrize(
+    "cache_enabled,query_step,collection_delay",
+    [(True, 15, 1), (True, 15, 120), (True, 60, 1), (False, 15, 1)],
+)
+def test_metrics_capture_final_cache_scrape_without_extending_benchmark(
+    plan, monkeypatch, tmp_path, cache_enabled, query_step, collection_delay
+):
+    from benchflow.metrics import prometheus
+
+    start = "2026-11-08T20:02:59Z"
+    end = "2026-11-08T20:03:30Z"
+    start_ts = datetime.fromisoformat(start).timestamp()
+    end_ts = datetime.fromisoformat(end).timestamp()
+    # Reproduce the real smoke: the first scrape arrived three seconds late.
+    first_scrape_ts = end_ts + 3
+    cache_query = 'lmcache_mp_num_chunks_loaded_total{namespace="$namespace"}'
+    queries = {"model_cpu": "container_cpu_usage_seconds_total"}
+    if cache_enabled:
+        queries["cache_loads"] = cache_query
+    plan = replace(
+        plan,
+        deployment=replace(
+            plan.deployment,
+            options=plan.deployment.options if cache_enabled else {},
+        ),
+        metrics=replace(
+            plan.metrics,
+            queries=queries,
+            query_step=f"{query_step}s",
+            verify_tls=False,
+        ),
+    )
+    token = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
+    original_exists, original_read_text = Path.exists, Path.read_text
+    monkeypatch.setattr(
+        Path, "exists", lambda p: True if p == token else original_exists(p)
+    )
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda p, **kw: "test-token" if p == token else original_read_text(p, **kw),
+    )
+    monkeypatch.setattr(prometheus, "require_any_command", lambda *_: "oc")
+    now = [end_ts + collection_delay]
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(prometheus.time, "time", lambda: now[0])
+    monkeypatch.setattr(prometheus.time, "sleep", sleep)
+    requested = {}
+
+    def urlopen(request, **_):
+        params = parse_qs(urlsplit(request.full_url).query)
+        query = params["query"][0]
+        query_end = int(params["end"][0])
+        assert now[0] >= query_end  # Never query a still-future scrape window.
+        requested[query] = params
+        result = []
+        if "lmcache_mp_" in query:
+            evaluation = start_ts + math.ceil(
+                (first_scrape_ts - start_ts) / query_step
+            ) * query_step
+            if query_end >= evaluation:
+                result = [{"metric": {}, "values": [[evaluation, "24"]]}]
+        return StringIO(json.dumps({"status": "success", "data": {"result": result}}))
+
+    monkeypatch.setattr(prometheus.urllib.request, "urlopen", urlopen)
+    prometheus.collect_metrics(
+        plan,
+        benchmark_start_time=start,
+        benchmark_end_time=end,
+        artifacts_dir=tmp_path,
+    )
+    assert int(requested[queries["model_cpu"]]["end"][0]) == end_ts
+    expected_end = end_ts
+    if cache_enabled:
+        expected_end = start_ts + math.ceil(
+            (end_ts + 30 - start_ts) / query_step
+        ) * query_step
+        cache_request = requested[cache_query.replace("$namespace", "benchflow")]
+        assert int(cache_request["end"][0]) == expected_end
+        assert int(cache_request["step"][0][:-1]) == query_step
+    assert sleeps == (
+        [expected_end - (end_ts + collection_delay)]
+        if expected_end > end_ts + collection_delay
+        else []
+    )
+    for name in ("metrics_summary.json", "archive_index.json"):
+        saved = json.loads((tmp_path / "metrics" / name).read_text())
+        assert saved["benchmark_start_time"] == start
+        assert saved["benchmark_end_time"] == end
+        assert saved["collection_end_time"] == datetime.fromtimestamp(
+            expected_end, timezone.utc
+        ).isoformat().replace("+00:00", "Z")
+        if cache_enabled:
+            entry = saved.get("queries", saved.get("metrics"))["cache_loads"]
+            assert entry["query_end_time"] == saved["collection_end_time"]
+            assert entry["series_count"] == 1
+    if cache_enabled:
+        payload = json.loads(
+            (tmp_path / "metrics/prometheus/cache_loads.json").read_text()
+        )
+        assert payload["data"]["result"][0]["values"][0][1] == "24"
 
 
 @pytest.mark.parametrize(

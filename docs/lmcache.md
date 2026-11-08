@@ -169,6 +169,13 @@ preserves `lmcache-readback.json` with both snapshots and deltas. Completed
 transfer counters alone cannot pass. This is a functional smoke, not evidence
 of a performance improvement.
 
+For LMCache MP metrics, collection includes two scrape intervals after the
+benchmark ends (30 seconds with the smoke profile), rounded up to the next
+query step. BenchFlow waits for that window before querying, so counters created
+during a short workload reach Prometheus before cleanup. The metrics summary
+and archive index record `collection_end_time` and each metric's `query_end_time`.
+Benchmark timestamps and other metrics retain the original benchmark window.
+
 ## Cleanup and artifacts
 
 Tekton's final cleanup runs after normal collection or failure finalization,

@@ -20,6 +20,7 @@ from .lmcache_gpu import ensure_lmcache_gpu_access, release_lmcache_gpu_access
 
 NAME = "benchflow-lmcache"
 LABELS = {"app.kubernetes.io/name": NAME, "benchflow.io/managed-by": "benchflow"}
+METRICS_SCRAPE_INTERVAL_SECONDS = 15
 
 
 @dataclass(frozen=True)
@@ -330,7 +331,13 @@ def lmcache_documents(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
             "metadata": metadata,
             "spec": {
                 "selector": {"matchLabels": LABELS},
-                "endpoints": [{"port": "http", "path": "/metrics", "interval": "15s"}],
+                "endpoints": [
+                    {
+                        "port": "http",
+                        "path": "/metrics",
+                        "interval": f"{METRICS_SCRAPE_INTERVAL_SECONDS}s",
+                    }
+                ],
             },
         },
     ]
