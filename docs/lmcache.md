@@ -12,7 +12,8 @@ DaemonSet or the smoke workload as evidence that offloading improved performance
 
 ## Initial scope and prerequisites
 
-- RHOAI `distributed-default` and llm-d `inference-scheduling`.
+- The smoke targets RHOAI `3.6.0-ea.2` (`beta` channel), `distributed-default`.
+  The implementation also handles llm-d `inference-scheduling`.
 - The smoke uses Qwen/Qwen3-0.6B for functional validation.
 - One model replica, single-node tensor parallelism, pipeline parallelism 1.
 - CPU tier only. Disk, CephFS, hybrid attention, P/D, and cache-aware routing

@@ -504,6 +504,8 @@ def test_smoke_experiment_requires_and_uses_supplied_image(tmp_path):
         catalog,
     )[0]
     assert resolved.deployment.runtime.image == IMAGE
+    assert resolved.deployment.platform_version == "RHOAI-3.6.0-ea.2"
+    assert resolved.deployment.platform_channel == "beta"
     assert resolved.benchmark.guidellm.args["constraint"][0] == {
         "kind": "max_requests",
         "count": 24,
