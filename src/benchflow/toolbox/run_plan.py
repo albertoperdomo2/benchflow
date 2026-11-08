@@ -6,7 +6,7 @@ from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
 from ..setup import load_setup_state
 from ..tasking import write_stage_results
 from ..ui import detail, emit, step, success
-from .platform import cleanup_deployment, teardown_platform
+from .platform import cleanup_deployment, cleanup_lmcache, teardown_platform
 
 
 def resolve_run_plan_stages(
@@ -72,6 +72,8 @@ def cleanup_run_plan(
 
     if teardown:
         teardown_platform(plan, setup_state, context=context)
+    else:
+        cleanup_lmcache(plan, context=context)
 
     if cleanup_error is not None:
         raise cleanup_error

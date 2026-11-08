@@ -7,5 +7,5 @@ spec:
     name: Qwen/Qwen3-0.6B
   deployment_profile: rhoai-lmcache-smoke
   benchmark_profile: guidellm-lmcache-smoke
-  metrics_profile: kv-cache-comparison
+  metrics_profile: lmcache-smoke
   namespace: benchflow

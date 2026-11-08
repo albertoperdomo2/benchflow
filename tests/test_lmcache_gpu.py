@@ -124,3 +124,29 @@ def test_old_toolkit_is_rejected_before_mutating_policy(monkeypatch, policy):
     )
     with pytest.raises(CommandError, match=">=1.20.0"):
         gpu.ensure_lmcache_gpu_access("oc", "benchflow")
+
+
+def test_failed_grant_removal_keeps_ownership_until_reconciliation(monkeypatch, policy):
+    policy["metadata"]["annotations"][gpu._OWNERS] = '["benchflow"]'
+    policy["spec"]["toolkit"]["env"][-1]["value"] = "benchflow,existing"
+    monkeypatch.setattr(gpu, "_policy", lambda *_: policy)
+
+    def command(args, **_):
+        patch = json.loads(args[-1])
+        policy["metadata"]["annotations"] = patch[1]["value"]
+        policy["spec"]["toolkit"] = patch[-1]["value"]
+
+    monkeypatch.setattr(gpu, "run_command", command)
+
+    def fail(*_a, **_kw):
+        raise CommandError("toolkit reconciliation failed")
+
+    monkeypatch.setattr(gpu, "_wait_toolkit_namespace", fail)
+    with pytest.raises(CommandError, match="reconciliation"):
+        gpu.release_lmcache_gpu_access("oc", "benchflow")
+    assert "benchflow" in json.loads(policy["metadata"]["annotations"][gpu._OWNERS])
+    assert policy["spec"]["toolkit"]["env"][-1]["value"] == "existing"
+    monkeypatch.setattr(gpu, "_wait_toolkit_namespace", lambda *_a, **_kw: None)
+    gpu.release_lmcache_gpu_access("oc", "benchflow")
+    assert json.loads(policy["metadata"]["annotations"][gpu._OWNERS]) == []
+    assert policy["spec"]["toolkit"]["env"][-1]["value"] == "existing"

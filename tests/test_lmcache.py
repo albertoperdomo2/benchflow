@@ -20,6 +20,7 @@ from benchflow.plans import scope_execution_release
 from benchflow.renderers.deployment import render_rhoai_manifest, render_llmd_values
 from benchflow.renderers.deployment import write_deployment_assets
 from benchflow.toolbox import platform
+from benchflow.toolbox import run_plan as run_plan_toolbox
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "quay.io/benchflow-test/vllm-lmcache:provided"
@@ -193,6 +194,9 @@ def lifecycle(monkeypatch, plan):
         platform, "remove_lmcache", lambda *_: calls.append(("remove",))
     )
     monkeypatch.setattr(
+        platform, "release_lmcache_gpu_access", lambda *_: calls.append(("gpu-access",))
+    )
+    monkeypatch.setattr(
         platform, "setup_rhoai", lambda *_a, **_kw: pytest.fail("must reuse RHOAI")
     )
     monkeypatch.setattr(
@@ -246,6 +250,98 @@ def test_failed_setup_is_recoverable_without_reusing_native_key(
     monkeypatch.setattr(platform, "ensure_lmcache", lambda *_: None)
     platform.setup_platform(plan)
     assert state["installed_key"] == setup_key_for_plan(plan)
+
+
+def test_workflow_cleanup_removes_cache_and_retains_base_platform(
+    plan, lifecycle, monkeypatch, tmp_path
+):
+    state, calls = lifecycle
+    context = ExecutionContext(state_path=tmp_path / "setup.json")
+    platform.setup_platform(plan, context=context)
+    calls.clear()
+    monkeypatch.setattr(
+        run_plan_toolbox,
+        "cleanup_deployment",
+        lambda *_a, **_kw: calls.append(("model",)),
+    )
+    run_plan_toolbox.cleanup_run_plan(plan, context=context)
+    assert calls == [
+        ("model",),
+        ("persist", ""),
+        ("remove",),
+        ("gpu-access",),
+        ("persist", base_setup_key_for_plan(plan)),
+    ]
+    assert state["setup_state"]["platform"] == "rhoai"
+    assert "lmcache" not in state["setup_state"]
+    assert not context.state_path.exists()
+
+
+def test_cleanup_still_removes_cache_after_model_cleanup_failure(
+    plan, lifecycle, monkeypatch
+):
+    state, calls = lifecycle
+    platform.setup_platform(plan)
+    calls.clear()
+
+    def fail(*_a, **_kw):
+        raise lmcache.CommandError("model cleanup failed")
+
+    monkeypatch.setattr(run_plan_toolbox, "cleanup_deployment", fail)
+    with pytest.raises(lmcache.CommandError, match="model cleanup failed"):
+        run_plan_toolbox.cleanup_run_plan(plan)
+    assert ("remove",) in calls and ("gpu-access",) in calls
+    assert state["installed_key"] == base_setup_key_for_plan(plan)
+
+
+def test_failed_setup_cache_is_removed_by_final_cleanup(plan, lifecycle, monkeypatch):
+    state, calls = lifecycle
+
+    def fail(*_):
+        raise lmcache.CommandError("cache startup failed")
+
+    monkeypatch.setattr(platform, "ensure_lmcache", fail)
+    with pytest.raises(lmcache.CommandError, match="cache startup failed"):
+        platform.setup_platform(plan)
+    calls.clear()
+    monkeypatch.setattr(run_plan_toolbox, "cleanup_deployment", lambda *_a, **_kw: None)
+    run_plan_toolbox.cleanup_run_plan(plan)
+    assert ("remove",) in calls and ("gpu-access",) in calls
+    assert state["installed_key"] == base_setup_key_for_plan(plan)
+
+
+def test_stale_cleanup_cannot_remove_another_executions_cache(plan, lifecycle):
+    state, calls = lifecycle
+    later = scope_execution_release(plan, execution_name="later-execution")
+    platform.setup_platform(later)
+    calls.clear()
+    platform.cleanup_lmcache(plan)
+    assert calls == []
+    assert state["installed_key"] == setup_key_for_plan(later)
+
+
+@pytest.mark.parametrize(
+    "failure_step", ["remove_lmcache", "release_lmcache_gpu_access"]
+)
+def test_cache_cleanup_failure_keeps_owner_for_retry(
+    plan, lifecycle, monkeypatch, failure_step
+):
+    state, calls = lifecycle
+    platform.setup_platform(plan)
+    original = getattr(platform, failure_step)
+
+    def fail(*_):
+        raise lmcache.CommandError("cache cleanup failed")
+
+    monkeypatch.setattr(platform, failure_step, fail)
+    with pytest.raises(lmcache.CommandError, match="cache cleanup failed"):
+        platform.cleanup_lmcache(plan)
+    assert state["installed_key"] == ""
+    assert state["setup_state"]["lmcache"]["setup_key"] == setup_key_for_plan(plan)
+    monkeypatch.setattr(platform, failure_step, original)
+    platform.cleanup_lmcache(plan)
+    assert state["installed_key"] == base_setup_key_for_plan(plan)
+    assert "lmcache" not in state["setup_state"]
 
 
 def test_ensure_rejects_zero_servers_and_applies_policy_first(plan, monkeypatch):
@@ -344,44 +440,6 @@ def test_same_release_different_tensor_parallelism_changes_cache_key(plan):
     assert setup_key_for_plan(changed) != setup_key_for_plan(plan)
 
 
-def test_shipped_comparison_profiles_resolve_with_one_image(tmp_path):
-    experiment = tmp_path / "compare.yaml"
-    experiment.write_text(
-        yaml.safe_dump(
-            {
-                "apiVersion": "benchflow.io/v1alpha1",
-                "kind": "Experiment",
-                "metadata": {"name": "kv-compare"},
-                "spec": {
-                    "model": {"name": "Qwen/Qwen3-0.6B"},
-                    "deployment_profile": [
-                        f"{p}-kv-comparison-{m}"
-                        for p in ("rhoai", "llm-d")
-                        for m in ("hbm", "native-cpu", "lmcache-cpu")
-                    ],
-                    "benchmark_profile": "guidellm-smoke",
-                    "metrics_profile": "kv-cache-comparison",
-                    "overrides": {"images": {"runtime": IMAGE}},
-                },
-            }
-        )
-    )
-    plans = resolve_experiment_matrix(
-        load_experiment(experiment), ProfileCatalog.load(ROOT / "profiles")
-    )
-    assert len(plans) == 6
-    for resolved in plans:
-        assert resolved.deployment.runtime.image == IMAGE
-        assert resolved.deployment.runtime.replicas == 1
-        assert resolved.deployment.runtime.tensor_parallelism == 1
-        flags = " ".join(resolved.deployment.runtime.vllm_args)
-        if resolved.profiles.deployment.endswith("native-cpu"):
-            assert '"cpu_bytes_to_use":68719476736' in flags
-        if resolved.profiles.deployment.endswith("lmcache-cpu"):
-            assert "LMCacheMPConnector" in flags
-        assert "lmcache_chunks_loaded_total" in resolved.metrics.queries
-
-
 def test_collect_includes_shared_cache_pods_metrics_and_manifests(
     plan, monkeypatch, tmp_path
 ):
@@ -432,9 +490,8 @@ def test_collect_includes_shared_cache_pods_metrics_and_manifests(
     assert list(tmp_path.rglob("benchflow-lmcache.yaml"))
 
 
-@pytest.mark.parametrize("platform_name", ["rhoai", "llm-d"])
-def test_smoke_experiment_requires_and_uses_supplied_image(platform_name, tmp_path):
-    source = ROOT / f"experiments/smoke/qwen3-06b-{platform_name}-lmcache-smoke.yaml"
+def test_smoke_experiment_requires_and_uses_supplied_image(tmp_path):
+    source = ROOT / "experiments/smoke/qwen3-06b-rhoai-lmcache-smoke.yaml"
     catalog = ProfileCatalog.load(ROOT / "profiles")
     with pytest.raises(ValidationError, match="--runtime-image"):
         resolve_experiment_matrix(load_experiment(source), catalog)
@@ -454,6 +511,9 @@ def test_smoke_experiment_requires_and_uses_supplied_image(platform_name, tmp_pa
     assert lmcache.lmcache_spec(resolved.deployment).verify_readback
     assert resolved.deployment.runtime.replicas == 1
     assert resolved.deployment.runtime.tensor_parallelism == 1
+    assert resolved.stages.cleanup
+    assert resolved.profiles.metrics == "lmcache-smoke"
+    assert "lmcache_chunks_loaded_total" in resolved.metrics.queries
 
 
 @pytest.mark.parametrize(

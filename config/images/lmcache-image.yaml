@@ -1,0 +1,6 @@
+# Set destination to a Quay repository you can push to.
+# Version pins are a starting point; qualify the image with the LMCache smoke.
+# Quay credentials belong in Podman auth or QUAY_USERNAME / QUAY_PASSWORD.
+base_image: vllm/vllm-openai:v0.32.0
+lmcache_version: "0.5.7"
+destination: quay.io/your-org/vllm-lmcache:vllm-0.32.0-lmcache-0.5.7

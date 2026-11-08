@@ -317,6 +317,49 @@ def setup_platform(
         return {}
 
 
+def cleanup_lmcache(
+    plan: ResolvedRunPlan,
+    *,
+    context: ExecutionContext | None = None,
+) -> None:
+    """Remove this execution's cache tier while preserving the base platform."""
+    if lmcache_spec(plan.deployment) is None:
+        return
+    with use_kubeconfig(plan.target_cluster.kubeconfig):
+        kubectl_cmd = require_any_command("oc", "kubectl")
+        holder = (context.execution_name if context is not None else "") or (
+            f"{plan.metadata.name}-{plan.deployment.release_name}"
+        )
+        with platform_prepare_lock(
+            kubectl_cmd, plan.deployment.namespace, holder_identity=holder
+        ):
+            cluster_state = load_cluster_platform_state(
+                kubectl_cmd, plan.deployment.namespace
+            )
+            state = dict(cluster_state.get("setup_state") or {})
+            owner = state.get("lmcache") or {}
+            if owner.get("setup_key") != setup_key_for_plan(plan):
+                detail(
+                    "No LMCache service owned by this execution; skipping cache cleanup"
+                )
+                return
+            # Failed deletion or GPU reconciliation must leave recoverable state,
+            # rather than advertise a ready platform with lingering cache pods.
+            persist_cluster_platform_state(
+                kubectl_cmd,
+                plan.deployment.namespace,
+                {"installed_key": "", "setup_state": state},
+            )
+            remove_lmcache(kubectl_cmd, plan.deployment.namespace)
+            release_lmcache_gpu_access(kubectl_cmd, plan.deployment.namespace)
+            state.pop("lmcache")
+            persist_cluster_platform_state(
+                kubectl_cmd,
+                plan.deployment.namespace,
+                {"installed_key": base_setup_key_for_plan(plan), "setup_state": state},
+            )
+
+
 def teardown_platform(
     plan: ResolvedRunPlan,
     state: dict[str, Any],

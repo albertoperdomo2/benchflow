@@ -46,7 +46,12 @@ def _toolkits(kubectl: str) -> list[dict[str, Any]]:
 
 
 def _namespace_patch(
-    kubectl: str, policy: dict[str, Any], namespace: str, *, add: bool
+    kubectl: str,
+    policy: dict[str, Any],
+    namespace: str,
+    *,
+    add: bool,
+    retain_owner: bool = False,
 ) -> bool:
     metadata = policy["metadata"]
     annotations = dict(metadata.get("annotations") or {})
@@ -69,7 +74,8 @@ def _namespace_patch(
     else:
         if namespace not in owners:
             return False
-        owners.remove(namespace)
+        if not retain_owner:
+            owners.remove(namespace)
         namespaces.discard(namespace)
     env = [item for item in env if item.get("name") != _ENV]
     if namespaces:
@@ -176,5 +182,12 @@ def ensure_lmcache_gpu_access(kubectl: str, namespace: str) -> str:
 
 def release_lmcache_gpu_access(kubectl: str, namespace: str) -> None:
     policy = _policy(kubectl)
-    if policy and _namespace_patch(kubectl, policy, namespace, add=False):
+    if policy and _namespace_patch(
+        kubectl, policy, namespace, add=False, retain_owner=True
+    ):
+        # Retain ownership until reconciliation succeeds so a failed wait can
+        # be retried instead of silently leaving toolkit access enabled.
         _wait_toolkit_namespace(kubectl, namespace, present=False)
+        policy = _policy(kubectl)
+        if policy:
+            _namespace_patch(kubectl, policy, namespace, add=False)
