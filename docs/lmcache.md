@@ -45,9 +45,9 @@ unauthenticated MP transport; use a cluster network that enforces NetworkPolicy.
 ## Images and processes
 
 Supply a compatible vLLM+LMCache image through the deployment profile's
-`runtime.image` or the existing `--runtime-image` option. Image preparation and
-publication are external to BenchFlow. There is no default serving image and
-no LMCache image build or validation workflow in CI.
+`runtime.image` or the existing `--runtime-image` option. Use an existing image
+or prepare one with the explicit local utility below. There is no default
+serving image and no LMCache image build or validation workflow in CI.
 
 | Role | Image | Process |
 | --- | --- | --- |
@@ -70,9 +70,78 @@ the CLI and HTTP API. Versions are logged for provenance, without enforcing a
 specific vLLM or LMCache version pair.
 
 BenchFlow owns the platform service manifests, connector configuration,
-readiness, benchmarking, artifacts, and teardown. It does not install, upgrade,
-compile, or republish the supplied image's software. Import and readiness checks
-are prerequisites, not GPU readback or performance qualification.
+readiness, benchmarking, artifacts, and teardown. Platform setup applies the
+DaemonSet, Service, NetworkPolicy, and ServiceMonitor directly; it installs
+neither Helm charts nor LMCache-specific CRDs. It uses the cluster's existing
+GPU Operator and monitoring APIs. Image builds never happen during setup or a
+benchmark. Import and readiness checks are prerequisites, not GPU readback or
+performance qualification.
+
+## Prepare an image locally
+
+`bflow image build` builds, checks, and publishes one vLLM+LMCache image using
+Podman. The recipe and Python helpers live in
+`src/benchflow/assets/images/vllm-lmcache/` and ship with the CLI wheel.
+
+Create `lmcache-image.yaml` with the three required values. These version pins
+are an example to qualify, not a claim of validated GPU compatibility. Replace
+the Quay organization with your own repository:
+
+```yaml
+base_image: vllm/vllm-openai:v0.32.0
+lmcache_version: "0.5.7"
+destination: quay.io/your-org/vllm-lmcache:vllm-0.32.0-lmcache-0.5.7
+```
+
+An explicit base digest is preferable for reproducibility; version tags are
+also accepted. Floating `latest` tags are rejected. The LMCache version selects
+the upstream `v<version>` Git release tag; its resolved commit is recorded.
+The builder currently targets Linux amd64 with NVIDIA CUDA 12.1–13.x, using an
+Ubuntu vLLM base with `uv` and configured NVIDIA CUDA apt repositories. It
+requires vLLM >=0.20.0 to load the external MP connector. Arbitrary base images
+and version combinations are not guaranteed to work.
+
+Use a running amd64 Linux Podman builder with ample disk and memory for the
+base image and CUDA compilation. An ARM Podman machine, including the default
+on Apple Silicon, is rejected before login or build. The utility does not
+create or reconfigure Podman machines. A physical GPU is not required to build.
+The compiled GPU targets cover Ampere, Ada, and Hopper, plus Blackwell when
+the base uses CUDA >=12.8. Older GPU architectures are outside this recipe.
+
+Quay authentication uses existing Podman credentials, or `QUAY_USERNAME` and
+`QUAY_PASSWORD` environment variables (including robot accounts). With the
+variables set, BenchFlow logs in automatically using password stdin. Do not
+put credentials in the configuration file. Stored credentials are checked
+before building; destination push permissions are verified by the push itself.
+Private base images must also be accessible through Podman's registry auth.
+
+```bash
+bflow image build lmcache-image.yaml --dry-run
+bflow image build lmcache-image.yaml
+```
+
+The dry run validates configuration and prints the recipe and commands without
+calling Podman, authenticating, building, or pushing. The real operation:
+
+1. Installs the matching CUDA compiler and headers in the derived image.
+2. Checks out the selected LMCache release, installs its build requirements,
+   and compiles it against the existing PyTorch with build isolation disabled.
+3. Preserves vLLM, PyTorch, torchvision/torchaudio, Triton, and installed NVIDIA
+   Python package versions, including base-image `UV_OVERRIDE` constraints.
+   Other dependencies can change to satisfy LMCache. New dependency conflicts
+   fail the build; inherited conflicts are recorded for provenance.
+4. Checks native imports, CUDA Python bindings, the external connector, and
+   required server flags without GPU access. A failed build or check prevents push.
+5. Pushes the exact built image ID to Quay, then writes `lmcache-image.image.json`
+   alongside the configuration with the published digest, versions, CUDA build
+   targets, and resolved LMCache commit. Existing records are replaced after a
+   successful push. A failed push is reported as an error.
+
+Use the record's `image` value (`quay.io/...@sha256:...`) as `runtime.image` or
+`--runtime-image`. Both serving and cache pods then use that same image. Registry
+credentials for a private image must be available through the deployment
+profile's image pull secrets. Build-time checks cannot prove GPU KV readback;
+run the cluster smoke experiment below before using the image for comparisons.
 
 ## Automated smoke tests
 

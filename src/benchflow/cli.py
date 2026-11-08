@@ -6,6 +6,7 @@ import click
 
 from .cluster import CommandError
 from .commands.experiment import experiment_group
+from .commands.image import image_group
 from .commands.profiles import profiles_group
 from .commands.run_plan import run_plan_group
 from .commands.skill import skill_group
@@ -80,6 +81,7 @@ cli.add_command(task_group)
 cli.add_command(watch_command)
 cli.add_command(profiles_group)
 cli.add_command(skill_group)
+cli.add_command(image_group)
 
 
 def main(argv: list[str] | None = None) -> int:
