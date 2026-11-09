@@ -4,15 +4,17 @@ import json
 import math
 import re
 import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..cluster import CommandError, require_any_command
 from ..llmd_epp import resolve_llmd_epp_identity
 from ..llmd_layout import uses_recipe_layout as _llmd_uses_recipe_layout
+from ..lmcache import METRICS_SCRAPE_INTERVAL_SECONDS, lmcache_spec
 from ..models import ResolvedRunPlan
 from ..ui import detail, step, success, warning
 
@@ -353,12 +355,42 @@ def collect_metrics(
         ssl_context = ssl._create_unverified_context()
 
     request_timeout = _parse_duration_seconds(plan.metrics.query_timeout) + 15
+    query_end_times = {name: end_time for name in queries}
+    if lmcache_spec(plan.deployment) is not None:
+        # Transfer counters are created on first use. A short workload can finish
+        # before their first scrape, so retain two scrape intervals afterwards.
+        # Align the end to the query grid so its final evaluation is included.
+        query_step_seconds = _parse_duration_seconds(plan.metrics.query_step)
+        cache_end_time = end_time + timedelta(
+            seconds=2 * METRICS_SCRAPE_INTERVAL_SECONDS
+        )
+        cache_end_time = start_time + timedelta(
+            seconds=math.ceil(
+                (cache_end_time - start_time).total_seconds() / query_step_seconds
+            )
+            * query_step_seconds
+        )
+        for name, query in queries.items():
+            if "lmcache_mp_" in query:
+                query_end_times[name] = cache_end_time
+    collection_end_time = max(query_end_times.values())
+    if collection_end_time > end_time:
+        detail(
+            "LMCache metrics include final scrapes through "
+            f"{collection_end_time.isoformat().replace('+00:00', 'Z')}"
+        )
+        wait_seconds = collection_end_time.timestamp() - time.time()
+        if wait_seconds > 0:
+            detail(f"Waiting {wait_seconds:.1f}s for final LMCache scrapes")
+            time.sleep(wait_seconds)
+
     query_metadata: dict[str, str] = {}
     archive_index: dict[str, object] = {
         "namespace": plan.deployment.namespace,
         "release_name": metrics_release_name,
         "benchmark_start_time": start_time.isoformat().replace("+00:00", "Z"),
         "benchmark_end_time": end_time.isoformat().replace("+00:00", "Z"),
+        "collection_end_time": collection_end_time.isoformat().replace("+00:00", "Z"),
         "metrics": {},
     }
     summary: dict[str, object] = {
@@ -368,6 +400,7 @@ def collect_metrics(
         "verify_tls": plan.metrics.verify_tls,
         "benchmark_start_time": start_time.isoformat().replace("+00:00", "Z"),
         "benchmark_end_time": end_time.isoformat().replace("+00:00", "Z"),
+        "collection_end_time": collection_end_time.isoformat().replace("+00:00", "Z"),
         "query_step": plan.metrics.query_step,
         "query_timeout": plan.metrics.query_timeout,
         "query_context": {
@@ -388,7 +421,7 @@ def collect_metrics(
             {
                 "query": resolved_query,
                 "start": int(start_time.timestamp()),
-                "end": int(end_time.timestamp()),
+                "end": int(query_end_times[metric_name].timestamp()),
                 "step": plan.metrics.query_step,
                 "timeout": plan.metrics.query_timeout,
             }
@@ -436,9 +469,13 @@ def collect_metrics(
         result = payload.get("data", {}).get("result", [])
         metric_summary = _summarize_series(result)
         metric_summary["query"] = resolved_query
+        metric_summary["query_end_time"] = (
+            query_end_times[metric_name].isoformat().replace("+00:00", "Z")
+        )
         summary["queries"][metric_name] = metric_summary
         archive_index["metrics"][metric_name] = {
             "query": resolved_query,
+            "query_end_time": metric_summary["query_end_time"],
             "series_count": metric_summary["series_count"],
             "sample_count": metric_summary["sample_count"],
             "path": f"metrics/raw/{metric_name}.json",

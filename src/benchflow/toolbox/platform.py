@@ -9,7 +9,10 @@ from ..cluster import require_any_command, resolve_target_base_url, use_kubeconf
 from ..contracts import ExecutionContext, ResolvedRunPlan, ValidationError
 from ..deploy import deploy_llmd, deploy_rhaiis, deploy_rhoai
 from ..node_exclusive import release_nodes
+from ..lmcache import ensure_lmcache, lmcache_spec, remove_lmcache, require_lmcache
+from ..lmcache_gpu import release_lmcache_gpu_access
 from ..platform_state import (
+    base_setup_key_for_plan,
     clear_cluster_platform_state,
     load_cluster_platform_state,
     persist_cluster_platform_state,
@@ -37,6 +40,40 @@ def _write_state_path(state_path: Path | None, state: dict[str, Any]) -> None:
         return
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _prepare_shared_services(
+    plan: ResolvedRunPlan,
+    kubectl_cmd: str,
+    state: dict[str, Any],
+    *,
+    requested_key: str,
+    state_path: Path | None,
+    replace_cache: bool,
+) -> dict[str, Any]:
+    state = {**state, "base_setup_key": base_setup_key_for_plan(plan)}
+    if lmcache_spec(plan.deployment) is not None:
+        state["lmcache"] = {"name": "benchflow-lmcache", "setup_key": requested_key}
+    else:
+        state.pop("lmcache", None)
+    # Persist a recoverable, unready transition before changing services. A
+    # failed apply must never leave the previous native setup key reusable.
+    persist_cluster_platform_state(
+        kubectl_cmd,
+        plan.deployment.namespace,
+        {"installed_key": "", "setup_state": state},
+    )
+    _write_state_path(state_path, state)
+    if replace_cache and lmcache_spec(plan.deployment) is not None:
+        remove_lmcache(kubectl_cmd, plan.deployment.namespace)
+    ensure_tracing_plane(plan, kubectl_cmd)
+    ensure_lmcache(plan, kubectl_cmd)
+    persist_cluster_platform_state(
+        kubectl_cmd,
+        plan.deployment.namespace,
+        {"installed_key": requested_key, "setup_state": state},
+    )
+    return state
 
 
 def _legacy_cluster_platform_state(
@@ -85,6 +122,11 @@ def _reset_platform_for_state(
     platform = str(setup_state.get("platform") or "").strip()
     if platform in {"", "unknown"}:
         return
+    if platform in {"mixed", "llm-d", "rhoai"}:
+        remove_lmcache(require_any_command("oc", "kubectl"), plan.deployment.namespace)
+        release_lmcache_gpu_access(
+            require_any_command("oc", "kubectl"), plan.deployment.namespace
+        )
     if platform in {"mixed", "llm-d"}:
         reset_llmd_platform(
             repo_url=str(
@@ -215,8 +257,28 @@ def setup_platform(
                         f"Platform prerequisites already match setup key {requested_key}"
                     )
                     ensure_tracing_plane(plan, kubectl_cmd)
+                    ensure_lmcache(plan, kubectl_cmd)
                     _write_state_path(state_path, installed_setup_state)
                     return installed_setup_state
+
+                # A cache change should not reinstall RHOAI operators or the
+                # llm-d gateway. Kueue drains the previous setup-key wave first.
+                installed_base_key = (
+                    installed_setup_state.get("base_setup_key")
+                    or installed_key.split("|lmcache:", 1)[0]
+                )
+                if (
+                    installed_setup_state
+                    and installed_base_key == base_setup_key_for_plan(plan)
+                ):
+                    return _prepare_shared_services(
+                        plan,
+                        kubectl_cmd,
+                        installed_setup_state,
+                        requested_key=requested_key,
+                        state_path=state_path,
+                        replace_cache=True,
+                    )
 
                 if installed_setup_state:
                     current_platform = str(
@@ -241,18 +303,61 @@ def setup_platform(
                 else:
                     state = setup_rhoai(plan, state_path=state_path)
 
-                ensure_tracing_plane(plan, kubectl_cmd)
-
-                persist_cluster_platform_state(
+                return _prepare_shared_services(
+                    plan,
                     kubectl_cmd,
-                    plan.deployment.namespace,
-                    {"installed_key": requested_key, "setup_state": state},
+                    state,
+                    requested_key=requested_key,
+                    state_path=state_path,
+                    replace_cache=lmcache_spec(plan.deployment) is not None,
                 )
-                return state
         detail(
             f"No platform setup implemented for {plan.deployment.platform}; continuing without changes"
         )
         return {}
+
+
+def cleanup_lmcache(
+    plan: ResolvedRunPlan,
+    *,
+    context: ExecutionContext | None = None,
+) -> None:
+    """Remove this execution's cache tier while preserving the base platform."""
+    if lmcache_spec(plan.deployment) is None:
+        return
+    with use_kubeconfig(plan.target_cluster.kubeconfig):
+        kubectl_cmd = require_any_command("oc", "kubectl")
+        holder = (context.execution_name if context is not None else "") or (
+            f"{plan.metadata.name}-{plan.deployment.release_name}"
+        )
+        with platform_prepare_lock(
+            kubectl_cmd, plan.deployment.namespace, holder_identity=holder
+        ):
+            cluster_state = load_cluster_platform_state(
+                kubectl_cmd, plan.deployment.namespace
+            )
+            state = dict(cluster_state.get("setup_state") or {})
+            owner = state.get("lmcache") or {}
+            if owner.get("setup_key") != setup_key_for_plan(plan):
+                detail(
+                    "No LMCache service owned by this execution; skipping cache cleanup"
+                )
+                return
+            # Failed deletion or GPU reconciliation must leave recoverable state,
+            # rather than advertise a ready platform with lingering cache pods.
+            persist_cluster_platform_state(
+                kubectl_cmd,
+                plan.deployment.namespace,
+                {"installed_key": "", "setup_state": state},
+            )
+            remove_lmcache(kubectl_cmd, plan.deployment.namespace)
+            release_lmcache_gpu_access(kubectl_cmd, plan.deployment.namespace)
+            state.pop("lmcache")
+            persist_cluster_platform_state(
+                kubectl_cmd,
+                plan.deployment.namespace,
+                {"installed_key": base_setup_key_for_plan(plan), "setup_state": state},
+            )
 
 
 def teardown_platform(
@@ -314,6 +419,7 @@ def deploy_platform(
     execution_name = context.execution_name if context is not None else ""
 
     with use_kubeconfig(plan.target_cluster.kubeconfig):
+        require_lmcache(plan, require_any_command("oc", "kubectl"))
         if plan.deployment.platform == "llm-d":
             return deploy_llmd(
                 plan,

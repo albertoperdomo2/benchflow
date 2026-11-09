@@ -38,7 +38,7 @@ def _parse_rfc3339(value: str) -> datetime | None:
         return None
 
 
-def setup_key_for_plan(plan: ResolvedRunPlan) -> str:
+def base_setup_key_for_plan(plan: ResolvedRunPlan) -> str:
     platform = str(plan.deployment.platform or "").strip()
     if platform == "llm-d":
         return f"llm-d:{plan.deployment.repo_ref}:{plan.deployment.gateway}"
@@ -46,6 +46,14 @@ def setup_key_for_plan(plan: ResolvedRunPlan) -> str:
         version = str(plan.deployment.platform_version or "").strip() or "unknown"
         return f"rhoai:{version}"
     return f"{platform}:{plan.deployment.mode}"
+
+
+def setup_key_for_plan(plan: ResolvedRunPlan) -> str:
+    from .lmcache import lmcache_identity
+
+    base = base_setup_key_for_plan(plan)
+    cache = lmcache_identity(plan)
+    return f"{base}|lmcache:{cache}" if cache else base
 
 
 def setup_key_from_annotations(annotations: dict[str, str] | None) -> str:

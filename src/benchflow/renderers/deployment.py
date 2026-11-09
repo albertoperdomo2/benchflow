@@ -1107,6 +1107,16 @@ def write_deployment_assets(
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
+    from ..lmcache import lmcache_documents
+
+    cache_documents = lmcache_documents(plan)
+    if cache_documents:
+        target = output_dir / "platform-lmcache.yaml"
+        target.write_text(
+            yaml.safe_dump_all(cache_documents, sort_keys=False), encoding="utf-8"
+        )
+        written.append(target)
+
     if plan.deployment.platform == "llm-d":
         for pvc_manifest in render_runtime_pvc_manifests(plan):
             pvc_name = str(pvc_manifest.get("metadata", {}).get("name") or "runtime")

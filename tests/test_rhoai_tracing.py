@@ -176,6 +176,11 @@ def test_rhoai_platform_reset_removes_shared_tracing_plane(
 ) -> None:
     resets: list[str] = []
     removals: list[tuple[str, str]] = []
+    cache_removals: list[tuple[str, str]] = []
+    monkeypatch.setattr(platform, "release_lmcache_gpu_access", lambda *_: None)
+    monkeypatch.setattr(
+        platform, "remove_lmcache", lambda cmd, ns: cache_removals.append((cmd, ns))
+    )
 
     monkeypatch.setattr(
         platform, "reset_rhoai_platform", lambda: resets.append("rhoai")
@@ -188,6 +193,7 @@ def test_rhoai_platform_reset_removes_shared_tracing_plane(
     )
 
     platform._reset_platform_for_state(tracing_plan, {"platform": "rhoai"})
+    assert cache_removals == [("oc", "benchflow")]
 
     assert resets == ["rhoai"]
     assert removals == [("oc", "benchflow")]

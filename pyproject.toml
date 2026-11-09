@@ -49,5 +49,7 @@ where = ["src"]
   "assets/**/*.json",
   "assets/**/*.j2",
   "assets/**/*.md",
+  "assets/images/vllm-lmcache/Containerfile",
+  "assets/images/vllm-lmcache/*.py",
 ]
 "benchflow.benchmark.processor" = ["config/*.yaml"]

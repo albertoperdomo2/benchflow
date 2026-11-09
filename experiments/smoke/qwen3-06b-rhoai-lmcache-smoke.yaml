@@ -1,0 +1,11 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: qwen3-06b-rhoai-lmcache-smoke
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile: rhoai-lmcache-smoke
+  benchmark_profile: guidellm-lmcache-smoke
+  metrics_profile: lmcache-smoke
+  namespace: benchflow

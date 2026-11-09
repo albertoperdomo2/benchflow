@@ -6,6 +6,15 @@ metadata:
     app.kubernetes.io/name: benchflow
     benchflow.io/purpose: runner-rbac
 rules:
+  - apiGroups: ["nvidia.com"]
+    resources: ["clusterpolicies"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["namespaces"]
     resourceNames:

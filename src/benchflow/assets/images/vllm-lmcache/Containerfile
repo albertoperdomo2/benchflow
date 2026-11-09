@@ -1,0 +1,12 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+USER 0
+ARG BASE_IMAGE
+ARG LMCACHE_VERSION
+LABEL io.benchflow.vllm-base="${BASE_IMAGE}" \
+      io.benchflow.lmcache-version="${LMCACHE_VERSION}"
+COPY install.py /tmp/benchflow-lmcache-install.py
+COPY check.py /usr/local/share/benchflow/lmcache-image-check.py
+RUN python3 /tmp/benchflow-lmcache-install.py "${LMCACHE_VERSION}" \
+    && python3 /usr/local/share/benchflow/lmcache-image-check.py \
+    && rm /tmp/benchflow-lmcache-install.py

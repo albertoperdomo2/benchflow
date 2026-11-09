@@ -1,0 +1,36 @@
+apiVersion: benchflow.io/v1alpha1
+kind: MetricsProfile
+metadata:
+  name: lmcache-smoke
+spec:
+  prometheus_url: https://thanos-querier.openshift-monitoring.svc:9091
+  query_step: 15s
+  query_timeout: 30s
+  verify_tls: false
+  queries:
+    prompt_tokens_by_source: >-
+      {__name__=~"(vllm|kserve_vllm):prompt_tokens_by_source_total", namespace="$namespace", pod=~"$modelserver_pod_regex"}
+    kv_cache_usage: >-
+      {__name__=~"(vllm|kserve_vllm):(kv_cache_usage_perc|gpu_cache_usage_perc)", namespace="$namespace", pod=~"$modelserver_pod_regex"}
+    model_cpu_seconds: >-
+      container_cpu_usage_seconds_total{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="", container!="POD"}
+    model_memory_bytes: >-
+      container_memory_working_set_bytes{namespace="$namespace", pod=~"$modelserver_pod_regex", container!="", container!="POD"}
+    lmcache_cpu_seconds: >-
+      container_cpu_usage_seconds_total{namespace="$namespace", pod=~"benchflow-lmcache-.*", container="lmcache-server"}
+    lmcache_memory_bytes: >-
+      container_memory_working_set_bytes{namespace="$namespace", pod=~"benchflow-lmcache-.*", container="lmcache-server"}
+    lmcache_l1_read_chunks_total: >-
+      lmcache_mp_l1_read_chunks_total{namespace="$namespace", pod=~"benchflow-lmcache-.*"}
+    lmcache_l1_write_chunks_total: >-
+      lmcache_mp_l1_write_chunks_total{namespace="$namespace", pod=~"benchflow-lmcache-.*"}
+    lmcache_l1_evicted_chunks_total: >-
+      lmcache_mp_l1_evicted_chunks_total{namespace="$namespace", pod=~"benchflow-lmcache-.*"}
+    lmcache_chunks_loaded_total: >-
+      lmcache_mp_num_chunks_loaded_total{namespace="$namespace", pod=~"benchflow-lmcache-.*"}
+    lmcache_transfer_phase_bytes_total: >-
+      lmcache_mp_transfer_phase_bytes_total{namespace="$namespace", pod=~"benchflow-lmcache-.*"}
+    lmcache_finished_stores_total: >-
+      lmcache_mp_num_finished_stores_total{namespace="$namespace", pod=~"benchflow-lmcache-.*"}
+    lmcache_finished_retrieves_total: >-
+      lmcache_mp_num_finished_retrieves_total{namespace="$namespace", pod=~"benchflow-lmcache-.*"}
