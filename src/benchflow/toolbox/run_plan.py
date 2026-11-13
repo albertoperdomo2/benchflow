@@ -24,6 +24,10 @@ def resolve_run_plan_stages(
             "unsupported benchmark tool: "
             f"{plan.benchmark.tool}; supported tools are guidellm, aiperf, and inference-perf"
         )
+    if plan.stages.benchmark and plan.benchmark.tool == "aiperf":
+        from ..benchmark.aiperf import require_profile_aiperf_version
+
+        require_profile_aiperf_version(plan)
     step(
         f"Resolved RunPlan for {plan.metadata.name} "
         f"({plan.deployment.platform}/{plan.deployment.mode})"

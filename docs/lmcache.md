@@ -5,10 +5,12 @@ shipped smoke uses RHOAI: platform setup installs the cache, the workload proves
 KV readback, collection saves metrics and logs, and final cleanup removes the
 model and this execution's cache service. The shared RHOAI installation remains.
 
-This is the initial implementation, verified locally with tests and manifest
-rendering. GPU cache readback, image compatibility, OpenShift admission, and
-performance have **not** been qualified on a live cluster. Do not treat a Ready
-DaemonSet or the smoke workload as evidence that offloading improved performance.
+The Qwen3-0.6B RHOAI smoke has passed live store/readback, metrics, and cleanup
+checks on Diadochos H100s ([MLflow evidence](https://mlflow.apps.psap-automation.ibm.rhperfscale.org/#/experiments/518/runs/2cb6386183524854a6519bf69671bf66)).
+This proves the small model's functional path, not performance or other model
+layouts. The [CPU-only AgentX comparison](lmcache-cpu-comparison.md) provides
+experimental Qwen3.6, Gemma 4, and Nemotron profiles; their GPU qualification
+remains to be run.
 
 ## Initial scope and prerequisites
 
@@ -16,8 +18,10 @@ DaemonSet or the smoke workload as evidence that offloading improved performance
   The implementation also handles llm-d `inference-scheduling`.
 - The smoke uses Qwen/Qwen3-0.6B for functional validation.
 - One model replica, single-node tensor parallelism, pipeline parallelism 1.
-- CPU tier only. Disk, CephFS, hybrid attention, P/D, and cache-aware routing
-  integration are outside this slice.
+- CPU tier only. Disk, CephFS, P/D, and cache-aware routing integration are
+  outside this slice. Qwen3.6's experimental recurrent-cache configuration
+  requires `--mamba-cache-mode=align` and a server with
+  `--separate-object-groups`; its chunk size is negotiated by the connector.
 - Whole NVIDIA GPUs without MIG or time slicing. Setup detects NVIDIA
   RuntimeClass access or GPU Operator CDI/NRI. With CDI/NRI it adds the
   BenchFlow namespace to the toolkit's management-device allowlist, preserving

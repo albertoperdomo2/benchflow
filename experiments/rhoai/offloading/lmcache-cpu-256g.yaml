@@ -1,0 +1,39 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: lmcache-cpu-256g
+spec:
+  model:
+    name:
+    - google/gemma-4-31B-it
+    - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8
+  deployment_profile: rhoai-lmcache-cpu-256g
+  benchmark_profile: lmcache-agentx-060826
+  metrics_profile: lmcache-cpu
+  model_overrides:
+    google/gemma-4-31B-it:
+      benchmark:
+        concurrency: 8
+      runtime:
+        vllm_extra_args:
+        - --gpu-memory-utilization=0.92
+    nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8:
+      scale:
+        tensor_parallelism: 8
+      runtime:
+        vllm_extra_args:
+        - --gpu-memory-utilization=0.8
+  namespace: benchflow
+  execution:
+    mode: sequential
+    timeout: 8h
+  mlflow:
+    tags:
+      accelerator: H100
+      kv_backend: lmcache-mp
+      comparison_scope: historical-native-reference
+      historical_vllm_version: "0.23.0"
+      historical_platform_version: RHOAI-3.5.0-ea.2
+      trace_corpus: semianalysisai/cc-traces-weka-with-subagents-060826
+      historical_native_runs: '{"google/gemma-4-31B-it":"0c12c93eb595463a922c9d492a8c4285","nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8":"17704f73746a417eba8cc6677570b5fc"}'
+      historical_hbm_runs: '{"google/gemma-4-31B-it":"3fca95c95ebf4607a3de6347c18eb0b2","nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8":"5f9a464d28e84284943c8454f0bd5db3"}'

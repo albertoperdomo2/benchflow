@@ -60,11 +60,13 @@ RUN if [ "${GUIDELLM_IMAGE_REPOSITORY}:${GUIDELLM_IMAGE_TAG}" = \
 
 # AIPerf and Inference Perf require incompatible exact Transformers versions.
 # BenchFlow only invokes their CLIs, so keep each tool in its own environment.
+ARG AIPERF_PACKAGE="aiperf==0.12.0"
+COPY build/check-aiperf.py /tmp/benchflow-check-aiperf.py
 RUN python -m venv /opt/benchflow/venvs/aiperf \
     && /opt/benchflow/venvs/aiperf/bin/pip install --no-cache-dir \
-        "aiperf==0.12.0" \
-    && /opt/benchflow/venvs/aiperf/bin/python -c \
-        "from importlib.metadata import version; from aiperf.config.flags import CLIConfig; required = {'hf_weka_dataset', 'system_idle_gap_cap_seconds'}; missing = required - set(CLIConfig.model_fields); assert version('aiperf') == '0.12.0' and not missing, f'AIPerf contract mismatch: {sorted(missing)}'" \
+        "${AIPERF_PACKAGE}" \
+    && /opt/benchflow/venvs/aiperf/bin/python /tmp/benchflow-check-aiperf.py \
+    && rm /tmp/benchflow-check-aiperf.py \
     && ln -s /opt/benchflow/venvs/aiperf/bin/aiperf /usr/local/bin/aiperf
 
 RUN python -m venv /opt/benchflow/venvs/inference-perf \

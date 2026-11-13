@@ -1,0 +1,35 @@
+apiVersion: benchflow.io/v1alpha1
+kind: BenchmarkProfile
+metadata:
+  name: lmcache-agentx-060826
+spec:
+  tool: aiperf
+  env:
+    BENCHFLOW_AIPERF_REQUIRED_VERSION: "0.8.0"
+    AIPERF_HTTP_SSL_VERIFY: "false"
+    AIPERF_DATASET_CONFIGURATION_TIMEOUT: "1800"
+    AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT: "1800"
+  requirements:
+    min_max_model_len: 131072
+  aiperf:
+    scenario: inferencex-agentx-mvp
+    # Archived native runs used the source-pinned AgentX 0.8 runtime.
+    # Plain PyPI 0.8.0 does not contain this scenario; see the build recipe.
+    public_dataset: weka_hf
+    hf_weka_repo: semianalysisai/cc-traces-weka-with-subagents-060826
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    use_server_token_count: true
+    tokenizer_trust_remote_code: true
+    extra_inputs: ignore_eos:true
+    cache_bust: first_turn_prefix
+    trace_idle_gap_cap_seconds: 60
+    trajectory_start_min_ratio: 0.25
+    trajectory_start_max_ratio: 0.75
+    benchmark_duration: 1800
+    random_seed: 42
+    max_context_length: 131072
+    concurrency: 32
+    ui: simple
+    max_seconds: 7200

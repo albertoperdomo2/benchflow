@@ -351,6 +351,23 @@ def _write_command_artifact(artifact_dir: Path, command: list[str]) -> Path:
     return command_path
 
 
+def require_profile_aiperf_version(plan: ResolvedRunPlan) -> None:
+    expected = plan.benchmark.env.get("BENCHFLOW_AIPERF_REQUIRED_VERSION", "")
+    if not expected:
+        return
+    require_command("aiperf")
+    result = subprocess.run(
+        ["aiperf", "--version"], capture_output=True, text=True, timeout=30, check=False
+    )
+    actual = result.stdout.strip()
+    if result.returncode or actual != expected:
+        raise ValidationError(
+            f"This profile requires AIPerf {expected}; found {actual or 'unknown'}. "
+            "Use the source-pinned comparison control image described in "
+            "docs/lmcache-cpu-comparison.md; workload pacing differs across versions."
+        )
+
+
 def run_benchmark(
     *,
     plan: ResolvedRunPlan,
@@ -364,6 +381,7 @@ def run_benchmark(
 ) -> tuple[str, str, str]:
     require_command("aiperf")
     aiperf = _aiperf_spec(plan)
+    require_profile_aiperf_version(plan)
     benchmark_target = target or plan.deployment.target.base_url
     artifact_dir = _artifact_dir(output_dir)
     remove_artifact_dir = output_dir is None

@@ -21,6 +21,14 @@ from .lmcache_gpu import ensure_lmcache_gpu_access, release_lmcache_gpu_access
 NAME = "benchflow-lmcache"
 LABELS = {"app.kubernetes.io/name": NAME, "benchflow.io/managed-by": "benchflow"}
 METRICS_SCRAPE_INTERVAL_SECONDS = 15
+_QWEN_RECURRENT_MODEL = "Qwen/Qwen3.6-35B-A3B"
+_CONFIGURED_MODELS = {
+    "Qwen/Qwen3-0.6B",
+    "Qwen/Qwen3-32B",
+    _QWEN_RECURRENT_MODEL,
+    "google/gemma-4-31B-it",
+    "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8",
+}
 
 
 @dataclass(frozen=True)
@@ -120,12 +128,26 @@ def configure_lmcache(
     """Resolve once into the RunPlan; also validate deserialized RunPlans."""
     if lmcache_spec(deployment) is None:
         return deployment
-    if model_name and model_name not in {"Qwen/Qwen3-0.6B", "Qwen/Qwen3-32B"}:
+    if model_name and model_name not in _CONFIGURED_MODELS:
         raise ValidationError(
-            "The initial LMCache path is limited to Qwen/Qwen3-0.6B and Qwen/Qwen3-32B; other model layouts need validation"
+            "LMCache has no BenchFlow configuration for this model; other model layouts need validation"
         )
     expected = connector_config(deployment)
     args = list(deployment.runtime.vllm_args)
+    if model_name == _QWEN_RECURRENT_MODEL:
+        # The MP connector stores recurrent-state and attention groups separately.
+        # Keep the required model setting explicit in its deployment profile.
+        modes = [
+            arg.split("=", 1)[1]
+            if "=" in arg
+            else (args[index + 1] if index + 1 < len(args) else "")
+            for index, arg in enumerate(args)
+            if arg.split("=", 1)[0] == "--mamba-cache-mode"
+        ]
+        if modes != ["align"] or "--disable-hybrid-kv-cache-manager" in args:
+            raise ValidationError(
+                "Qwen3.6 LMCache requires --mamba-cache-mode=align and the hybrid KV cache manager"
+            )
     found = 0
     for index, arg in enumerate(args):
         if arg.split("=", 1)[0] != "--kv-transfer-config":
@@ -261,6 +283,8 @@ def lmcache_documents(plan: ResolvedRunPlan) -> list[dict[str, Any]]:
     }
     if runtime.affinity:
         pod_spec["affinity"] = runtime.affinity
+    if plan.model.name == _QWEN_RECURRENT_MODEL:
+        pod_spec["containers"][0]["args"].append("--separate-object-groups")
     return [
         {
             "apiVersion": "networking.k8s.io/v1",

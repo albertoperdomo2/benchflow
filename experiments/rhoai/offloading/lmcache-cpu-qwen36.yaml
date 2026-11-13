@@ -1,0 +1,24 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: lmcache-cpu-qwen36
+spec:
+  model:
+    name: Qwen/Qwen3.6-35B-A3B
+  deployment_profile: rhoai-lmcache-cpu-64g
+  benchmark_profile: lmcache-agentx-060826
+  metrics_profile: lmcache-cpu
+  namespace: benchflow
+  execution:
+    mode: sequential
+    timeout: 8h
+  mlflow:
+    tags:
+      accelerator: H100
+      kv_backend: lmcache-mp
+      comparison_scope: historical-native-reference
+      historical_native_run: 326fb9ac213b4a7facaf7a087f31e623
+      historical_hbm_run: 6b1884118aec42fbbaf9ed9accc1c05e
+      historical_vllm_version: "0.23.0"
+      historical_platform_version: RHOAI-3.5.0-ea.2
+      trace_corpus: semianalysisai/cc-traces-weka-with-subagents-060826

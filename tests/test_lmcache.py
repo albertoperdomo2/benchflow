@@ -425,7 +425,7 @@ def test_llmd_recipe_overlay_and_review_assets_include_connector(plan, tmp_path)
     }
 
 
-@pytest.mark.parametrize("model", ["Qwen/Qwen3.6-35B-A3B", "unknown/hybrid"])
+@pytest.mark.parametrize("model", ["Qwen/unconfigured-model", "unknown/hybrid"])
 def test_unqualified_model_is_rejected_before_setup(plan, model):
     raw = plan.to_dict()
     raw["model"]["name"] = model
