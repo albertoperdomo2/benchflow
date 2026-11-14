@@ -5,7 +5,6 @@ metadata:
 spec:
   tool: aiperf
   env:
-    BENCHFLOW_AIPERF_REQUIRED_VERSION: "0.8.0"
     AIPERF_HTTP_SSL_VERIFY: "false"
     AIPERF_DATASET_CONFIGURATION_TIMEOUT: "1800"
     AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT: "1800"
@@ -13,10 +12,8 @@ spec:
     min_max_model_len: 131072
   aiperf:
     scenario: inferencex-agentx-mvp
-    # Archived native runs used the source-pinned AgentX 0.8 runtime.
-    # Plain PyPI 0.8.0 does not contain this scenario; see the build recipe.
-    public_dataset: weka_hf
-    hf_weka_repo: semianalysisai/cc-traces-weka-with-subagents-060826
+    # AIPerf 0.12's dated alias preserves the historical corpus identity.
+    public_dataset: semianalysis_cc_traces_weka_with_subagents_060826
     endpoint_type: chat
     endpoint_path: /v1/chat/completions
     streaming: true
@@ -24,7 +21,8 @@ spec:
     tokenizer_trust_remote_code: true
     extra_inputs: ignore_eos:true
     cache_bust: first_turn_prefix
-    trace_idle_gap_cap_seconds: 60
+    # 0.12 uses a system idle cap; the historical per-trace cap is unsupported.
+    system_idle_gap_cap_seconds: 10
     trajectory_start_min_ratio: 0.25
     trajectory_start_max_ratio: 0.75
     benchmark_duration: 1800

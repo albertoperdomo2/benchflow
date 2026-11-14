@@ -1,7 +1,6 @@
 from dataclasses import replace
 import json
 from pathlib import Path
-import subprocess
 
 import pytest
 
@@ -76,23 +75,24 @@ def test_agentx_command_pins_historical_corpus_seed_context_and_duration(
             aiperf=spec,
         )
         expected = {
-            "--public-dataset": "weka_hf",
-            "--hf-weka-repo": "semianalysisai/cc-traces-weka-with-subagents-060826",
+            "--public-dataset": "semianalysis_cc_traces_weka_with_subagents_060826",
             "--random-seed": "42",
             "--benchmark-duration": "1800",
             "--max-context-length": "131072",
             "--scenario": "inferencex-agentx-mvp",
             "--trajectory-start-min-ratio": "0.25",
             "--trajectory-start-max-ratio": "0.75",
-            "--trace-idle-gap-cap-seconds": "60",
+            "--system-idle-gap-cap-seconds": "10",
         }
         for flag, value in expected.items():
             assert command[command.index(flag) + 1] == value
         assert "--streaming" in command
         assert "--use-server-token-count" in command
         assert "--hf-weka-dataset" not in command
-        assert "--system-idle-gap-cap-seconds" not in command
+        assert "--hf-weka-repo" not in command
+        assert "--trace-idle-gap-cap-seconds" not in command
         assert "--unsafe-override" not in command
+        assert "BENCHFLOW_AIPERF_REQUIRED_VERSION" not in plan.benchmark.env
         assert spec.dataset_cap is None
         assert not plan.benchmark.guidellm.pre_warmup.enabled
 
@@ -190,17 +190,15 @@ def test_experiment_requires_a_supplied_serving_image(filename):
         )
 
 
-def test_wrong_agentx_runtime_is_rejected_before_stage_results_are_written(
+def test_stage_resolution_does_not_require_a_legacy_aiperf_runtime(
     plans, monkeypatch, tmp_path
 ):
     from benchflow.benchmark import aiperf
 
-    monkeypatch.setattr(aiperf, "require_command", lambda *_: None)
-    monkeypatch.setattr(
-        aiperf.subprocess,
-        "run",
-        lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "0.12.0\n", ""),
-    )
+    def unexpected_probe(*args, **kwargs):
+        pytest.fail("Stage resolution must not require a separate AIPerf runtime")
+
+    monkeypatch.setattr(aiperf.subprocess, "run", unexpected_probe)
     outputs = {
         name: tmp_path / name
         for name in (
@@ -212,26 +210,5 @@ def test_wrong_agentx_runtime_is_rejected_before_stage_results_are_written(
             "verify_completions_path",
         )
     }
-    with pytest.raises(ValidationError, match="requires AIPerf 0.8.0"):
-        run_plan_toolbox.resolve_run_plan_stages(plans[0], **outputs)
-    assert not any(path.exists() for path in outputs.values())
-
-
-def test_matching_agentx_runtime_passes_and_ordinary_profiles_skip_version_probe(
-    plans, monkeypatch
-):
-    from benchflow.benchmark import aiperf
-
-    calls = []
-    monkeypatch.setattr(aiperf, "require_command", lambda *_: None)
-
-    def version(command, **kwargs):
-        calls.append(command)
-        return subprocess.CompletedProcess(command, 0, "0.8.0\n", "")
-
-    monkeypatch.setattr(aiperf.subprocess, "run", version)
-    aiperf.require_profile_aiperf_version(plans[0])
-    assert calls == [["aiperf", "--version"]]
-    ordinary = replace(plans[0], benchmark=replace(plans[0].benchmark, env={}))
-    aiperf.require_profile_aiperf_version(ordinary)
-    assert len(calls) == 1
+    run_plan_toolbox.resolve_run_plan_stages(plans[0], **outputs)
+    assert all(path.exists() for path in outputs.values())

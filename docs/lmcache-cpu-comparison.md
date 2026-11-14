@@ -19,26 +19,28 @@ before submitting the 256 GiB matrix; separate submissions are not serialized
 by `execution.mode`.
 
 Every configuration uses one replica, PP1, a 131,072-token context limit,
-prefix caching, and a fresh LMCache CPU pool. The shared AgentX profile pins
-the historical `semianalysisai/cc-traces-weka-with-subagents-060826` corpus via
-the original `weka_hf` / `hf_weka_repo` loader. It uses seed 42, 1,800 seconds,
-trajectory ratios 0.25–0.75, streaming, and a 60-second per-trace idle cap.
+prefix caching, and a fresh LMCache CPU pool. The shared AgentX profile uses
+the standard BenchFlow image's **AIPerf 0.12.0**. Its dated public-dataset alias,
+`semianalysis_cc_traces_weka_with_subagents_060826`, selects the historical
+`semianalysisai/cc-traces-weka-with-subagents-060826` corpus. Seed 42,
+1,800 seconds, trajectory ratios 0.25–0.75, and streaming remain explicit.
 It does not reuse today's rolling `aiperf-agentx-inference` profile, whose
-corpus, seed, and pacing have changed.
+corpus and seed have changed.
 
-The archived `profile_export_aiperf.json` records AIPerf 0.8.0 and the 60-second
-trace-idle cap. The matching AgentX source is pinned to
-`a75c4612b6f8cf7e3bc88e6cd560fbf9be7c1a69`, the source reference in Arche's
-**AgentX Workload Definition**. Plain PyPI 0.8.0 lacks this scenario, so install
-that source commit rather than selecting a package by version label alone.
-BenchFlow's default image still ships AIPerf 0.12.0. These comparison profiles
-require a dedicated control image; they reject a mismatched AIPerf version in
-the first resolve task, before platform setup, and again before benchmarking.
+AIPerf 0.12 requires the scenario's **10-second system idle cap** and forbids
+the old per-trace idle cap. The archived native runs used AIPerf 0.8.0 with a
+60-second per-trace cap, so pacing and prompt reconstruction can differ even
+with the same corpus and seed. The two caps have different semantics.
+See the [0.12 scenario](https://github.com/ai-dynamo/aiperf/blob/v0.12.0/src/aiperf/common/scenario/inferencex_agentx_mvp.py)
+and its [validation rules](https://github.com/ai-dynamo/aiperf/blob/v0.12.0/src/aiperf/common/scenario/validator.py).
+No legacy runtime, alternate control-image build, or unsafe scenario override
+is required.
 
 ## Run
 
-Use a BenchFlow control image built from this checkout: older control images
-reject these models. Reuse the supplied compatible vLLM+LMCache serving image;
+Use the standard BenchFlow control image `v0.10.0` or a compatible newer image
+containing commit `f4a2cd5`; `v0.9.0` rejects these models. Reuse the supplied
+compatible vLLM+LMCache serving image;
 the serving image is not built by this experiment or in CI. The previously
 qualified small-model image uses vLLM 0.32.0 and LMCache 0.5.7. The new model
 layouts and TP2/TP8 still need live qualification; a successful small-model smoke
@@ -48,13 +50,8 @@ Run from the BenchFlow management-cluster context. Set the image variables to
 your published image references, preferably digests:
 
 ```bash
-export BENCHFLOW_IMAGE=quay.io/your-org/benchflow:lmcache-agentx-legacy
+export BENCHFLOW_IMAGE=ghcr.io/albertoperdomo2/benchflow:v0.10.0
 export VLLM_LMCACHE_IMAGE=quay.io/rh-ee-aperdomo/vllm:vllm-0.32.0-lmcache-0.5.7
-
-podman build --platform linux/amd64 -f build/Containerfile \
-  --build-arg 'AIPERF_PACKAGE=aiperf @ git+https://github.com/ai-dynamo/aiperf.git@a75c4612b6f8cf7e3bc88e6cd560fbf9be7c1a69' \
-  -t "$BENCHFLOW_IMAGE" .
-podman push "$BENCHFLOW_IMAGE"
 
 bflow experiment validate experiments/rhoai/offloading/lmcache-cpu-qwen36.yaml \
   --runtime-image "$VLLM_LMCACHE_IMAGE"
@@ -75,11 +72,11 @@ bflow experiment run experiments/rhoai/offloading/lmcache-cpu-256g.yaml \
   --follow
 ```
 
-The local build requires a Linux/amd64 builder. It builds the **BenchFlow control
-image**, and checks the historical scenario and pacing contract inside AIPerf's
-isolated environment. Use this control image for these experiments; its old
-CLI contract does not support the current rolling AgentX profile. The normal
-control-image build keeps AIPerf 0.12.0 when `AIPERF_PACKAGE` is omitted.
+Submit from an updated checkout so the resolved RunPlan contains the 0.12
+dataset alias and pacing flags. A retry of an old execution retains its old
+RunPlan, including the 0.8 requirement; submit the YAML again instead.
+The standard `v0.10.0` image can execute these updated profiles without rebuilding
+the control image or updating the capacity controller.
 
 The deployment profiles select the existing eight-H100 node
 `diadochos-hqxzk-gpu-h100-mt46x`. This also limits the DaemonSet to one cache
@@ -137,11 +134,12 @@ This is a **historical comparison**, not a claim that only the connector changed
 - References used vLLM 0.23.0 and RHOAI 3.5 EA2. These definitions use the supplied
   LMCache-compatible image and the target's current RHOAI 3.5 GA. Preserve image
   digests and actual GPU KV capacity; a newer serving engine remains a confounder.
-- The comparison image restores the historical AIPerf 0.8.0 scenario contract,
-  corpus, initial trajectory window, and trace-idle cap. The archived run does
-  not record its AIPerf Git commit or dataset revision, so the source pin from
-  Arche is reproducible preparation, not proof of byte-identical historical code
-  or reconstructed prompts. Inspect the exported input config and source metadata.
+- These runs use AIPerf 0.12.0 while the references used 0.8.0. The corpus,
+  seed, duration, and initial trajectory window are preserved, but the idle-cap
+  mechanism and reconstruction code have changed. The archived runs do not pin
+  their dataset revision. Inspect the exported input config and source metadata;
+  do not treat these as identical client workloads or attribute every delta to
+  the KV connector.
 - The references have one seed per cell and lack pinned model snapshot revisions.
   Preserve those limitations; do not claim a confidence interval.
 - The reports describe Gemma U0.92 and FP8 Nemotron KV. The archived Gemma pod
