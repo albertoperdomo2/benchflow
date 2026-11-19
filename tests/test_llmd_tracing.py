@@ -137,6 +137,52 @@ def test_standard_tracing_omits_detailed_vllm_flag(tracing_plan) -> None:
     )
 
 
+def test_epp_scope_preserves_uninstrumented_model_and_proxy(tracing_plan, tmp_path):
+    tracing_plan.metrics.tracing = TracingSpec(
+        mode="standard", sample_ratio=0.1, scope="epp"
+    )
+    model = {"args": ["--max-model-len=8192"], "env": []}
+    proxy = {"args": ["--port=8000"], "env": []}
+    _apply_vllm_tracing(model, tracing_plan, role="vllm-decode")
+    _apply_pd_proxy_tracing(proxy, tracing_plan)
+    assert model == {"args": ["--max-model-len=8192"], "env": []}
+    assert proxy == {"args": ["--port=8000"], "env": []}
+    assert tracing.vllm_tracing_args(tracing_plan, model["args"]) == model["args"]
+    assert tracing.tracing_environment(tracing_plan, "vllm-decode") == {}
+    values_path = tmp_path / "router.yaml"
+    values_path.write_text("router: {}\n")
+    _patch_scheduler_values(
+        tracing_plan, values_path, recipe_layout=True, router_chart=True
+    )
+    values = yaml.safe_load(values_path.read_text())
+    assert values["router"]["tracing"]["enabled"] is True
+    assert values["router"]["tracing"]["sampling"]["samplerArg"] == "0.1"
+    restored = load_run_plan_data(tracing_plan.to_dict())
+    assert restored.metrics.tracing.scope == "epp"
+
+
+def test_tracing_scope_rejects_unknown_target(tmp_path):
+    path = tmp_path / "metrics.yaml"
+    path.write_text(
+        "kind: MetricsProfile\nmetadata: {name: bad-scope}\nspec:\n"
+        "  tracing: {mode: standard, scope: unsupported}\n"
+    )
+    with pytest.raises(ValidationError, match="scope must be"):
+        load_metrics_profile(path)
+
+
+def test_epp_off_control_keeps_collector_available(monkeypatch, tracing_plan):
+    tracing_plan.metrics.tracing = TracingSpec(mode="off", scope="epp")
+    calls = []
+    monkeypatch.setattr(
+        tracing, "run_command", lambda cmd, **kwargs: calls.append((cmd, kwargs))
+    )
+    tracing.ensure_tracing_plane(tracing_plan, "oc")
+    assert "benchflow-otel-collector" in calls[0][1]["input_text"]
+    assert "kind: PodMonitor" in calls[0][1]["input_text"]
+    assert not tracing.tracing_enabled(tracing_plan)
+
+
 def test_router_tracing_values_enable_epp(tracing_plan, tmp_path: Path) -> None:
     values_path = tmp_path / "values.yaml"
     values_path.write_text("router: {}\n", encoding="utf-8")

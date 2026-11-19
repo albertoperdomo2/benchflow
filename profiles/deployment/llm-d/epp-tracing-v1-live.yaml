@@ -1,0 +1,50 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-epp-tracing-v1-live
+spec:
+  platform: llm-d
+  mode: inference-scheduling
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v1.0.0
+  gateway: istio
+  endpoint_path: /v1/models
+  model_storage:
+    pvc_name: models-storage
+    cache_dir: /models
+    mount_path: /model-cache
+  runtime:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: NotIn
+              values:
+              - diadochos-hqxzk-gpu-h100-mt46x
+    image: vllm/vllm-openai:v0.27.0
+    replicas: 8
+    tensor_parallelism: 1
+    env:
+      USER: benchflow
+      PYTHONHASHSEED: '0'
+    vllm_args:
+    - --gpu-memory-utilization=0.55
+    - --max-num-seqs=256
+    - --trust-remote-code
+    - --no-enable-log-requests
+    - --enable-prefix-caching
+    - --enable-prompt-tokens-details
+    pipeline_parallelism: 1
+    shared_memory_size: 20Gi
+    resources:
+      requests:
+        cpu: '8'
+        memory: 96Gi
+      limits:
+        cpu: '16'
+        memory: 128Gi
+  scheduler_image: ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0
+  options:
+    epp_verbosity: 2

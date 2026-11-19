@@ -5,6 +5,7 @@ from .llmd import (
     resolve_llmd_repo_head,
     setup_llmd,
     teardown_llmd,
+    validate_shared_llmd_prerequisites,
 )
 from .rhoai import (
     discover_rhoai_mlflow_version,
@@ -28,4 +29,5 @@ __all__ = [
     "teardown_llmd",
     "setup_rhoai",
     "teardown_rhoai",
+    "validate_shared_llmd_prerequisites",
 ]

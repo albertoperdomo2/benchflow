@@ -32,6 +32,9 @@ data:
         tls:
           insecure: true
     service:
+      telemetry:
+        metrics:
+          address: 0.0.0.0:8888
       pipelines:
         traces:
           receivers: [otlp]
@@ -73,6 +76,8 @@ spec:
               containerPort: 4317
             - name: otlp-http
               containerPort: 4318
+            - name: metrics
+              containerPort: 8888
           volumeMounts:
             - name: config
               mountPath: /etc/otel
@@ -99,6 +104,22 @@ spec:
     - name: otlp-http
       port: 4318
       targetPort: otlp-http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: benchflow-otel-collector
+  labels:
+    app.kubernetes.io/name: benchflow
+    app.kubernetes.io/component: tracing
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: benchflow-otel-collector
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 10s
 ---
 apiVersion: apps/v1
 kind: Deployment

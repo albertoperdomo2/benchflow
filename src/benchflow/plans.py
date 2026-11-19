@@ -823,6 +823,14 @@ def resolve_run_plan(
         raise ValidationError(
             "metrics profile epp_pprof requires a BenchFlow-managed llm-d deployment"
         )
+    if metrics_profile.spec.tracing.scope == "epp":
+        if (
+            deployment_profile.spec.platform != "llm-d"
+            or experiment.spec.target.enabled()
+        ):
+            raise ValidationError(
+                "EPP-only tracing scope requires a BenchFlow-managed llm-d deployment"
+            )
     if metrics_profile.spec.tracing.enabled():
         tracing_platform = deployment_profile.spec.platform
         if tracing_platform not in {"llm-d", "rhoai"}:
@@ -1200,7 +1208,12 @@ def resolve_run_plan(
         tags["accelerator"] = "SIMULATED"
         if metrics_profile.spec.tracing.enabled():
             tags["tracing_scope"] = "epp-only"
-    if metrics_profile.spec.tracing.enabled():
+    if (
+        metrics_profile.spec.tracing.enabled()
+        or metrics_profile.spec.tracing.scope == "epp"
+    ):
+        if metrics_profile.spec.tracing.scope == "epp":
+            tags["tracing_scope"] = "epp-only"
         tags.setdefault("tracing_mode", metrics_profile.spec.tracing.mode)
         tags.setdefault(
             "tracing_sample_ratio", str(metrics_profile.spec.tracing.sample_ratio)

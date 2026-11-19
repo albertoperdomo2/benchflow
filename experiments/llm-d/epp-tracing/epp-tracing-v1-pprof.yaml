@@ -1,0 +1,26 @@
+apiVersion: benchflow.io/v1alpha1
+kind: Experiment
+metadata:
+  name: epp-tracing-v1-pprof
+spec:
+  model:
+    name: Qwen/Qwen3-0.6B
+  deployment_profile:
+  - llm-d-epp-tracing-v1-inference-sim
+  - llm-d-epp-tracing-v1-live
+  benchmark_profile: guidellm-epp-tracing-rate-400-200-100
+  metrics_profile: epp-tracing-full-pprof
+  namespace: benchflow
+  execution:
+    mode: sequential
+    timeout: 2h
+  mlflow:
+    experiment: epp-tracing-overhead-v1
+    tags:
+      issue: llm-d-router#2665
+      source_study: llm-d-router#3068
+      source_blog: llm-d.github.io#543
+      llm_d_version: v1.0.0
+      router_app_version: v1.0.0
+      study_phase: diagnostic-pprof
+      performance_comparison: excluded-profiler-overhead

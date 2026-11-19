@@ -8,6 +8,7 @@ spec:
   query_timeout: 30s
   verify_tls: false
   tracing:
+    scope: epp
     mode: standard
     sample_ratio: 0.01
   queries:
@@ -24,3 +25,12 @@ spec:
     epp_response_processing_p50_seconds: histogram_quantile(0.5, sum by (le) (rate(llm_d_epp_response_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
     epp_response_processing_p95_seconds: histogram_quantile(0.95, sum by (le) (rate(llm_d_epp_response_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
     epp_response_processing_p99_seconds: histogram_quantile(0.99, sum by (le) (rate(llm_d_epp_response_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}[1m])))
+    epp_requests_total: 'llm_d_epp_request_total{namespace="$namespace", pod=~"$scheduler_pod_regex"}'
+    epp_process_cpu_seconds_total: 'process_cpu_seconds_total{namespace="$namespace", pod=~"$scheduler_pod_regex"}'
+    epp_scheduler_latency_buckets: 'llm_d_epp_scheduler_e2e_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}'
+    epp_request_processing_latency_buckets: 'llm_d_epp_request_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}'
+    epp_response_processing_latency_buckets: 'llm_d_epp_response_processing_duration_seconds_bucket{namespace="$namespace", pod=~"$scheduler_pod_regex"}'
+    collector_received_spans: '{__name__=~"otelcol_receiver_accepted_spans(_total)?", namespace="$namespace", pod=~"benchflow-otel-collector-.*"}'
+    collector_refused_spans: '{__name__=~"otelcol_receiver_refused_spans(_total)?", namespace="$namespace", pod=~"benchflow-otel-collector-.*"}'
+    collector_exported_spans: '{__name__=~"otelcol_exporter_sent_spans(_total)?", namespace="$namespace", pod=~"benchflow-otel-collector-.*"}'
+    collector_failed_spans: '{__name__=~"otelcol_exporter_send_failed_spans(_total)?", namespace="$namespace", pod=~"benchflow-otel-collector-.*"}'

@@ -31,6 +31,11 @@ def tracing_enabled(plan: ResolvedRunPlan) -> bool:
     return tracing_spec(plan).enabled()
 
 
+def tracing_component_enabled(plan: ResolvedRunPlan, role: str) -> bool:
+    spec = tracing_spec(plan)
+    return spec.enabled() and (spec.scope == "deployment" or role == "epp")
+
+
 def _without_cli_flag(args: list[str], flag: str) -> list[str]:
     output: list[str] = []
     index = 0
@@ -50,7 +55,7 @@ def _without_cli_flag(args: list[str], flag: str) -> list[str]:
 
 
 def vllm_tracing_args(plan: ResolvedRunPlan, args: list[str]) -> list[str]:
-    if not tracing_enabled(plan):
+    if not tracing_component_enabled(plan, "vllm"):
         return args
     output = _without_cli_flag(args, "--otlp-traces-endpoint")
     output = _without_cli_flag(output, "--collect-detailed-traces")
@@ -76,6 +81,8 @@ def tracing_service_name(plan: ResolvedRunPlan, role: str) -> str:
 
 
 def tracing_environment(plan: ResolvedRunPlan, role: str) -> dict[str, str]:
+    if tracing_spec(plan).scope == "epp" and role != "epp":
+        return {}
     return {
         "OTEL_SERVICE_NAME": tracing_service_name(plan, role),
         "OTEL_EXPORTER_OTLP_ENDPOINT": otlp_endpoint(plan),
@@ -92,7 +99,8 @@ def tracing_environment(plan: ResolvedRunPlan, role: str) -> dict[str, str]:
 
 
 def ensure_tracing_plane(plan: ResolvedRunPlan, kubectl_cmd: str) -> None:
-    if not tracing_enabled(plan):
+    # Keep the sink and its telemetry present for the tracing-off study control.
+    if not tracing_enabled(plan) and tracing_spec(plan).scope != "epp":
         return
     step(
         "Ensuring shared OpenTelemetry Collector and Jaeger tracing plane in "
@@ -122,7 +130,7 @@ def remove_tracing_plane(kubectl_cmd: str, namespace: str) -> None:
         [
             kubectl_cmd,
             "delete",
-            "deployment,service,configmap",
+            "deployment,service,configmap,podmonitor",
             "-n",
             namespace,
             "-l",
@@ -240,6 +248,7 @@ def collect_traces(
         "status": "unavailable",
         "backend": "jaeger",
         "mode": tracing_spec(plan).mode,
+        "scope": tracing_spec(plan).scope,
         "sample_ratio": tracing_spec(plan).sample_ratio,
         "benchmark_start_time": benchmark_start_time,
         "benchmark_end_time": benchmark_end_time,
@@ -261,6 +270,8 @@ def collect_traces(
         services = sorted(
             service for service in all_services if service.startswith(release_prefix)
         )
+        if tracing_spec(plan).scope == "epp":
+            services = [s for s in services if s == tracing_service_name(plan, "epp")]
         (trace_dir / "services.json").write_text(
             json.dumps({"services": services}, indent=2), encoding="utf-8"
         )

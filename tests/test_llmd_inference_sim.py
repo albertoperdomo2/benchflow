@@ -5,6 +5,7 @@ import yaml
 
 from benchflow.deploy.llmd import (
     _patch_recipe_modelserver_overlay,
+    _llmd_recipe_modelserver_overlay_dir,
     _patch_scheduler_values,
 )
 
@@ -27,6 +28,19 @@ def _simulator_plan():
         load_experiment(SMOKE_EXPERIMENT),
         ProfileCatalog.load(REPO_ROOT / "profiles"),
     )[0]
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_simulator_selects_released_cpu_overlay(tmp_path, nested):
+    plan = _simulator_plan()
+    backend = tmp_path / "guides/optimized-baseline/modelserver/cpu/vllm"
+    overlay = backend / "base" if nested else backend
+    overlay.mkdir(parents=True)
+    (overlay / "patch-vllm.yaml").write_text("kind: Deployment\n")
+    assert (
+        _llmd_recipe_modelserver_overlay_dir(tmp_path, plan, router_chart=True)
+        == overlay
+    )
 
 
 def _simulator_tracing_plan(tmp_path: Path):

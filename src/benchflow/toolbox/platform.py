@@ -30,6 +30,7 @@ from ..setup import (
     rhoai_platform_present,
     setup_llmd,
     setup_rhoai,
+    validate_shared_llmd_prerequisites,
 )
 from ..tracing import ensure_tracing_plane, remove_tracing_plane
 from ..ui import detail, step
@@ -245,6 +246,19 @@ def setup_platform(
                                 },
                             )
 
+                if (
+                    plan.deployment.platform == "llm-d"
+                    and installed_setup_state.get("platform") == "rhoai"
+                    and lmcache_spec(plan.deployment) is None
+                ):
+                    # Reuse existing Gateway API and Istio without uninstalling
+                    # RHOAI or replacing its shared platform ownership record.
+                    step("Validating shared llm-d prerequisites alongside RHOAI")
+                    state = validate_shared_llmd_prerequisites(plan)
+                    ensure_tracing_plane(plan, kubectl_cmd)
+                    _write_state_path(state_path, state)
+                    return state
+
                 if installed_key == requested_key and installed_setup_state:
                     installed_setup_state = _ensure_llmd_main_repo_head(
                         plan,
@@ -391,6 +405,14 @@ def teardown_platform(
                     legacy_state = _legacy_cluster_platform_state(plan, kubectl_cmd)
                     current_state = dict(legacy_state.get("setup_state") or {})
                 platform = str(current_state.get("platform") or "").strip()
+                if (
+                    platform in {"llm-d", "rhoai"}
+                    and platform != plan.deployment.platform
+                ):
+                    detail(
+                        f"Preserving the installed {platform} platform during teardown"
+                    )
+                    return
                 if platform in {"llm-d", "rhoai", "mixed"}:
                     _reset_platform_for_state(
                         plan,

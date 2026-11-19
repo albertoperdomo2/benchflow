@@ -1081,6 +1081,7 @@ spec:
   query_timeout: 30s # no CLI override
   verify_tls: false # no CLI override
   tracing:
+    scope: deployment # deployment (default) or epp for managed llm-d EPP-only studies
     mode: off # off, standard, or detailed; llm-d only; no CLI override
     sample_ratio: 0.1 # 0.0 through 1.0; no CLI override
   epp_pprof: # optional; llm-d EPP only; presence enables required capture

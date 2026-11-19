@@ -511,6 +511,21 @@ def _ensure_preinstalled_istio_for_recipe_layout(kubectl_cmd: str) -> None:
     _wait_for_istiod(kubectl_cmd, timeout_seconds=120)
 
 
+def validate_shared_llmd_prerequisites(plan: ResolvedRunPlan) -> dict[str, Any]:
+    """Validate existing prerequisites without replacing the installed platform."""
+    kubectl_cmd = require_any_command("oc", "kubectl")
+    if not _gateway_dependencies_present(kubectl_cmd, plan.deployment.repo_ref):
+        raise CommandError(
+            "shared llm-d setup requires established Gateway API and InferencePool "
+            "CRDs; refusing to reset the installed RHOAI platform"
+        )
+    if plan.deployment.gateway == "istio":
+        _ensure_preinstalled_istio_for_recipe_layout(kubectl_cmd)
+    elif plan.deployment.gateway != "standalone":
+        raise CommandError(f"unsupported llm-d gateway: {plan.deployment.gateway}")
+    return _empty_state(plan)
+
+
 def _wait_for_istiod(kubectl_cmd: str, timeout_seconds: int) -> None:
     run_command(
         [

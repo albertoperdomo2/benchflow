@@ -549,6 +549,7 @@ class BenchmarkProfile:
 class TracingSpec:
     mode: str = "off"
     sample_ratio: float = 0.1
+    scope: str = "deployment"
 
     def enabled(self) -> bool:
         return self.mode != "off"

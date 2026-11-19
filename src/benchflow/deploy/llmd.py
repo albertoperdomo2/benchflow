@@ -42,6 +42,7 @@ from ..tracing import (
     otlp_endpoint,
     routing_proxy_tracing_args,
     tracing_enabled,
+    tracing_component_enabled,
     tracing_environment,
     tracing_service_name,
     tracing_spec,
@@ -72,7 +73,7 @@ _TRACING_ENV_NAMES = {
 def _apply_vllm_tracing(
     container: dict[str, Any], plan: ResolvedRunPlan, *, role: str
 ) -> None:
-    if not tracing_enabled(plan):
+    if not tracing_component_enabled(plan, role):
         return
     container["args"] = vllm_tracing_args(
         plan, [str(item) for item in (container.get("args") or [])]
@@ -91,7 +92,7 @@ def _apply_vllm_tracing(
 
 
 def _apply_pd_proxy_tracing(container: dict[str, Any], plan: ResolvedRunPlan) -> None:
-    if not tracing_enabled(plan):
+    if not tracing_component_enabled(plan, "routing-proxy"):
         return
     container["args"] = routing_proxy_tracing_args(
         [str(item) for item in (container.get("args") or [])]
@@ -110,7 +111,7 @@ def _apply_pd_proxy_tracing(container: dict[str, Any], plan: ResolvedRunPlan) ->
 
 def _patch_pd_tracing_sources(guide_dir: Path, plan: ResolvedRunPlan) -> None:
     """Patch upstream P/D components when the selected guide references them."""
-    if not tracing_enabled(plan):
+    if not tracing_component_enabled(plan, "routing-proxy"):
         return
     for path in guide_dir.rglob("*.yaml"):
         if path.name not in {
@@ -231,13 +232,11 @@ def _llmd_recipe_modelserver_overlay_dir(
     )
     modelserver_root = checkout_dir / "guides" / guide_name / "modelserver"
     for backend_dir in _llmd_recipe_modelserver_backend_dirs(plan):
-        if backend_dir.startswith("gpu/"):
-            backend_name = backend_dir.split("/", 1)[1]
-            overlay_dir = (
-                modelserver_root / "gpu" / backend_name / "gke"
-                if provider == "gke"
-                else modelserver_root / "gpu" / backend_name / "base"
-            )
+        if backend_dir.startswith(("gpu/", "cpu/")):
+            backend_root = modelserver_root / backend_dir
+            overlay_dir = backend_root / ("gke" if provider == "gke" else "base")
+            if not overlay_dir.exists():
+                overlay_dir = backend_root
         else:
             overlay_dir = modelserver_root / backend_dir
         if overlay_dir.exists():
@@ -1308,9 +1307,9 @@ def _patch_scheduler_values(
                 epp["flags"] = flags
             flags["allow-experimental-plugins"] = True
 
+        tracing = router.setdefault("tracing", {})
+        tracing["enabled"] = tracing_enabled(plan)
         if tracing_enabled(plan):
-            tracing = router.setdefault("tracing", {})
-            tracing["enabled"] = True
             tracing["otelExporterEndpoint"] = otlp_endpoint(plan)
             sampling = tracing.setdefault("sampling", {})
             sampling["sampler"] = "parentbased_traceidratio"

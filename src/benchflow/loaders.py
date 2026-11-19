@@ -1330,7 +1330,7 @@ def _tracing_spec_from_dict(raw: object, field_name: str) -> TracingSpec:
     if not isinstance(raw, dict):
         raise ValidationError(f"{field_name} must be a mapping")
 
-    unknown = set(raw) - {"mode", "sample_ratio"}
+    unknown = set(raw) - {"mode", "sample_ratio", "scope"}
     if unknown:
         names = ", ".join(sorted(str(item) for item in unknown))
         raise ValidationError(f"{field_name} contains unsupported fields: {names}")
@@ -1349,7 +1349,10 @@ def _tracing_spec_from_dict(raw: object, field_name: str) -> TracingSpec:
         raise ValidationError(f"{field_name}.sample_ratio must be a number") from exc
     if not 0.0 <= sample_ratio <= 1.0:
         raise ValidationError(f"{field_name}.sample_ratio must be between 0.0 and 1.0")
-    return TracingSpec(mode=mode, sample_ratio=sample_ratio)
+    scope = str(raw.get("scope", "deployment")).strip().lower()
+    if scope not in {"deployment", "epp"}:
+        raise ValidationError(f"{field_name}.scope must be deployment or epp")
+    return TracingSpec(mode=mode, sample_ratio=sample_ratio, scope=scope)
 
 
 def _epp_pprof_spec_from_dict(raw: object, field_name: str) -> EppPprofSpec | None:

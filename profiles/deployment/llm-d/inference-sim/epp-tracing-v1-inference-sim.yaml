@@ -1,0 +1,43 @@
+apiVersion: benchflow.io/v1alpha1
+kind: DeploymentProfile
+metadata:
+  name: llm-d-epp-tracing-v1-inference-sim
+spec:
+  platform: llm-d
+  mode: inference-scheduling
+  repo_url: https://github.com/llm-d/llm-d.git
+  repo_ref: v1.0.0
+  gateway: istio
+  endpoint_path: /v1/models
+  options:
+    epp_verbosity: 2
+  runtime:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: NotIn
+              values:
+              - diadochos-hqxzk-gpu-h100-mt46x
+    image: ghcr.io/llm-d/llm-d-inference-sim:v0.11.2
+    replicas: 8
+    tensor_parallelism: 1
+    pipeline_parallelism: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 256Mi
+      limits:
+        cpu: '2'
+        memory: 1Gi
+    vllm_args:
+    - --mode=random
+    - --latency-calculator=constant
+    - --time-to-first-token=20ms
+    - --inter-token-latency=1ms
+    - --max-num-seqs=256
+    - --max-model-len=16384
+    - --seed=1
+  scheduler_image: ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0
